@@ -5,6 +5,11 @@ files under `claude/` are symlinked into `~/.claude/`. This document governs **h
 author rule files** in this repo. Jarrin's leading working preferences in
 `claude/CLAUDE.md` still apply on top of everything here.
 
+## Git workflow
+
+Commit directly to `main` in this repo — do not create feature branches or open PRs for
+routine changes. Push only when explicitly asked.
+
 ## Where rules live
 
 - Global rule library: `claude/rules/*.md`, symlinked to `~/.claude/rules/`.
