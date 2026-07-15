@@ -1,0 +1,18 @@
+{
+  "model": "opus[1m]",
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "dark",
+  "tui": "fullscreen",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/bin/session-start"
+          }
+        ]
+      }
+    ]
+  }
+}

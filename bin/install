@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+#
+# Set up jarrin-claude on a new machine: symlink the config into ~/.claude,
+# enable the git hooks, and check prerequisites. Safe to re-run (idempotent).
+#
+# Usage:
+#   bin/install [--with-gitleaks]
+#
+# Options:
+#   --with-gitleaks    download the gitleaks binary if it is missing.
+#
+# Env:
+#   CLAUDE_HOME        target config dir (default: ~/.claude) -- handy for testing.
+#   GITLEAKS_BIN_DIR   where --with-gitleaks installs gitleaks (default: ~/.local/bin).
+
+set -euo pipefail
+
+# Resolve the repo root from this script's own location, so the installer works
+# regardless of where the repo was cloned.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
+GITLEAKS_BIN_DIR="${GITLEAKS_BIN_DIR:-$HOME/.local/bin}"
+
+WITH_GITLEAKS=0
+for arg in "$@"; do
+  case "$arg" in
+    --with-gitleaks) WITH_GITLEAKS=1 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    *) printf 'unknown option: %s (see --help)\n' "$arg" >&2; exit 2 ;;
+  esac
+done
+
+info()  { printf '  %s\n' "$1"; }
+warn()  { printf '  ! %s\n' "$1" >&2; }
+
+# Best-effort download of the latest gitleaks release into $GITLEAKS_BIN_DIR.
+install_gitleaks() {
+  local os arch url tmp
+  case "$(uname -s)" in
+    Linux)  os=linux ;;
+    Darwin) os=darwin ;;
+    *) warn "unsupported OS $(uname -s); install gitleaks manually."; return 1 ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64)  arch=x64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) warn "unsupported arch $(uname -m); install gitleaks manually."; return 1 ;;
+  esac
+  command -v curl >/dev/null 2>&1 || { warn "curl not found; cannot fetch gitleaks."; return 1; }
+  url=$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
+    | grep -oE "\"browser_download_url\": *\"[^\"]*_${os}_${arch}\.tar\.gz\"" \
+    | head -1 | sed -E 's/.*"(https[^"]+)"/\1/')
+  [ -n "$url" ] || { warn "no gitleaks release asset for ${os}_${arch}."; return 1; }
+  tmp=$(mktemp -d)
+  info "downloading $url"
+  if curl -fsSL -o "$tmp/gl.tar.gz" "$url" && tar -xzf "$tmp/gl.tar.gz" -C "$tmp" gitleaks; then
+    mkdir -p "$GITLEAKS_BIN_DIR"
+    install -m 0755 "$tmp/gitleaks" "$GITLEAKS_BIN_DIR/gitleaks"
+    rm -rf "$tmp"
+    info "installed gitleaks -> $GITLEAKS_BIN_DIR/gitleaks"
+    return 0
+  fi
+  rm -rf "$tmp"
+  warn "gitleaks download/extract failed."
+  return 1
+}
+
+# Symlink $1 (source in repo) to $2 (target in ~/.claude), backing up anything
+# real that is already there. Replacing an existing symlink is silent.
+link() {
+  local src="$1" dest="$2"
+  if [ ! -e "$src" ]; then
+    warn "source missing, skipped: $src"
+    return
+  fi
+  if [ -L "$dest" ]; then
+    rm -f "$dest"
+  elif [ -e "$dest" ]; then
+    mv "$dest" "$dest.pre-jarrin.bak"
+    info "backed up existing $dest -> $(basename "$dest").pre-jarrin.bak"
+  fi
+  ln -s "$src" "$dest"
+  info "linked $dest -> $src"
+}
+
+echo "jarrin-claude installer"
+echo "  repo:        $REPO_DIR"
+echo "  claude home: $CLAUDE_HOME"
+echo
+
+mkdir -p "$CLAUDE_HOME"
+
+echo "Linking config into $CLAUDE_HOME:"
+link "$REPO_DIR/claude/CLAUDE.md"     "$CLAUDE_HOME/CLAUDE.md"
+link "$REPO_DIR/claude/settings.json" "$CLAUDE_HOME/settings.json"
+link "$REPO_DIR/bin/claude"           "$CLAUDE_HOME/bin"
+link "$REPO_DIR/claude/rules"         "$CLAUDE_HOME/rules"
+echo
+
+echo "Enabling git hooks (secret scanning):"
+git -C "$REPO_DIR" config core.hooksPath .githooks
+info "core.hooksPath = $(git -C "$REPO_DIR" config core.hooksPath)"
+echo
+
+echo "Checking prerequisites:"
+if command -v python3 >/dev/null 2>&1; then
+  info "python3: $(python3 --version 2>&1) - SessionStart hook OK"
+else
+  warn "python3 NOT found - the SessionStart rule loader will not run. Install python3."
+fi
+
+if command -v gitleaks >/dev/null 2>&1; then
+  info "gitleaks: $(gitleaks version 2>&1) - pre-commit scan active"
+elif [ "$WITH_GITLEAKS" = 1 ]; then
+  warn "gitleaks NOT found - installing (--with-gitleaks)..."
+  if install_gitleaks && [ -x "$GITLEAKS_BIN_DIR/gitleaks" ]; then
+    info "gitleaks: $("$GITLEAKS_BIN_DIR/gitleaks" version 2>&1) - pre-commit scan active"
+    case ":$PATH:" in
+      *":$GITLEAKS_BIN_DIR:"*) ;;
+      *) warn "note: $GITLEAKS_BIN_DIR is not on PATH; add it so git hooks find gitleaks." ;;
+    esac
+  else
+    warn "gitleaks install did not complete; pre-commit will skip scanning."
+  fi
+else
+  warn "gitleaks NOT found - the pre-commit hook will skip scanning (commits still work)."
+  warn "  re-run with --with-gitleaks to auto-download it, or 'brew install gitleaks'."
+fi
+echo
+
+echo "Done. Restart Claude Code sessions to pick up the new settings."

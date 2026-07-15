@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+# Pre-commit secret scan (gitleaks). Version-controlled hook.
+# Enable per clone with:  git config core.hooksPath .githooks
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "gitleaks not installed - skipping secret scan." >&2
+  echo "  Install: https://github.com/gitleaks/gitleaks" >&2
+  exit 0
+fi
+
+gitleaks git --staged --redact --no-banner -v
+status=$?
+if [ "$status" -ne 0 ]; then
+  echo "" >&2
+  echo "gitleaks found potential secrets in staged changes. Commit aborted." >&2
+  echo "  Review the findings above." >&2
+  echo "  To bypass (NOT recommended): git commit --no-verify" >&2
+fi
+exit "$status"

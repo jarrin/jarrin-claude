@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""SessionStart hook: load Jarrin's per-project rule selection into context.
+
+Reads ``<project>/.claude/.jarrin.yml`` (required) which lists rule names, maps
+each to ``~/.claude/rules/<name>.md``, and injects their contents into the
+session via the SessionStart hook's ``additionalContext``. If present, the
+project's ``.claude/.jarrin-claude.md`` is appended as extra instructions.
+
+Behaviour:
+  * ``.jarrin.yml`` missing         -> error (message on stderr, non-zero exit).
+  * ``.jarrin-claude.md`` missing   -> silently ignored.
+  * a referenced rule file missing  -> warning on stderr, the rest still load.
+
+Standard library only -- no external dependencies -- so it runs anywhere a
+``python3`` interpreter exists (dev machines, CI, remote hosts).
+"""
+
+import json
+import os
+import sys
+
+# Where the global rule library lives. Overridable for testing.
+RULES_DIR = os.environ.get(
+    "JARRIN_RULES_DIR", os.path.expanduser("~/.claude/rules")
+)
+
+TAG = "[jarrin session-start]"
+
+
+def read_cwd() -> str:
+    """The SessionStart hook receives a JSON payload on stdin with ``cwd``."""
+    try:
+        payload = json.load(sys.stdin)
+        if isinstance(payload, dict) and payload.get("cwd"):
+            return payload["cwd"]
+    except Exception:
+        pass
+    return os.getcwd()
+
+
+def _clean(token: str) -> str:
+    """Strip whitespace and surrounding quotes from a scalar token."""
+    return token.strip().strip('"').strip("'").strip()
+
+
+def parse_rule_names(text: str) -> list:
+    """Extract an ordered, de-duplicated list of rule names from a small YAML
+    subset. Supported shapes::
+
+        rules:
+          - lang-php
+          - fw-laravel
+
+        rules: [lang-php, fw-laravel]
+
+        # or a bare top-level list
+        - lang-php
+        - fw-laravel
+
+    This is intentionally minimal so we avoid a PyYAML dependency.
+    """
+    names = []
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].rstrip()  # drop comments
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # inline form: "rules: [a, b, c]"
+        if stripped.startswith("rules:"):
+            rest = stripped[len("rules:"):].strip()
+            if rest.startswith("[") and rest.endswith("]"):
+                for item in rest[1:-1].split(","):
+                    name = _clean(item)
+                    if name:
+                        names.append(name)
+            continue
+
+        # list item (nested under "rules:" or a bare top-level list)
+        if stripped.startswith("- "):
+            name = _clean(stripped[2:])
+            if name:
+                names.append(name)
+
+    seen = set()
+    unique = []
+    for name in names:
+        if name not in seen:
+            seen.add(name)
+            unique.append(name)
+    return unique
+
+
+def read_file(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as handle:
+        return handle.read().strip()
+
+
+def main() -> int:
+    cwd = read_cwd()
+    claude_dir = os.path.join(cwd, ".claude")
+    jarrin_yml = os.path.join(claude_dir, ".jarrin.yml")
+    jarrin_md = os.path.join(claude_dir, ".jarrin-claude.md")
+
+    if not os.path.isfile(jarrin_yml):
+        sys.stderr.write(
+            "{tag} ERROR: {path} not found. Create it to declare which rules "
+            "to load, e.g.\n    rules:\n      - lang-php\n      - fw-laravel\n".format(
+                tag=TAG, path=jarrin_yml
+            )
+        )
+        return 1
+
+    try:
+        names = parse_rule_names(read_file(jarrin_yml))
+    except OSError as exc:
+        sys.stderr.write("{} ERROR reading {}: {}\n".format(TAG, jarrin_yml, exc))
+        return 1
+
+    sections = []
+    missing = []
+    for name in names:
+        rule_path = os.path.join(RULES_DIR, name + ".md")
+        if os.path.isfile(rule_path):
+            sections.append(read_file(rule_path))
+        else:
+            missing.append(name)
+
+    # Project-level extra instructions -- optional, silent when absent.
+    if os.path.isfile(jarrin_md):
+        try:
+            sections.append(read_file(jarrin_md))
+        except OSError:
+            pass
+
+    if missing:
+        sys.stderr.write(
+            "{} WARNING: rule(s) not found in {}: {}\n".format(
+                TAG, RULES_DIR, ", ".join(missing)
+            )
+        )
+
+    if not sections:
+        return 0  # nothing to inject, but the config existed -- not an error
+
+    context = (
+        "# Jarrin project rules (auto-loaded)\n"
+        "Selected by this project's `.claude/.jarrin.yml`; follow them for this "
+        "session.\n\n"
+        + "\n\n---\n\n".join(sections)
+        + "\n"
+    )
+
+    json.dump(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": context,
+            }
+        },
+        sys.stdout,
+    )
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

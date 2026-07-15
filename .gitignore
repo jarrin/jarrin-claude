@@ -1,0 +1,10 @@
+# This repo holds ONLY hand-authored ~/.claude config, symlinked into place.
+# Real secrets live in ~/.claude/ and are never copied here — but block the
+# obvious by reflex, as a backstop.
+*.key
+*.pem
+*.token
+.env
+.credentials.json
+settings.local.json
+*.log
