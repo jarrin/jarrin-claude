@@ -16,6 +16,7 @@ they are not in the working tree.
 | `claude/settings.json` | Global Claude Code settings (registers the SessionStart hook) |
 | `bin/claude/session-start` | SessionStart hook — loads per-project rule selection (deployed to `~/.claude/bin/`) |
 | `claude/rules/*.md` | Global rule library (`lang-php.md`, `fw-laravel.md`, …) |
+| `claude/skills/*/` | Global skills (e.g. `add-skill/` — how to author a skill) |
 
 Language-/framework-specific guidance goes in `claude/rules/*.md`. Projects opt in to
 specific rules via their own `.claude/.jarrin.yml` — see **Rule loading** below.
@@ -41,6 +42,7 @@ ln -sfn ~/projects/jarrin-claude/claude/CLAUDE.md     ~/.claude/CLAUDE.md
 ln -sfn ~/projects/jarrin-claude/claude/settings.json ~/.claude/settings.json
 ln -sfn ~/projects/jarrin-claude/bin/claude           ~/.claude/bin
 ln -sfn ~/projects/jarrin-claude/claude/rules         ~/.claude/rules
+ln -sfn ~/projects/jarrin-claude/claude/skills        ~/.claude/skills
 cd ~/projects/jarrin-claude && git config core.hooksPath .githooks   # enable pre-commit hook
 ```
 

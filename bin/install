@@ -121,6 +121,7 @@ link "$REPO_DIR/claude/CLAUDE.md"     "$CLAUDE_HOME/CLAUDE.md"
 link "$REPO_DIR/claude/settings.json" "$CLAUDE_HOME/settings.json"
 link "$REPO_DIR/bin/claude"           "$CLAUDE_HOME/bin"
 link "$REPO_DIR/claude/rules"         "$CLAUDE_HOME/rules"
+link "$REPO_DIR/claude/skills"        "$CLAUDE_HOME/skills"
 echo
 
 echo "Enabling git hooks (secret scanning):"

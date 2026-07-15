@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Scaffold a new Claude Code skill: create <base>/<name>/SKILL.md from a template.
+
+Usage:
+  scaffold <name> [--description TEXT] [--global | --dir DIR] [--force]
+
+Target directory (where <name>/ is created):
+  default     ./.claude/skills   (project-level skill in the current repo)
+  --global    ~/.claude/skills   (available in every project)
+  --dir DIR   an explicit base directory
+
+Standard library only, so it runs anywhere python3 exists.
+"""
+
+import argparse
+import os
+import re
+import sys
+
+NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+TEMPLATE = """\
+---
+name: {name}
+description: {description}
+version: 0.1.0
+---
+
+# {title}
+
+<One or two sentences: what this skill enables and why it exists.>
+
+## When to use
+
+<Concrete situations and the exact phrases a user would say. Keep this aligned with the
+frontmatter description — the description is what actually triggers the skill.>
+
+## Steps
+
+1. <First action, in imperative form.>
+2. <Next action. Explain the *why*, not just the what.>
+
+## Notes
+
+- Write all content in English.
+- Move any long reference material into `references/`; bundle repeated code in `scripts/`.
+"""
+
+DEFAULT_DESC = (
+    'This skill should be used when the user asks to "<trigger phrase 1>", '
+    '"<trigger phrase 2>". <What it does>. Make sure to use this skill whenever '
+    "<context>, even if not requested by name."
+)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(add_help=True, description="Scaffold a new skill.")
+    parser.add_argument("name", help="skill slug, e.g. add-skill (lowercase, hyphenated)")
+    parser.add_argument("--description", default=DEFAULT_DESC, help="frontmatter description")
+    parser.add_argument("--global", dest="is_global", action="store_true",
+                        help="create under ~/.claude/skills instead of ./.claude/skills")
+    parser.add_argument("--dir", help="explicit base directory (overrides --global)")
+    parser.add_argument("--force", action="store_true", help="overwrite an existing skill")
+    args = parser.parse_args()
+
+    if not NAME_RE.match(args.name):
+        sys.stderr.write("error: name must be lowercase letters/digits with single hyphens "
+                         "(e.g. my-skill).\n")
+        return 2
+
+    if args.dir:
+        base = args.dir
+    elif args.is_global:
+        base = os.path.expanduser("~/.claude/skills")
+    else:
+        base = os.path.join(os.getcwd(), ".claude", "skills")
+
+    skill_dir = os.path.join(base, args.name)
+    skill_md = os.path.join(skill_dir, "SKILL.md")
+
+    if os.path.exists(skill_md) and not args.force:
+        sys.stderr.write("error: {} already exists (use --force to overwrite).\n".format(skill_md))
+        return 1
+
+    title = args.name.replace("-", " ").title()
+    os.makedirs(skill_dir, exist_ok=True)
+    with open(skill_md, "w", encoding="utf-8") as handle:
+        handle.write(TEMPLATE.format(name=args.name, description=args.description, title=title))
+
+    print("created {}".format(skill_md))
+    print("next: edit the description with real trigger phrases, then fill in the body.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
