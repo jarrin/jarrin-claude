@@ -71,21 +71,35 @@ A project opts in with two files in its own `.claude/` directory:
 
 | File | Required | Behaviour |
 |------|----------|-----------|
-| `.claude/.jarrin.yml` | yes | Lists rule slugs to load; each maps to `~/.claude/rules/<slug>.md`. **Missing → error** on stderr. |
+| `.claude/.jarrin.yml` | yes | Selects rules (three tiers) + optional quick-reference blocks. **Missing → error** on stderr. |
 | `.claude/.jarrin-claude.md` | no | Extra project instructions, appended verbatim. **Missing → silently ignored.** |
 
-Example `.claude/.jarrin.yml`:
+`.jarrin.yml` selects rules from three tiers and can declare a "Start here" checklist and
+a command table:
 
 ```yaml
-rules:
+rules:                              # a. global slugs → ~/.claude/rules/<slug>.md
   - lang-php
   - fw-laravel
+local:                              # b. in-repo rule files (paths from the repo root)
+  - .claude/rules/prdl-local-default.md
+imports:                            # c. cross-repo: owner repo + a rule it owns
+  - owner: server                   #    → <group-root>/server/.claude/rules/prdl-data-types.md
+    rule: prdl-data-types
+start:                              # rendered as a numbered "Start here" list
+  - prdl up — boot the stack
+commands:                           # rendered as a command table
+  - cmd: prdl deploy
+    desc: ship to production
 ```
 
-The hook reads the session `cwd` from its stdin JSON, resolves each slug against the
-global rule library, and emits the combined text as the SessionStart
-`additionalContext`. Referenced rule files that don't exist are warned about and skipped.
-Override the library location for testing with `JARRIN_RULES_DIR`.
+The hook reads the session `cwd` from its stdin JSON, resolves the three tiers (global →
+local → imports, each rule included once), renders `start`/`commands`, and emits the
+combined text as the SessionStart `additionalContext`. Referenced rule files that don't
+exist are warned about and skipped. The group root defaults to the parent of the repo's
+directory; override it with `JARRIN_GROUP_ROOT` and the global library with
+`JARRIN_RULES_DIR` (both for testing). Unit tests live in
+`bin/claude/test_session_start.py` and run in the pre-commit hook.
 
 > The hook is registered globally, so it runs in **every** project. Any repo without a
 > `.claude/.jarrin.yml` prints the "not found" error to stderr each session (non-blocking

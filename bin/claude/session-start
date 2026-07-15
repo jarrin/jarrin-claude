@@ -1,15 +1,44 @@
 #!/usr/bin/env python3
 """SessionStart hook: load Jarrin's per-project rule selection into context.
 
-Reads ``<project>/.claude/.jarrin.yml`` (required) which lists rule names, maps
-each to ``~/.claude/rules/<name>.md``, and injects their contents into the
-session via the SessionStart hook's ``additionalContext``. If present, the
-project's ``.claude/.jarrin-claude.md`` is appended as extra instructions.
+Reads ``<project>/.claude/.jarrin.yml`` (required) and injects the selected
+rules -- plus an optional "Start here" checklist and command table -- into the
+session via the SessionStart hook's ``additionalContext``.
+
+The ``.jarrin.yml`` schema has three rule tiers and two quick-reference blocks::
+
+    # Tier a -- global rule slugs -> ~/.claude/rules/<slug>.md
+    rules:
+      - lang-php
+      - fw-laravel
+
+    # Tier b -- project-local rule files, committed in-repo (paths from repo root)
+    local:
+      - .claude/rules/prdl-local-default.md
+
+    # Tier c -- cross-repo imports, resolved under the group root (parent of cwd)
+    #   owner + rule -> <group-root>/<owner>/.claude/rules/<rule>.md
+    imports:
+      - owner: server
+        rule: prdl-data-types
+
+    # "Start here" orientation steps (rendered as a numbered list)
+    start:
+      - prdl up -- boot the stack
+
+    # Dev-command quick reference (rendered as a table)
+    commands:
+      - cmd: prdl deploy
+        desc: ship to production
+
+If present, ``<project>/.claude/.jarrin-claude.md`` is appended verbatim after
+everything above.
 
 Behaviour:
   * ``.jarrin.yml`` missing         -> error (message on stderr, non-zero exit).
   * ``.jarrin-claude.md`` missing   -> silently ignored.
   * a referenced rule file missing  -> warning on stderr, the rest still load.
+  * config present but empty         -> nothing injected, exit 0 (not an error).
 
 Standard library only -- no external dependencies -- so it runs anywhere a
 ``python3`` interpreter exists (dev machines, CI, remote hosts).
@@ -26,6 +55,12 @@ RULES_DIR = os.environ.get(
 
 TAG = "[jarrin session-start]"
 
+# Recognised top-level keys. Scalar sections are lists of strings; mapping
+# sections are lists of ``key: value`` dicts.
+SCALAR_SECTIONS = ("rules", "local", "start")
+MAPPING_SECTIONS = ("imports", "commands")
+SECTIONS = SCALAR_SECTIONS + MAPPING_SECTIONS
+
 
 def read_cwd() -> str:
     """The SessionStart hook receives a JSON payload on stdin with ``cwd``."""
@@ -38,57 +73,102 @@ def read_cwd() -> str:
     return os.getcwd()
 
 
+def _strip_comment(line: str) -> str:
+    """Drop a ``#`` comment. A ``#`` only starts a comment at the line start or
+    after whitespace, so values like ``C#`` survive."""
+    if line.lstrip().startswith("#"):
+        return ""
+    idx = line.find(" #")
+    return line[:idx] if idx != -1 else line
+
+
 def _clean(token: str) -> str:
     """Strip whitespace and surrounding quotes from a scalar token."""
     return token.strip().strip('"').strip("'").strip()
 
 
-def parse_rule_names(text: str) -> list:
-    """Extract an ordered, de-duplicated list of rule names from a small YAML
-    subset. Supported shapes::
+def _split_inline(rest: str) -> list:
+    """Split an inline ``[a, b, c]`` flow list into cleaned tokens."""
+    return [_clean(item) for item in rest[1:-1].split(",") if _clean(item)]
 
-        rules:
-          - lang-php
-          - fw-laravel
 
-        rules: [lang-php, fw-laravel]
+def parse_config(text: str) -> dict:
+    """Parse the small YAML subset used by ``.jarrin.yml`` into a dict with the
+    keys in :data:`SECTIONS`. Deliberately minimal so we avoid a PyYAML
+    dependency. Supported shapes:
 
-        # or a bare top-level list
-        - lang-php
-        - fw-laravel
-
-    This is intentionally minimal so we avoid a PyYAML dependency.
+    * scalar block list under ``rules:`` / ``local:`` / ``start:``
+    * inline ``rules: [a, b]`` for scalar sections
+    * mapping block list under ``imports:`` / ``commands:`` (``- owner: x`` then
+      an indented ``rule: y`` continuation line)
+    * a bare top-level ``- item`` list, treated as ``rules`` (back-compat)
     """
-    names = []
+    cfg = {key: [] for key in SECTIONS}
+    current_key = None
+    current_item = None  # the mapping dict currently being built
+
     for raw in text.splitlines():
-        line = raw.split("#", 1)[0].rstrip()  # drop comments
+        line = _strip_comment(raw)
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
         stripped = line.strip()
-        if not stripped:
+
+        if indent == 0:
+            current_item = None
+            # Bare top-level list item -> rules (back-compat with the old format).
+            if stripped.startswith("-"):
+                current_key = "rules"
+                body = stripped[1:].strip()
+                if body:
+                    cfg["rules"].append(_clean(body))
+                continue
+            key, sep, rest = stripped.partition(":")
+            key = key.strip()
+            current_key = key if key in cfg else None
+            rest = rest.strip()
+            if (
+                current_key in SCALAR_SECTIONS
+                and rest.startswith("[")
+                and rest.endswith("]")
+            ):
+                cfg[current_key].extend(_split_inline(rest))
             continue
 
-        # inline form: "rules: [a, b, c]"
-        if stripped.startswith("rules:"):
-            rest = stripped[len("rules:"):].strip()
-            if rest.startswith("[") and rest.endswith("]"):
-                for item in rest[1:-1].split(","):
-                    name = _clean(item)
-                    if name:
-                        names.append(name)
+        # Indented content belongs to the current section.
+        if current_key is None:
             continue
 
-        # list item (nested under "rules:" or a bare top-level list)
-        if stripped.startswith("- "):
-            name = _clean(stripped[2:])
-            if name:
-                names.append(name)
+        if stripped.startswith("-"):
+            body = stripped[1:].strip()
+            if current_key in SCALAR_SECTIONS:
+                current_item = None
+                if body:
+                    cfg[current_key].append(_clean(body))
+            else:  # mapping section -- start a new item
+                current_item = {}
+                cfg[current_key].append(current_item)
+                k, sep, v = body.partition(":")
+                if sep:
+                    current_item[k.strip()] = _clean(v)
+        elif current_key in MAPPING_SECTIONS and current_item is not None:
+            # Continuation line of the current mapping item, e.g. "rule: x".
+            k, sep, v = stripped.partition(":")
+            if sep:
+                current_item[k.strip()] = _clean(v)
 
+    return cfg
+
+
+def _dedup(items: list) -> list:
+    """Order-preserving de-duplication of a scalar list, dropping blanks."""
     seen = set()
-    unique = []
-    for name in names:
-        if name not in seen:
-            seen.add(name)
-            unique.append(name)
-    return unique
+    out = []
+    for item in items:
+        if item and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
 
 
 def read_file(path: str) -> str:
@@ -96,8 +176,59 @@ def read_file(path: str) -> str:
         return handle.read().strip()
 
 
+def resolve_rules(cfg: dict, cwd: str, group_root: str):
+    """Resolve the three rule tiers to ``(label, path)`` pairs, in load order:
+    global rules, then project-local rules, then cross-repo imports."""
+    resolved = []
+
+    for name in _dedup(cfg["rules"]):
+        resolved.append((name, os.path.join(RULES_DIR, name + ".md")))
+
+    for rel in _dedup(cfg["local"]):
+        resolved.append((rel, os.path.join(cwd, rel)))
+
+    seen = set()
+    for item in cfg["imports"]:
+        owner = item.get("owner")
+        rule = item.get("rule")
+        if not owner or not rule:
+            continue
+        key = (owner, rule)
+        if key in seen:
+            continue
+        seen.add(key)
+        label = "{}/{}".format(owner, rule)
+        path = os.path.join(group_root, owner, ".claude", "rules", rule + ".md")
+        resolved.append((label, path))
+
+    return resolved
+
+
+def render_start(steps: list) -> str:
+    lines = ["## Start here", ""]
+    for i, step in enumerate(_dedup(steps), 1):
+        lines.append("{}. {}".format(i, step))
+    return "\n".join(lines)
+
+
+def render_commands(commands: list) -> str:
+    lines = ["## Commands", "", "| Command | What it does |", "| --- | --- |"]
+    seen = set()
+    for command in commands:
+        cmd = str(command.get("cmd", "")).strip()
+        if not cmd or cmd in seen:
+            continue
+        seen.add(cmd)
+        desc = str(command.get("desc", "")).strip()
+        lines.append("| `{}` | {} |".format(cmd, desc))
+    return "\n".join(lines)
+
+
 def main() -> int:
     cwd = read_cwd()
+    group_root = os.environ.get(
+        "JARRIN_GROUP_ROOT", os.path.dirname(os.path.abspath(cwd))
+    )
     claude_dir = os.path.join(cwd, ".claude")
     jarrin_yml = os.path.join(claude_dir, ".jarrin.yml")
     jarrin_md = os.path.join(claude_dir, ".jarrin-claude.md")
@@ -112,50 +243,54 @@ def main() -> int:
         return 1
 
     try:
-        names = parse_rule_names(read_file(jarrin_yml))
+        cfg = parse_config(read_file(jarrin_yml))
     except OSError as exc:
         sys.stderr.write("{} ERROR reading {}: {}\n".format(TAG, jarrin_yml, exc))
         return 1
 
-    sections = []
+    rule_blocks = []
     missing = []
-    for name in names:
-        rule_path = os.path.join(RULES_DIR, name + ".md")
-        if os.path.isfile(rule_path):
-            sections.append(read_file(rule_path))
+    for label, path in resolve_rules(cfg, cwd, group_root):
+        if os.path.isfile(path):
+            rule_blocks.append(read_file(path))
         else:
-            missing.append(name)
+            missing.append(label)
+
+    if missing:
+        sys.stderr.write(
+            "{} WARNING: rule(s) not found: {}\n".format(TAG, ", ".join(missing))
+        )
+
+    parts = [
+        "# Jarrin project rules (auto-loaded)\n"
+        "Selected by this project's `.claude/.jarrin.yml`; follow them for this "
+        "session."
+    ]
+    if cfg["start"]:
+        parts.append(render_start(cfg["start"]))
+    if cfg["commands"]:
+        parts.append(render_commands(cfg["commands"]))
+    if rule_blocks:
+        parts.append("\n\n---\n\n".join(rule_blocks))
 
     # Project-level extra instructions -- optional, silent when absent.
     if os.path.isfile(jarrin_md):
         try:
-            sections.append(read_file(jarrin_md))
+            extra = read_file(jarrin_md)
+            if extra:
+                parts.append(extra)
         except OSError:
             pass
 
-    if missing:
-        sys.stderr.write(
-            "{} WARNING: rule(s) not found in {}: {}\n".format(
-                TAG, RULES_DIR, ", ".join(missing)
-            )
-        )
-
-    if not sections:
-        return 0  # nothing to inject, but the config existed -- not an error
-
-    context = (
-        "# Jarrin project rules (auto-loaded)\n"
-        "Selected by this project's `.claude/.jarrin.yml`; follow them for this "
-        "session.\n\n"
-        + "\n\n---\n\n".join(sections)
-        + "\n"
-    )
+    # Only the header means nothing was selected -- inject nothing.
+    if len(parts) == 1:
+        return 0
 
     json.dump(
         {
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
-                "additionalContext": context,
+                "additionalContext": "\n\n".join(parts) + "\n",
             }
         },
         sys.stdout,
