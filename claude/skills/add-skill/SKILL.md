@@ -1,7 +1,7 @@
 ---
 name: add-skill
 description: This skill should be used when the user wants to "create a skill", "add a skill", "write a new skill", "scaffold a SKILL.md", "make a Claude Code skill", or asks how skills are structured or where they live. Make sure to use this skill whenever the user talks about authoring, adding, or organizing a Claude Code skill, even if they do not say the word "skill" explicitly.
-version: 0.1.0
+version: 0.2.0
 ---
 
 # Add a skill
@@ -43,6 +43,23 @@ the `SKILL.md` body only when the skill triggers.
 Progressive disclosure keeps sessions cheap: metadata is always in context, the body loads
 on trigger, and `references/`/`scripts/` load only when Claude decides it needs them. Keep
 `SKILL.md` lean (aim < ~500 lines) and push detail into `references/`.
+
+## Check for an existing skill first
+
+Before authoring anything from scratch, search the open skills ecosystem — someone may
+already have written what the user needs. The canonical registry is
+[`vercel-labs/skills`](https://github.com/vercel-labs/skills) (browsable at
+[skills.sh](https://skills.sh)), a CLI + registry of reusable agent skills.
+
+1. Search it: `npx skills find "<what the user wants>"` (or browse skills.sh).
+2. If a good match exists, prefer installing it over reinventing:
+   - Global (every project): `npx skills add <source> --global`
+   - Project-only (this repo): `npx skills add <source>`
+   Prefer symlink installs so upstream updates flow through. In this repo, install global
+   skills into `claude/skills/` so they stay version-controlled.
+3. Tell the user what you found — the match and how you installed it, or that nothing fit
+   and you're authoring a new one. Only continue to scaffolding when there is no suitable
+   existing skill.
 
 ## Scaffold a new skill
 
