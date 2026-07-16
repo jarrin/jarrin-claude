@@ -43,6 +43,9 @@ independently:
 - `github` / `gitlab` are **shape-only** — only the Gitea MCP is connected today. If the
   configured method's MCP is not available, say so and stop. Never silently fall back to
   files: the user asked for a forge, and quietly writing markdown hides that it failed.
+- **Changing a `method` does not move the work already filed** — it strands it, silently, in
+  the backend that is no longer queried. Resolving a section is therefore also where its
+  stranded-work check runs: **§8**.
 
 ## 2. Verified API facts — the traps
 
@@ -252,3 +255,128 @@ than redoing the work.
 - Caveat / cleanup / gotcha tickets are **parallel follow-ups**: they do **not** block the
   next stage. The milestone stays open while any remain.
 - The `todo` milestone is permanent — never auto-close it, even at `open_issues == 0`.
+
+## 8. Switching methods — stranded work
+
+Changing `backlog.<section>.method` does not move what is already filed. The old backend
+still holds the work; only the new one is queried — so in-flight work goes **invisible**,
+not merely misplaced. Observed while dogfooding: this repo flipped `plan` to `gitea` while
+`plan-backlog-backend` was a live `local` plan, and a fresh-context "Continue plan" reported
+*"no plan in progress"*.
+
+The two directions are **not symmetric**:
+
+| Switch          | What strands                            | How it looks                                                   |
+| --------------- | --------------------------------------- | -------------------------------------------------------------- |
+| `local` → forge | `plan-<slug>.md` / `current.md`; todo files | "no plan in progress"; orphaned files sit on disk            |
+| forge → `local` | **open** stage / todo tickets           | work invisible *and* the milestone lingers open forever         |
+
+`backlog.plan` and `backlog.todo` switch independently, so they strand **separately**:
+detection is per-section, never per-repo. Todos also differ in kind — a flat queue with no
+current pointer, so "stranded" there means *any* unfinished item, not a mid-flight pointer.
+
+### The policy: surface always, migrate only on request
+
+**Detect and surface. Never auto-migrate. Never refuse the switch.** Settled — the reasoning,
+so it is not re-litigated:
+
+- **Auto-migrating is exactly the guess §6 forbids.** There, an ambiguous plan costs one
+  round-trip to ask; here a wrong guess writes and closes tickets across two backends.
+- **Refusing is not implementable at the right moment.** A skill reads `.jarrin.yml` *after*
+  the edit it would refuse, and nothing intercepts that edit — the `SessionStart` hook cannot
+  even parse `backlog:` (§1). "Blocking the switch" could only mean refusing the user's
+  current, unrelated request over an edit already made.
+- **Surface-only, with no migration, is too weak.** Migrating by hand means recreating stage
+  tickets with the right label IDs, milestone, and closed state — the precise trap-laden work
+  §2–§5 exist to encapsulate.
+
+The notice is **non-blocking**: do the user's actual request, then report the strand in one
+line. It is a line of report, never a question that gates the request — because detection
+runs on every invocation, and a prompt each time would be worse than the bug it fixes. It
+repeats until the strand is resolved (migrated, or deleted / closed). That is deliberate:
+stranded work is real work.
+
+### Detection
+
+Runs at **§1 config resolution** in both skills — that is where the method becomes known —
+and checks only the backend the config does *not* name (in practice the one alternate:
+`local` ↔ the forge). Silent unless it finds something. The whole check is one stat or one
+label query; never sweep.
+
+| Section | Configured | Check                                              | Stranded when                                          |
+| ------- | ---------- | -------------------------------------------------- | ------------------------------------------------------ |
+| `plan`  | forge      | stat `<dir>/current.md`                            | it exists **and** its `**Status:**` is not `plan complete` |
+| `plan`  | `local`    | the §6 candidate query                             | an open `plan-*` milestone has ≥ 1 open `stage` ticket |
+| `todo`  | forge      | list `<dir>`                                       | any `<N>-*.md` file is present                          |
+| `todo`  | `local`    | `list_issues(labels: ["todo","claude"], state: "open")` | non-empty                                          |
+
+**"Stranded" means unfinished — not merely present.** The false positives are the whole
+difficulty, and each is ruled out by an existing rule rather than a new one:
+
+- A **finished-but-undeleted local plan is not stranded.** §7 keeps `plan-<slug>.md` on disk
+  until the user confirms deletion, so existence proves nothing; `current.md`'s `**Status:**`
+  is the pointer of record. This is the same shape as the milestone rule below — unfinished is
+  decided by the pointer, never by existence.
+- A **plan milestone kept open only by caveat tickets is not stranded.** `open_issues > 0` is
+  not a valid signal — caveat / cleanup / gotcha tickets count toward it (§6). Reuse the §6
+  candidate rule verbatim (an open `plan-*` milestone **with ≥ 1 open `stage` ticket**); do not
+  invent a second rule that can drift from it.
+- **Local todos over-report, knowingly.** A todo file carries no status field, and §7 only
+  *offers* to delete a finished one — so a declined deletion looks identical to open work.
+  Tolerable precisely *because* the policy only ever surfaces: a false positive costs one line
+  of report, never an action. The weaker definition is affordable only under this policy; an
+  auto-migrate would need a status field first.
+
+Two resolution details Stage 2 would otherwise have to invent:
+
+- **`dir` is read under any method for detection.** §1 calls `dir` local-only and forge methods
+  ignore it *for writing* — but the local-side check must still honour a custom `dir`, falling
+  back to the section default (`.claude/plans` / `.claude/todo`). Otherwise a custom dir is
+  never checked.
+- **Detection is best-effort and never fails the request.** The forge-side check needs a `repo`
+  (§1) and a live MCP; if neither section nor `backlog.repo` names one, or the MCP is absent,
+  **skip the check silently** and carry on. This is not the forbidden silent fallback: falling
+  back does the user's work in the wrong backend and hides a failure, whereas skipping an
+  advisory check leaves the actual request untouched.
+
+### Migration (only when explicitly asked)
+
+Triggered only by an explicit request ("migrate plan-<slug>", "migrate the todos") — **never**
+implied by a Continue verb, and never by the notice itself. The **destination is always the
+currently configured method**: that is the backend the user chose.
+
+**`local` → forge** — create per §4 / §5, and reuse §5's idempotency rule verbatim (resolve the
+milestone, `list_issues(state: "all")`, skip titles that already exist), so a half-migrated plan
+is safe to re-run.
+
+- Milestone description ← `## Overview`. One `Stage <n> — <title>` ticket per stage, in stage
+  order, labelled and assigned per §5.
+- **Finished stages must land closed**, or migration re-runs completed work. A stage is
+  finished iff it precedes `current.md`'s current stage, or *is* it with status
+  `stage complete`. `current.md` is the pointer of record; the ticked checkboxes in
+  `plan-<slug>.md` are a secondary signal only. Create the ticket, then close it per §7.
+- The `current.md` **notes section is the handoff** (§6 reads it from closed stage tickets'
+  comments) — attach it as the outcome comment on the **last closed** stage ticket, or, if no
+  stage is closed yet, on the lowest open one. It must survive the crossing.
+- Do **not** mint caveat / cleanup / gotcha tickets out of those notes. The blob has no
+  per-note structure to recover, and inventing one is a guess.
+- Then **offer to delete** the local files — never silently; §7's confirm rule governs.
+
+**forge → `local`** — write `plan-<slug>.md` + `current.md` from the milestone and its tickets.
+This direction is **lossy**; say what is dropped rather than dropping it quietly.
+
+- **Preserved:** overview (milestone description → `## Overview`), each stage's title, step
+  checklist and **Done when** (ticket bodies), the closed stages ticked, and the closed tickets'
+  outcome comments folded into `current.md`'s notes section — that is the handoff, so it must
+  survive. Open caveat / cleanup / gotcha tickets fold into the same notes section, which is
+  their local representation.
+- **Dropped:** issue numbers, comment threads, authorship, timestamps. State this in the report.
+- **The old forge side can only be closed, never removed** — there is no issue-delete method
+  (§2). Close each migrated ticket with an outcome comment naming where the work went (e.g.
+  `migrated to .claude/plans/plan-<slug>.md`). Folding the caveats in too is what lets the
+  milestone reach `open_issues == 0`; only then may it be closed, per §7.
+
+**Todos** carry no stage order, so both directions are flat: `local` → forge files each as a
+todo issue per §5 then offers to delete the files; forge → `local` writes one numbered file per
+open todo, then closes each issue with a pointer comment. The general `todo` milestone is
+permanent either way — never auto-close it (§7).
