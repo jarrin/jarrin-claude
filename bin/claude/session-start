@@ -5,7 +5,7 @@ Reads ``<project>/.claude/.jarrin.yml`` (required) and injects the selected
 rules -- plus an optional "Start here" checklist and command table -- into the
 session via the SessionStart hook's ``additionalContext``.
 
-The ``.jarrin.yml`` schema has three rule tiers and two quick-reference blocks::
+The ``.jarrin.yml`` schema has three rule tiers and a command quick-reference::
 
     # Tier a -- global rule slugs -> ~/.claude/rules/<slug>.md
     rules:
@@ -14,7 +14,7 @@ The ``.jarrin.yml`` schema has three rule tiers and two quick-reference blocks::
 
     # Tier b -- project-local rule files, committed in-repo (paths from repo root)
     local:
-      - .claude/rules/prdl-local-default.md
+      - .claude/rules/some-local-rule.md
 
     # Tier c -- cross-repo imports, resolved under the group root (parent of cwd)
     #   owner + rule -> <group-root>/<owner>/.claude/rules/<rule>.md
@@ -22,17 +22,14 @@ The ``.jarrin.yml`` schema has three rule tiers and two quick-reference blocks::
       - owner: server
         rule: prdl-data-types
 
-    # "Start here" orientation steps (rendered as a numbered list)
-    start:
-      - prdl up -- boot the stack
-
     # Dev-command quick reference (rendered as a table)
     commands:
       - cmd: prdl deploy
         desc: ship to production
 
 If present, ``<project>/.claude/.jarrin-claude.md`` is appended verbatim after
-everything above.
+everything above -- it is the home for the repo's always-apply project
+instructions (hard rules, "Start here" orientation, etc.).
 
 Behaviour:
   * ``.jarrin.yml`` missing         -> error (message on stderr, non-zero exit).
@@ -57,7 +54,7 @@ TAG = "[jarrin session-start]"
 
 # Recognised top-level keys. Scalar sections are lists of strings; mapping
 # sections are lists of ``key: value`` dicts.
-SCALAR_SECTIONS = ("rules", "local", "start")
+SCALAR_SECTIONS = ("rules", "local")
 MAPPING_SECTIONS = ("imports", "commands")
 SECTIONS = SCALAR_SECTIONS + MAPPING_SECTIONS
 
@@ -204,13 +201,6 @@ def resolve_rules(cfg: dict, cwd: str, group_root: str):
     return resolved
 
 
-def render_start(steps: list) -> str:
-    lines = ["## Start here", ""]
-    for i, step in enumerate(_dedup(steps), 1):
-        lines.append("{}. {}".format(i, step))
-    return "\n".join(lines)
-
-
 def render_commands(commands: list) -> str:
     lines = ["## Commands", "", "| Command | What it does |", "| --- | --- |"]
     seen = set()
@@ -266,8 +256,6 @@ def main() -> int:
         "Selected by this project's `.claude/.jarrin.yml`; follow them for this "
         "session."
     ]
-    if cfg["start"]:
-        parts.append(render_start(cfg["start"]))
     if cfg["commands"]:
         parts.append(render_commands(cfg["commands"]))
     if rule_blocks:

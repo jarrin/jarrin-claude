@@ -71,33 +71,35 @@ A project opts in with two files in its own `.claude/` directory:
 
 | File | Required | Behaviour |
 |------|----------|-----------|
-| `.claude/.jarrin.yml` | yes | Selects rules (three tiers) + optional quick-reference blocks. **Missing → error** on stderr. |
-| `.claude/.jarrin-claude.md` | no | Extra project instructions, appended verbatim. **Missing → silently ignored.** |
+| `.claude/.jarrin.yml` | yes | Selects rules (three tiers) + an optional command table. **Missing → error** on stderr. |
+| `.claude/.jarrin-claude.md` | no | The repo's always-apply project instructions (hard rules, "Start here" prose), appended verbatim. **Missing → silently ignored.** |
 
-`.jarrin.yml` selects rules from three tiers and can declare a "Start here" checklist and
-a command table:
+`.jarrin.yml` selects rules from three tiers and can declare a command table:
 
 ```yaml
 rules:                              # a. global slugs → ~/.claude/rules/<slug>.md
   - lang-php
   - fw-laravel
 local:                              # b. in-repo rule files (paths from the repo root)
-  - .claude/rules/prdl-local-default.md
+  - .claude/rules/some-local-rule.md
 imports:                            # c. cross-repo: owner repo + a rule it owns
   - owner: server                   #    → <group-root>/server/.claude/rules/prdl-data-types.md
     rule: prdl-data-types
-start:                              # rendered as a numbered "Start here" list
-  - prdl up — boot the stack
 commands:                           # rendered as a command table
   - cmd: prdl deploy
     desc: ship to production
 ```
 
+The repo's always-apply project instructions — its hard rules and "Start here"
+orientation — go in `.claude/.jarrin-claude.md` as prose (appended verbatim); there is
+no structured `start:` key.
+
 The hook reads the session `cwd` from its stdin JSON, resolves the three tiers (global →
-local → imports, each rule included once), renders `start`/`commands`, and emits the
-combined text as the SessionStart `additionalContext`. Referenced rule files that don't
-exist are warned about and skipped. The group root defaults to the parent of the repo's
-directory; override it with `JARRIN_GROUP_ROOT` and the global library with
+local → imports, each rule included once), renders the `commands` table, appends
+`.jarrin-claude.md`, and emits the combined text as the SessionStart `additionalContext`.
+Referenced rule files that don't exist are warned about and skipped; unknown top-level
+`.jarrin.yml` keys are silently ignored. The group root defaults to the parent of the
+repo's directory; override it with `JARRIN_GROUP_ROOT` and the global library with
 `JARRIN_RULES_DIR` (both for testing). Unit tests live in
 `bin/claude/test_session_start.py` and run in the pre-commit hook.
 

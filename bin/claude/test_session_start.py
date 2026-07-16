@@ -74,8 +74,8 @@ class ParseConfigTest(unittest.TestCase):
         self.assertEqual(cfg["rules"], ["lang-php", "lang-ts"])
 
     def test_hash_in_value_preserved(self):
-        cfg = mod.parse_config("start:\n  - build C# project\n")
-        self.assertEqual(cfg["start"], ["build C# project"])
+        cfg = mod.parse_config("local:\n  - build C# project\n")
+        self.assertEqual(cfg["local"], ["build C# project"])
 
     def test_unknown_section_ignored(self):
         cfg = mod.parse_config("bogus:\n  - x\nrules:\n  - lang-php\n")
@@ -194,17 +194,22 @@ class HookIntegrationTest(unittest.TestCase):
         self.assertIn("does-not-exist", proc.stderr)
         self.assertIn("nope/absent", proc.stderr)
 
-    def test_start_and_commands_rendered(self):
+    def test_commands_rendered(self):
         self._jarrin(
             "rules:\n  - lang-php\n"
-            "start:\n  - prdl up -- boot the stack\n"
             "commands:\n  - cmd: prdl deploy\n    desc: ship it\n"
         )
         ctx = self._context(self._run())
-        self.assertIn("## Start here", ctx)
-        self.assertIn("1. prdl up -- boot the stack", ctx)
         self.assertIn("## Commands", ctx)
         self.assertIn("| `prdl deploy` | ship it |", ctx)
+
+    def test_start_section_no_longer_rendered(self):
+        # `start:` was retired; a stray top-level `start:` is an ignored unknown section.
+        self._jarrin("start:\n  - do a thing\nrules:\n  - lang-php\n")
+        ctx = self._context(self._run())
+        self.assertNotIn("## Start here", ctx)
+        self.assertNotIn("do a thing", ctx)
+        self.assertIn("use composer", ctx)  # rules still load
 
     def test_jarrin_claude_md_appended(self):
         self._jarrin("rules:\n  - lang-php\n")

@@ -25,8 +25,8 @@ Rules are **not** auto-loaded by path globbing. Each project opts in explicitly,
 the selected rules at the start of every session:
 
 - **`<project>/.claude/.jarrin.yml`** (required to activate) selects rules from three
-  tiers and, optionally, declares quick-reference blocks. All keys are optional; an empty
-  file injects nothing (not an error):
+  tiers and, optionally, declares a command quick-reference. All keys are optional; an
+  empty file injects nothing (not an error):
 
   ```yaml
   # Tier a — global rule slugs → ~/.claude/rules/<slug>.md
@@ -36,7 +36,7 @@ the selected rules at the start of every session:
 
   # Tier b — project-local rule files committed in this repo (paths from the repo root)
   local:
-    - .claude/rules/prdl-local-default.md
+    - .claude/rules/some-local-rule.md
 
   # Tier c — cross-repo imports: an owner repo + a rule it owns. Resolved under the
   # group root (the parent of the repo's directory):
@@ -44,10 +44,6 @@ the selected rules at the start of every session:
   imports:
     - owner: server
       rule: prdl-data-types
-
-  # "Start here" orientation, rendered as a numbered list
-  start:
-    - prdl up — boot the stack
 
   # Dev-command quick reference, rendered as a table
   commands:
@@ -59,20 +55,21 @@ the selected rules at the start of every session:
   are de-duplicated: `rules` by slug, `imports` by owner+rule). Missing rule files are
   warned about and skipped; a missing `.jarrin.yml` is an error (surfaced on stderr).
   The parser is a stdlib-only YAML subset — block lists, inline `[a, b]` for the scalar
-  tiers, and `- key: value` mapping lists for `imports`/`commands`. Override the group
-  root with `JARRIN_GROUP_ROOT` and the library location with `JARRIN_RULES_DIR` (both
-  for testing).
+  tiers, and `- key: value` mapping lists for `imports`/`commands`. Unknown top-level
+  keys are silently ignored. Override the group root with `JARRIN_GROUP_ROOT` and the
+  library location with `JARRIN_RULES_DIR` (both for testing).
 
 - **`<project>/.claude/.jarrin-claude.md`** (optional) is appended verbatim after
-  everything above, for free-form project-specific instructions. Silently ignored when
-  absent.
+  everything above. This is the home for the repo's **always-apply project
+  instructions** — its hard rules and "Start here" orientation prose (there is no
+  structured `start:` key; write it here as prose). Silently ignored when absent.
 
 This gives explicit, per-repo control that path globs cannot express (e.g. "this Laravel
 app uses React Native — never Expo"): the project lists the exact rules it wants, its own
 in-repo rules, and the shared rules it imports from sibling repos in the same group.
 
 The hook is covered by unit tests in `bin/claude/test_session_start.py` (all three tiers,
-dedup, missing-file behaviour, `start`/`commands` rendering), run by the pre-commit hook.
+dedup, missing-file behaviour, `commands` rendering), run by the pre-commit hook.
 
 ## Rule file format
 
