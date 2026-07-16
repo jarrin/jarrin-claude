@@ -77,10 +77,70 @@ class ParseConfigTest(unittest.TestCase):
         cfg = mod.parse_config("local:\n  - build C# project\n")
         self.assertEqual(cfg["local"], ["build C# project"])
 
+    def test_inner_quotes_preserved(self):
+        text = "commands:\n  - cmd: unittest discover -p 'test_*.py'\n    desc: run tests\n"
+        cfg = mod.parse_config(text)
+        self.assertEqual(cfg["commands"][0]["cmd"], "unittest discover -p 'test_*.py'")
+
+    def test_surrounding_quotes_stripped(self):
+        cfg = mod.parse_config("rules:\n  - 'lang-php'\n  - \"lang-ts\"\n")
+        self.assertEqual(cfg["rules"], ["lang-php", "lang-ts"])
+
     def test_unknown_section_ignored(self):
         cfg = mod.parse_config("bogus:\n  - x\nrules:\n  - lang-php\n")
         self.assertEqual(cfg["rules"], ["lang-php"])
         self.assertNotIn("bogus", cfg)
+
+    def test_nested_backlog_block_ignored(self):
+        # `backlog:` is skill-consumed and two levels deep -- the parser has no
+        # representation for it and must drop it whole, keys and all.
+        text = (
+            "backlog:\n"
+            "  repo: owner/name\n"
+            "  plan:\n"
+            "    method: local\n"
+            "    assignee: claude\n"
+            "    dir: .claude/plans\n"
+            "  todo:\n"
+            "    method: gitea\n"
+            "    assignee: claude\n"
+            "rules:\n"
+            "  - lang-php\n"
+        )
+        cfg = mod.parse_config(text)
+        self.assertNotIn("backlog", cfg)
+        self.assertEqual(cfg["rules"], ["lang-php"])
+        # Its nested `plan:` / `todo:` keys must not leak into any real section.
+        self.assertEqual(cfg["local"], [])
+        self.assertEqual(cfg["imports"], [])
+        self.assertEqual(cfg["commands"], [])
+
+    def test_backlog_between_sections_corrupts_nothing(self):
+        # The riskiest placement: sandwiched between real sections, so a parser
+        # that mis-tracked the current key would spill `backlog:` into a neighbour.
+        text = (
+            "rules:\n"
+            "  - lang-php\n"
+            "backlog:\n"
+            "  repo: owner/name\n"
+            "  plan:\n"
+            "    method: gitea\n"
+            "local:\n"
+            "  - .claude/rules/prdl-local.md\n"
+            "imports:\n"
+            "  - owner: server\n"
+            "    rule: prdl-data-types\n"
+            "commands:\n"
+            "  - cmd: prdl deploy\n"
+            "    desc: ship it\n"
+        )
+        cfg = mod.parse_config(text)
+        self.assertEqual(cfg["rules"], ["lang-php"])
+        self.assertEqual(cfg["local"], [".claude/rules/prdl-local.md"])
+        self.assertEqual(
+            cfg["imports"], [{"owner": "server", "rule": "prdl-data-types"}]
+        )
+        self.assertEqual(cfg["commands"], [{"cmd": "prdl deploy", "desc": "ship it"}])
 
 
 class HookIntegrationTest(unittest.TestCase):
@@ -210,6 +270,25 @@ class HookIntegrationTest(unittest.TestCase):
         self.assertNotIn("## Start here", ctx)
         self.assertNotIn("do a thing", ctx)
         self.assertIn("use composer", ctx)  # rules still load
+
+    def test_backlog_block_ignored_end_to_end(self):
+        self._jarrin(
+            "backlog:\n"
+            "  repo: owner/name\n"
+            "  plan:\n"
+            "    method: gitea\n"
+            "    assignee: claude\n"
+            "  todo:\n"
+            "    method: local\n"
+            "rules:\n"
+            "  - lang-php\n"
+        )
+        proc = self._run()
+        ctx = self._context(proc)
+        self.assertIn("use composer", ctx)     # rules still load alongside it
+        self.assertNotIn("backlog", ctx)       # nothing from the block is injected
+        self.assertNotIn("assignee", ctx)
+        self.assertNotIn("WARNING", proc.stderr)  # and it is not mistaken for a rule
 
     def test_jarrin_claude_md_appended(self):
         self._jarrin("rules:\n  - lang-php\n")

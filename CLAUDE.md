@@ -18,6 +18,19 @@ routine changes. Push only when explicitly asked.
 - All content in **English**, imperative and terse — rules load into a live context
   window, so every line must earn its place.
 
+## Where shared references live
+
+A doc that **more than one skill** reads goes in `claude/references/*.md`, symlinked to
+`~/.claude/references/`; skills cite it by that absolute path. Keeping it out of any one
+skill's `references/` avoids an arbitrary owner (and a second skill reaching into the
+first one's directory). A doc only one skill reads stays in that skill's own
+`references/`, per `add-skill`.
+
+Not a skill directory: `claude/references/` holds plain Markdown with no `SKILL.md` and
+is never auto-loaded — it costs nothing until a skill reads it. `claude/references/backlog.md`
+is the shared contract behind the `backlog:` block (below), implemented by both
+`staged-planning` and `todo`.
+
 ## How rules are selected (per project)
 
 Rules are **not** auto-loaded by path globbing. Each project opts in explicitly, and a
@@ -64,16 +77,37 @@ the selected rules at the start of every session:
   instructions** — its hard rules and "Start here" orientation prose (there is no
   structured `start:` key; write it here as prose). Silently ignored when absent.
 
-- A **`todo:`** block in `.jarrin.yml` is **skill-consumed, not read by the hook** (which
-  ignores unknown top-level keys). The `todo` skill reads it to route new repo todos to a
-  Gitea/GitHub/GitLab MCP or a numbered markdown file under `.claude/todo/`:
+- A **`backlog:`** block in `.jarrin.yml` selects — per repo, and independently for plans
+  and todos — whether work is tracked as **local files** (the default) or as **issues on a
+  git forge** grouped by milestone. It replaces the retired `todo:` block:
 
   ```yaml
-  todo:
-    backend: gitea        # gitea | github | gitlab | file (default: file)
-    repo: owner/name      # target repo for the MCP backends
-    dir: .claude/todo     # file backend output dir (default: .claude/todo)
+  backlog:
+    repo: owner/name        # home repo for the forge methods; default for both sections
+    plan:
+      method: local         # local (alias: repo) | gitea | github | gitlab (default: local)
+      assignee: claude      # forge methods only
+      repo: owner/name      # optional per-section override of backlog.repo
+      dir: .claude/plans    # local method only (default: .claude/plans)
+    todo:
+      method: gitea
+      assignee: claude
+      dir: .claude/todo     # local method only (default: .claude/todo)
   ```
+
+  `staged-planning` reads `backlog.plan`; `todo` reads `backlog.todo`. Both sections
+  default to `method: local`, and a missing `backlog:` block means local for both — so a
+  repo that never declares one behaves exactly as it did before `backlog:` existed.
+  How both skills resolve this config and drive a forge — labels, milestones, ticket
+  bodies, retrieval, and the silent API traps — is specified once in
+  `claude/references/backlog.md`; change the behaviour there, not in a skill.
+
+  **The hook does not read this block, and cannot.** `backlog:` is skill-consumed: the
+  stdlib YAML subset only recognises the four top-level sections above and has no
+  representation for two-level nesting, so it ignores `backlog:` and everything indented
+  under it. Skills parse the YAML themselves. `bin/claude/test_session_start.py` pins
+  this — a nested `backlog:` block must never corrupt `rules` / `local` / `imports` /
+  `commands`.
 
 This gives explicit, per-repo control that path globs cannot express (e.g. "this Laravel
 app uses React Native — never Expo"): the project lists the exact rules it wants, its own

@@ -2,60 +2,60 @@
 name: todo
 description: >-
   Create a todo / issue / ticket / task for the current repo, routing to the backend
-  configured per-repo in .claude/.jarrin.yml under a `todo:` block — a Gitea, GitHub, or
-  GitLab MCP, or a numbered markdown file under .claude/todo/. Use this whenever the user
-  wants to file, create, add, log, or track a todo, issue, ticket, task, or backlog item
-  for the repo — e.g. "add a todo", "create an issue", "file a ticket", "track this as a
-  task", "note this for later", or "/todo …" — even when they don't name a backend.
+  configured per-repo in .claude/.jarrin.yml under the `backlog.todo` section — a Gitea,
+  GitHub, or GitLab issue, or a numbered markdown file under .claude/todo/. Use this
+  whenever the user wants to file, create, add, log, or track a todo, issue, ticket, task,
+  or backlog item for the repo — e.g. "add a todo", "create an issue", "file a ticket",
+  "track this as a task", "note this for later", or "/todo …" — even when they don't name
+  a backend. Also owns the "Continue todos" verb: picking up the oldest open todo and
+  working it.
 ---
 
-# todo — file a repo issue through the configured backend
+# todo — file a repo todo through the configured backlog backend
 
 Create one or more todos for the current repo. The backend is chosen per-repo in
-`.claude/.jarrin.yml`; this skill reads that config itself (the jarrin `SessionStart`
-hook ignores the `todo:` key — it is skill-owned).
+`.claude/.jarrin.yml` under `backlog.todo`; this skill parses that block itself — the
+jarrin `SessionStart` hook cannot, since nested keys are outside its YAML subset.
 
-## 1. Read the config
+`~/.claude/references/backlog.md` is the single source of truth for config resolution,
+labels, milestones, ticket bodies, and the silent API traps. Read it before the first
+forge call; this skill points at it rather than restating it.
 
-Read `<repo-root>/.claude/.jarrin.yml` and find the top-level `todo:` mapping:
+## 1. Resolve the config
+
+Read `<repo-root>/.claude/.jarrin.yml` and resolve the `backlog.todo` section per **§1 of
+the reference** — defaults, `repo` inheritance, and the fail-loudly rule live there.
 
 ```yaml
-todo:
-  backend: gitea          # gitea | github | gitlab | file   (default: file)
-  repo: owner/name        # target repo for the MCP backends — required for gitea/github/gitlab
-  dir: .claude/todo       # file backend output directory     (default: .claude/todo)
-  # any extra keys (labels, assignee, project, milestone) are passed through when the
-  # chosen backend's tool supports them; ignore ones it doesn't.
+backlog:
+  repo: owner/name       # home repo; shared default for both sections
+  todo:
+    method: gitea        # local (alias: repo) | gitea | github | gitlab   (default: local)
+    assignee: claude     # forge methods only
+    repo: owner/name     # optional override of backlog.repo
+    dir: .claude/todo    # local method only (default: .claude/todo)
 ```
 
-- If there is **no `todo:` block**, default to `backend: file`, `dir: .claude/todo`.
-- If `backend` is one of `gitea` / `github` / `gitlab` but `repo` is missing, stop and ask
-  the user which `owner/name` to file against — don't guess.
+No `backlog:` block, or no `todo:` section → `method: local`, `dir: .claude/todo`. A forge
+method with no `repo` anywhere → stop and ask which `owner/name` to file against.
 
 ## 2. Derive title + body
 
-From the user's request, derive a concise imperative **title** (e.g. "Refactor the
-download matcher registry") and an optional **body** with the detail, acceptance notes,
-and any file references. If the user asked for several todos, handle each one.
+Derive a concise imperative **title** (e.g. "Refactor the download matcher registry"). The
+body follows the reference's §5 format:
 
-## 3. Route to the backend
+```markdown
+**Request:** <the user's ask, verbatim — not a paraphrase>
+**Scope:** <repo(s) the work touches, e.g. `owner/name`; or "this repo">
 
-### `gitea` / `github` / `gitlab` — via MCP
+<detail: context, file references, acceptance notes>
+```
 
-The issue-creation tool is provided by that backend's MCP server. Load it on demand:
+If the user asked for several todos, handle each one.
 
-- Find it with `ToolSearch`, e.g. `select:` by exact name if known, otherwise a keyword
-  query like `gitea create issue`, `github create issue`, `gitlab create issue`.
-- Call it with the target `repo` (`owner/name`), the title, and the body. Pass through any
-  supported extras from the config (`labels`, `assignee`, …).
-- Report the created issue's number and URL.
+## 3. Route to the method
 
-If **no matching MCP tool is available** for the configured backend (the server isn't
-connected this session), do not silently invent one and do not quietly write files the
-user didn't ask for. Tell the user the `<backend>` MCP isn't connected, and offer to use
-the `file` fallback (`.claude/todo/`) instead.
-
-### `file` — numbered markdown under `.claude/todo/`
+### `local` — numbered markdown under `.claude/todo/`
 
 Run the bundled helper; it computes the next number, kebab-cases the title, and writes the
 file atomically:
@@ -67,10 +67,55 @@ BODY
 ```
 
 It prints the created path (e.g. `.claude/todo/3-refactor-download-matcher.md`). Numbering
-continues from the highest existing `N-` prefix in the directory. Report the path back.
+continues from the highest existing `N-` prefix in the directory.
+
+### `gitea` — an issue under the general `todo` milestone
+
+Load the tools in one call:
+
+```
+ToolSearch select:mcp__gitea__label_read,mcp__gitea__label_write,mcp__gitea__milestone_read,mcp__gitea__milestone_write,mcp__gitea__issue_write
+```
+
+Then, against the resolved `owner/name`:
+
+1. **Labels** (§3) — `label_read list_repo_labels`, create only the names that are missing,
+   and resolve `todo` + `claude` to numeric IDs. Never blind-create: `create_repo_label`
+   silently duplicates an existing name.
+2. **Milestone** (§4) — resolve the general `todo` milestone: `milestone_read list`
+   (`state: "open"`, `name: "todo"`) narrows by **substring**, so match `title == "todo"`
+   exactly client-side; create it with `milestone_write` if absent. It is permanent —
+   never auto-close it, even at `open_issues == 0`.
+3. **Issue** (§5) — `issue_write create` with the title, the §2 body, `labels` as the
+   resolved **IDs** (never names), the milestone **ID**, and `assignees: [<assignee>]` when
+   one is configured. A non-collaborator assignee hard-fails loudly — that is the intended
+   signal, not something to work around.
+
+### `github` / `gitlab`
+
+Shape-only: neither MCP is connected today. Say the configured method's MCP is unavailable
+and stop. **Never** fall back to files silently — the user asked for a forge, and quietly
+writing markdown hides that it failed.
 
 ## 4. Confirm
 
-State plainly what was created — the issue URL (MCP backends) or the file path (file
-backend) — one line per todo. If nothing could be created (e.g. missing `repo`, or an
-unavailable MCP with the fallback declined), say so and why.
+State plainly what was created — the issue number and URL, or the file path — one line per
+todo. If nothing could be created (missing `repo`, unavailable MCP, rejected assignee), say
+so and why.
+
+## 5. "Continue todos" — work the oldest open todo
+
+Resolve `backlog.todo` (§1), then take the **oldest open** todo:
+
+- `local` — the **lowest-numbered** file in `<dir>`.
+- `gitea` — `list_issues(labels: ["todo", "claude"], state: "open")` against the resolved
+  repo, then the **lowest issue number**: todos carry no stage numbering, so creation order
+  *is* queue order. The response is **newest first**, so sorting is still mandatory
+  (reference §6). Read the body with `issue_read get` — `list_issues` does not return it.
+
+Nothing open → say so; do not reach into the plan milestones for work. Todos are independent
+of plans: a todo is never a plan stage, and "Continue todos" never advances a plan.
+
+Do **one** todo, then report and stop, so the user can decide what is next. Finishing one:
+`gitea` → comment the outcome, then close (reference §7); `local` → offer to delete the file,
+never silently.

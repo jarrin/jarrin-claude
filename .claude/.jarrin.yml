@@ -1,0 +1,31 @@
+# Per-repo Claude config for jarrin-claude. See CLAUDE.md for the full schema.
+
+# Tier a — global rule slugs. Deliberately empty.
+#
+# This repo is Markdown plus one stdlib-only Python hook (`bin/claude/session-start`,
+# which avoids a PyYAML dependency on purpose) tested with `unittest`. Selecting
+# `lang-python` would inject the Poetry / pytest / Ruff / mypy stack that this repo
+# deliberately does not use, so it would mislead every session rather than help.
+# This is the per-repo opt-in working as intended — not an oversight.
+rules: []
+
+# Dev-command quick reference.
+commands:
+  - cmd: python3 -m unittest discover -s bin/claude -p 'test_*.py'
+    desc: run the session-start hook tests (pytest is NOT installed here)
+  - cmd: bin/install
+    desc: (re)create the ~/.claude symlinks; idempotent
+
+# Backlog routing. Skill-consumed: the session-start hook cannot parse this block
+# (no two-level nesting in its YAML subset) and ignores it by design.
+#
+# The code lives on github.com/jarrin/jarrin-claude, but only the Gitea MCP is
+# connected — so the backlog is homed on Gitea while the code stays on GitHub.
+backlog:
+  repo: jarrin/jarrin-claude
+  plan:
+    method: gitea
+    assignee: claude
+  todo:
+    method: gitea
+    assignee: claude

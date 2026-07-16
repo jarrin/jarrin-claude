@@ -1,7 +1,7 @@
 ---
 name: staged-planning
-description: Jarrin's required workflow for ANY request to "create a plan" (or "make a plan", "plan out X"). Plans are always split into stages, persisted under the project's .claude/plans/ folder, and executed ONE stage at a time — stop after every stage, report, and wait for the user to say "Continue plan" in fresh context. Read and follow this whenever the user asks for a plan or says "continue plan".
-version: 0.1.0
+description: Jarrin's required workflow for ANY request to "create a plan" (or "make a plan", "plan out X"). Plans are always split into stages, persisted through the backend configured per-repo in .claude/.jarrin.yml under the `backlog.plan` section — local files under .claude/plans/, or milestone-grouped issues on a git forge — and executed ONE stage at a time: stop after every stage, report, and wait for the user to continue in fresh context. Read and follow this whenever the user asks for a plan, or uses a "Continue …" verb to resume one — "Continue plan", "Continue plan-<slug>" for a named plan, or "Continue 1234" for a named ticket.
+version: 0.3.0
 ---
 
 # Staged Planning (Jarrin's workflow)
@@ -11,38 +11,79 @@ asks you to **create / make / write a plan** for something, or says **"continue 
 follow this exactly. It applies in every project and repo unless the user overrides it
 for a specific request.
 
+Where a plan is persisted is chosen per-repo in `.claude/.jarrin.yml` under `backlog.plan`;
+this skill parses that block itself — the jarrin `SessionStart` hook cannot, since nested
+keys are outside its YAML subset.
+
+`~/.claude/references/backlog.md` is the single source of truth for config resolution,
+labels, milestones, ticket bodies, retrieval, and the silent API traps. Read it before the
+first forge call; this skill points at it rather than restating it.
+
 ## The golden rule
 
 **NEVER continue to the next stage on your own.** After finishing a stage you stop
 completely and wait for the user to clear context and explicitly say "Continue plan".
 There are no exceptions — not "the next stage is trivial", not "it's clearly implied",
-not "to save a round-trip". Stop means stop.
+not "to save a round-trip". Stop means stop. This holds for every method.
 
-## Where plans live
+## 1. Resolve the config
 
-Everything for the plan lives in a **`.claude/plans/` folder in the current project's
-root** (create it if it does not exist — do not use the home `~/.claude/plans/` folder,
-that is Claude Code's own plan-mode storage).
+Read `<repo-root>/.claude/.jarrin.yml` and resolve the `backlog.plan` section per **§1 of
+the reference** — defaults, `repo` inheritance, and the fail-loudly rule live there.
 
-- `.claude/plans/plan-xxx.md` — one file per plan. Replace `xxx` with a short
-  kebab-case slug of the goal (e.g. `plan-add-oauth-login.md`).
-- `.claude/plans/current.md` — the pointer file: which plan is active and which stage
-  is current. There is exactly one active plan at a time.
+```yaml
+backlog:
+  repo: owner/name       # home repo; shared default for both sections
+  plan:
+    method: local        # local (alias: repo) | gitea | github | gitlab   (default: local)
+    assignee: claude     # forge methods only
+    repo: owner/name     # optional override of backlog.repo
+    dir: .claude/plans   # local method only (default: .claude/plans)
+```
 
-## When the user asks to CREATE a plan
+No `backlog:` block, or no `plan:` section → `method: local`, `dir: .claude/plans`. A forge
+method with no `repo` anywhere → stop and ask which `owner/name` to file against.
+
+## 2. The plan is the same object in every method
+
+Only the persistence differs. A plan always has an overview, **ordered stages** that are
+each independently completable and end at a natural stopping point, each with steps and a
+**Done when**, plus notes carried forward to the next fresh-context session.
+
+| Plan part            | `local`                              | `gitea`                                          |
+| -------------------- | ------------------------------------ | ------------------------------------------------ |
+| overview             | `## Overview` in `plan-<slug>.md`    | the milestone description                        |
+| a stage              | `### Stage <n> — <title>` + steps    | issue `Stage <n> — <title>`, labelled `stage`     |
+| which stage is current | `current.md`                       | lowest open `stage` ticket, by parsed `<n>`      |
+| carried-forward notes | `current.md` notes section          | outcome comment on the closed stage ticket       |
+| caveat / cleanup / gotcha | a note in `current.md`          | its own ticket on the same milestone             |
+
+There is exactly one active plan at a time. For `method: gitea` the **forge is the sole
+source of truth** — no `plan-<slug>.md`, no `current.md`; writing both would give the plan
+two states that drift apart.
+
+## 3. When the user asks to CREATE a plan
 
 1. Understand the goal (ask clarifying questions first if it is underspecified).
-2. Create `.claude/plans/` in the project root if needed.
-3. Write `.claude/plans/plan-<slug>.md` with the plan **split into ordered stages**.
-   Each stage must be independently completable and end at a natural stopping point.
-   Use the structure below.
-4. Write (overwrite) `.claude/plans/current.md` pointing at this plan, with the current
-   stage set to **Stage 1** and status `not started`.
-5. **Do NOT start executing yet unless the user asked you to.** Present the staged plan
+2. Pick a short kebab-case slug of the goal (e.g. `add-oauth-login`).
+3. Persist it via the resolved method (§4).
+4. **Do NOT start executing yet unless the user asked you to.** Present the staged plan
    and let the user confirm. (If the user asked you to create *and* begin, you may then
    execute Stage 1 — and only Stage 1.)
 
-### `plan-<slug>.md` structure
+## 4. Route to the method
+
+### `local` — markdown under `.claude/plans/`
+
+Everything lives in the resolved `dir` in the current project's root (create it if it does
+not exist — do not use the home `~/.claude/plans/` folder, that is Claude Code's own
+plan-mode storage).
+
+- `<dir>/plan-<slug>.md` — one file per plan.
+- `<dir>/current.md` — the pointer file: which plan is active, and which stage is current.
+
+Write `plan-<slug>.md`, then overwrite `current.md` pointing at it with the current stage
+set to **Stage 1** and status `not started`.
 
 ```markdown
 # Plan: <goal>
@@ -60,8 +101,6 @@ that is Claude Code's own plan-mode storage).
 ...
 ```
 
-### `current.md` structure
-
 ```markdown
 # Current plan
 - **Plan:** plan-<slug>.md
@@ -73,32 +112,140 @@ that is Claude Code's own plan-mode storage).
 <anything the next fresh-context session needs to know>
 ```
 
-## Executing a stage
+### `gitea` — a `plan-<slug>` milestone of stage tickets
 
-When executing the current stage (either just after creation if asked, or after a
-"Continue plan"):
+Load the tools in one call:
 
-1. Do the work for **that one stage only**.
-2. Update the stage's checkboxes in `plan-<slug>.md` as you complete steps.
-3. Update `current.md`: mark the finished stage complete, and record any caveats,
-   decisions, or blockers in the "Notes / caveats carried forward" section so the next
-   fresh-context session has what it needs.
-4. **STOP.** Report to the user:
-   - What was done in this stage.
-   - Any caveats, surprises, or deviations.
-   - Whether it can continue, or is blocked (and why, if so).
-   - Then tell the user they can clear context and say **"Continue plan"** to proceed.
-5. Do not touch the next stage.
+```
+ToolSearch select:mcp__gitea__label_read,mcp__gitea__label_write,mcp__gitea__milestone_read,mcp__gitea__milestone_write,mcp__gitea__issue_read,mcp__gitea__issue_write,mcp__gitea__list_issues
+```
 
-## When the user says "Continue plan" (fresh context)
+Then, against the resolved `owner/name`, in this order — `issue_write` needs both the
+labels and the milestone as **numeric IDs**, so they must exist first:
 
-1. Read `.claude/plans/current.md` to find the active plan and current stage.
-2. Read the plan file `.claude/plans/plan-<slug>.md`, plus the carried-forward notes.
-3. Execute the current stage following "Executing a stage" above (do the one stage,
-   update files, stop and report).
+1. **Labels** (§3) — `label_read list_repo_labels`, create only the names that are missing,
+   and resolve `stage` + `plan-<slug>` + `claude` to IDs. Never blind-create:
+   `create_repo_label` silently duplicates an existing name.
+2. **Milestone** (§4) — resolve `plan-<slug>` with the overview as its description.
+   `milestone_read list` narrows by **substring**, so match `title ==` exactly client-side;
+   apply the collision policy (one open match → reuse; none → create; two or more → suffix
+   `-2`, `-3`). The `plan-<slug>` **label name must carry the same suffix as the milestone
+   title**, or the index and the grouping diverge.
+3. **Stage tickets** (§5) — one `Stage <n> — <title>` issue per stage, **created in stage
+   order**, labelled `stage` + `plan-<slug>` + `claude` (as IDs), on the milestone ID,
+   assigned to `backlog.plan.assignee` when set. The body carries the §5 **Request** /
+   **Scope** lines, the steps as a checklist, and **Done when**.
 
-## When the plan finishes
+**Re-running must be safe.** A half-created plan is resumed, not duplicated: fetch
+`list_issues(labels: ["plan-<slug>", "stage"], state: "all")` first and skip any stage
+whose title already exists.
 
-After the final stage completes, set `current.md` status to `plan complete`, report the
-outcome, and **offer to delete** the plan files (`plan-<slug>.md`) and clear
-`current.md`. Only delete after the user confirms.
+### `github` / `gitlab`
+
+Shape-only: neither MCP is connected today. Say the configured method's MCP is unavailable
+and stop. **Never** fall back to files silently — the user asked for a forge, and quietly
+writing markdown hides that it failed.
+
+## 5. Executing a stage
+
+Either just after creation if asked, or after a "Continue plan". Do the work for **that one
+stage only**, then record it and stop.
+
+### Finding the current stage
+
+- `local` — read `current.md`.
+- `gitea` — the plan's open `stage` tickets are
+  `list_issues(labels: ["plan-<slug>", "stage"], state: "open")`; the current stage is the
+  **lowest parsed `<n>` from the `Stage <n> — <title>` title** (§6). Never order stages by
+  issue number — caveat and cleanup tickets interleave. Read the ticket body for the steps;
+  read the closed stage tickets' comments for what was carried forward.
+
+### Recording the outcome
+
+- `local` — tick the stage's checkboxes in `plan-<slug>.md`; update `current.md` (mark the
+  stage complete, and record caveats, decisions, and blockers under "Notes / caveats carried
+  forward" so the next fresh-context session has what it needs).
+- `gitea` — `issue_write add_comment` on the stage ticket with the outcome and anything
+  carried forward, then `issue_write update` it to `state: "closed"` (§7). Comment first:
+  the comment is the carried-forward note, and closing without it loses the handoff.
+
+### Caveats, cleanups and gotchas found mid-stage
+
+- `local` — note them in `current.md`.
+- `gitea` — file each as its own ticket on the **same milestone**, labelled `caveat` /
+  `cleanup` / `gotcha` + `plan-<slug>` + `claude`, body per §5.
+
+They are **parallel follow-ups: they do not block the next stage.** The milestone stays open
+while any remain. If one genuinely blocks progress, that is not a caveat — say so in the
+report and stop.
+
+### Then STOP
+
+Report to the user:
+
+- What was done in this stage.
+- Any caveats, surprises, or deviations (and the ticket numbers, for `gitea`).
+- Whether it can continue, or is blocked (and why, if so).
+- Then tell the user they can clear context and say **"Continue plan"** to proceed.
+
+Do not touch the next stage.
+
+## 6. The "Continue …" verbs (fresh context)
+
+Each verb resolves to **one** unit of work; you then execute it per §5 — do the work, record
+the outcome, stop. Resolve the config (§1) first. For `gitea`, selection, ordering and
+scoping are specified in **reference §6** — follow it rather than re-deriving it: the
+ordering trap there is silent, and getting it wrong runs the wrong stage.
+
+### "Continue plan" — the active plan's current stage
+
+- `local` — read `current.md` for the active plan and its current stage, then that stage's
+  steps from the plan file, plus the carried-forward notes.
+- `gitea` — select the active plan per **reference §6** ("Selecting the active plan"): an
+  open `plan-*` milestone **with at least one open `stage` ticket**. No candidate → no plan
+  is in progress, say so; two or more → **ask**. Then its current stage is the **lowest
+  parsed `<n>`** of `list_issues(labels: ["plan-<slug>", "stage", "claude"], state: "open")`.
+  Read that ticket's body for the steps, and the closed stage tickets' comments for what was
+  carried forward.
+
+### "Continue plan-<slug>" — a named plan
+
+The plan is given, so no selection is needed; the stage selection is unchanged.
+
+- `local` — `<dir>/plan-<slug>.md`. If it is not the plan in `current.md`, say so and ask:
+  naming a different plan is a switch, not a continuation.
+- `gitea` — resolve the milestone by title per **reference §4** (`name:` narrows by
+  **substring** → match `title ==` exactly client-side; two open matches → ask). Then take
+  its lowest open stage as above. Two ways a named plan has nothing to run, both reported
+  rather than worked around: no open milestone by that title but a **closed** one → the plan
+  is finished; an **open** milestone with **zero open stage tickets** → also finished, its
+  milestone merely held open by caveat tickets (reference §6). Never reopen a closed ticket
+  to manufacture work.
+
+### "Continue <number>" — a named ticket (`gitea` only)
+
+`issue_read get` the ticket and route on its milestone per **reference §6** ("Resolving a
+ticket by number"). The user named this ticket explicitly, so honour it — but say plainly
+when it is not what "Continue plan" would have picked:
+
+- A **stage** ticket with an earlier stage still open → do the named one, and flag the
+  skipped stage. Never silently reorder a plan.
+- A **caveat / cleanup / gotcha** ticket → do that follow-up, with its milestone's plan as
+  context. It is not a stage: finishing it does not advance the plan.
+- A **`todo`-milestone** ticket → a standalone todo, not plan work.
+- **Already closed** → report its outcome comment; do not redo it.
+
+### "Continue todos"
+
+Not a plan verb — it reads `backlog.todo` and belongs to the `todo` skill. Hand off to it.
+
+## 7. When the plan finishes
+
+After the final stage completes, report the outcome and:
+
+- `local` — set `current.md` status to `plan complete`, and **offer to delete** the plan
+  files (`plan-<slug>.md`) and clear `current.md`. Only delete after the user confirms.
+- `gitea` — every `stage` ticket is closed. Offer to close the milestone, but **only once
+  `open_issues == 0`**: leftover caveat / cleanup / gotcha tickets are still real work, and
+  closing over them buries it. There is no issue-delete method — tickets are closed, never
+  removed.

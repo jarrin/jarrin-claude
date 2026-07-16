@@ -8,3 +8,8 @@
 .credentials.json
 settings.local.json
 *.log
+
+# Backlog working state. `.claude/.jarrin.yml` is committed config and must stay
+# tracked — only the transient plan/todo files below are ignored.
+.claude/plans/
+.claude/todo/

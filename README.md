@@ -17,6 +17,7 @@ they are not in the working tree.
 | `bin/claude/session-start` | SessionStart hook — loads per-project rule selection (deployed to `~/.claude/bin/`) |
 | `claude/rules/*.md` | Global rule library (`lang-php.md`, `fw-laravel.md`, …) |
 | `claude/skills/*/` | Global skills (e.g. `add-skill/` — how to author a skill) |
+| `claude/references/*.md` | Shared reference docs read by more than one skill (`backlog.md`) |
 
 Language-/framework-specific guidance goes in `claude/rules/*.md`. Projects opt in to
 specific rules via their own `.claude/.jarrin.yml` — see **Rule loading** below.
@@ -43,6 +44,7 @@ ln -sfn ~/projects/jarrin-claude/claude/settings.json ~/.claude/settings.json
 ln -sfn ~/projects/jarrin-claude/bin/claude           ~/.claude/bin
 ln -sfn ~/projects/jarrin-claude/claude/rules         ~/.claude/rules
 ln -sfn ~/projects/jarrin-claude/claude/skills        ~/.claude/skills
+ln -sfn ~/projects/jarrin-claude/claude/references    ~/.claude/references
 cd ~/projects/jarrin-claude && git config core.hooksPath .githooks   # enable pre-commit hook
 ```
 
@@ -93,6 +95,12 @@ commands:                           # rendered as a command table
 The repo's always-apply project instructions — its hard rules and "Start here"
 orientation — go in `.claude/.jarrin-claude.md` as prose (appended verbatim); there is
 no structured `start:` key.
+
+`.jarrin.yml` may also carry a **`backlog:`** block, which chooses whether plans and
+todos are tracked as local files (the default) or as issues on a git forge. The hook
+ignores it — it is skill-consumed, read by the `staged-planning` and `todo` skills. See
+`CLAUDE.md` for the schema, and `claude/references/backlog.md` for the shared rules both
+skills implement (config resolution, labels, milestones, retrieval).
 
 The hook reads the session `cwd` from its stdin JSON, resolves the three tiers (global →
 local → imports, each rule included once), renders the `commands` table, appends

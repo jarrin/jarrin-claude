@@ -80,8 +80,16 @@ def _strip_comment(line: str) -> str:
 
 
 def _clean(token: str) -> str:
-    """Strip whitespace and surrounding quotes from a scalar token."""
-    return token.strip().strip('"').strip("'").strip()
+    """Strip whitespace and surrounding quotes from a scalar token.
+
+    Only a *matched* leading/trailing pair is stripped. Stripping either end
+    independently would eat the closing quote of a value that merely ends in
+    one, e.g. ``-p 'test_*.py'`` -> ``-p 'test_*.py``.
+    """
+    token = token.strip()
+    while len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
+        token = token[1:-1].strip()
+    return token
 
 
 def _split_inline(rest: str) -> list:
@@ -94,11 +102,15 @@ def parse_config(text: str) -> dict:
     keys in :data:`SECTIONS`. Deliberately minimal so we avoid a PyYAML
     dependency. Supported shapes:
 
-    * scalar block list under ``rules:`` / ``local:`` / ``start:``
+    * scalar block list under ``rules:`` / ``local:``
     * inline ``rules: [a, b]`` for scalar sections
     * mapping block list under ``imports:`` / ``commands:`` (``- owner: x`` then
       an indented ``rule: y`` continuation line)
     * a bare top-level ``- item`` list, treated as ``rules`` (back-compat)
+
+    Two-level nesting has no representation here, so a ``backlog:`` block is
+    ignored along with everything indented under it. That is by design: the
+    skills parse it themselves.
     """
     cfg = {key: [] for key in SECTIONS}
     current_key = None
