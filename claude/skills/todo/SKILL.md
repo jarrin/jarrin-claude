@@ -39,6 +39,32 @@ backlog:
 No `backlog:` block, or no `todo:` section → `method: local`, `dir: .claude/todo`. A forge
 method with no `repo` anywhere → stop and ask which `owner/name` to file against.
 
+### Stranded-work check
+
+Resolving the method is also where **reference §8** runs: switching a method does not move
+the work already filed, it hides it. Check the backend the config does *not* name — the
+**todo side only**, never `backlog.plan`. Todos are a flat queue with no current pointer, so
+stranded means *any* unfinished item. One list; never a sweep.
+
+- **Configured forge** → list `<dir>`. Resolve `dir` even under a forge method (default
+  `.claude/todo`); it is local-only for *writing*, not for this check. Stranded when any
+  `<N>-*.md` file is present.
+- **Configured `local`** → `list_issues(labels: ["todo", "claude"], state: "open")` against
+  the resolved repo. Stranded when non-empty.
+
+Local todos **knowingly over-report**: a todo file carries no status field and §5 only
+*offers* to delete a finished one, so a declined deletion is indistinguishable from open
+work. Accepted, because the policy only ever surfaces — a false positive costs one line of
+report, never an action.
+
+**Silent when there is nothing.** When there is: do the user's actual request first, then
+report the strand in **one line** — how many todos, and which backend still holds them. It is
+a line of report, never a question, and never gates the request. Migrate only when the user
+explicitly asks, per **reference §8**; "Continue todos" never implies it.
+
+Best-effort: no resolvable `repo`, or no MCP → skip the check silently and carry on. That is
+not the forbidden silent fallback — skipping an advisory check leaves the request untouched.
+
 ## 2. Derive title + body
 
 Derive a concise imperative **title** (e.g. "Refactor the download matcher registry"). The

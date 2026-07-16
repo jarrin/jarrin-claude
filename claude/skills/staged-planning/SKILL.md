@@ -1,7 +1,7 @@
 ---
 name: staged-planning
 description: Jarrin's required workflow for ANY request to "create a plan" (or "make a plan", "plan out X"). Plans are always split into stages, persisted through the backend configured per-repo in .claude/.jarrin.yml under the `backlog.plan` section — local files under .claude/plans/, or milestone-grouped issues on a git forge — and executed ONE stage at a time: stop after every stage, report, and wait for the user to continue in fresh context. Read and follow this whenever the user asks for a plan, or uses a "Continue …" verb to resume one — "Continue plan", "Continue plan-<slug>" for a named plan, or "Continue 1234" for a named ticket.
-version: 0.3.0
+version: 0.4.0
 ---
 
 # Staged Planning (Jarrin's workflow)
@@ -43,6 +43,28 @@ backlog:
 
 No `backlog:` block, or no `plan:` section → `method: local`, `dir: .claude/plans`. A forge
 method with no `repo` anywhere → stop and ask which `owner/name` to file against.
+
+### Stranded-work check
+
+Resolving the method is also where **reference §8** runs: switching a method does not move
+the work already filed, it hides it. Check the backend the config does *not* name — the
+**plan side only**, never `backlog.todo`. One stat or one label query; never a sweep.
+
+- **Configured forge** → stat `<dir>/current.md`. Resolve `dir` even under a forge method
+  (default `.claude/plans`); it is local-only for *writing*, not for this check. Stranded
+  when the file exists **and** its `**Status:**` is not `plan complete` — §7 leaves a
+  finished plan on disk until the user confirms deletion, so existence alone proves nothing.
+- **Configured `local`** → the §6 candidate query: stranded when an open `plan-*` milestone
+  has **≥ 1 open `stage` ticket**. Reuse that rule verbatim rather than inventing a second
+  one. Never `open_issues > 0` — caveat tickets count toward it, so a finished plan trips it.
+
+**Silent when there is nothing.** When there is: do the user's actual request first, then
+report the strand in **one line** — which plan, and which backend still holds it. It is a
+line of report, never a question, and never gates the request. Migrate only when the user
+explicitly asks, per **reference §8**; a Continue verb never implies it.
+
+Best-effort: no resolvable `repo`, or no MCP → skip the check silently and carry on. That is
+not the forbidden silent fallback — skipping an advisory check leaves the request untouched.
 
 ## 2. The plan is the same object in every method
 
