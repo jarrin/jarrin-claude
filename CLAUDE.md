@@ -64,6 +64,17 @@ the selected rules at the start of every session:
   instructions** — its hard rules and "Start here" orientation prose (there is no
   structured `start:` key; write it here as prose). Silently ignored when absent.
 
+- A **`todo:`** block in `.jarrin.yml` is **skill-consumed, not read by the hook** (which
+  ignores unknown top-level keys). The `todo` skill reads it to route new repo todos to a
+  Gitea/GitHub/GitLab MCP or a numbered markdown file under `.claude/todo/`:
+
+  ```yaml
+  todo:
+    backend: gitea        # gitea | github | gitlab | file (default: file)
+    repo: owner/name      # target repo for the MCP backends
+    dir: .claude/todo     # file backend output dir (default: .claude/todo)
+  ```
+
 This gives explicit, per-repo control that path globs cannot express (e.g. "this Laravel
 app uses React Native — never Expo"): the project lists the exact rules it wants, its own
 in-repo rules, and the shared rules it imports from sibling repos in the same group.
