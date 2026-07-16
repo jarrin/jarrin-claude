@@ -7,8 +7,8 @@ description: >-
   whenever the user wants to file, create, add, log, or track a todo, issue, ticket, task,
   or backlog item for the repo — e.g. "add a todo", "create an issue", "file a ticket",
   "track this as a task", "note this for later", or "/todo …" — even when they don't name
-  a backend. Also owns the "Continue todos" verb: picking up the oldest open todo and
-  working it.
+  a backend. Also owns the "Continue todos" verb — picking up the oldest open todo and
+  working it — and "migrate the todos": moving them to the currently configured backend.
 ---
 
 # todo — file a repo todo through the configured backlog backend
@@ -145,3 +145,23 @@ of plans: a todo is never a plan stage, and "Continue todos" never advances a pl
 Do **one** todo, then report and stop, so the user can decide what is next. Finishing one:
 `gitea` → comment the outcome, then close (reference §7); `local` → offer to delete the file,
 never silently.
+
+## 6. Migrating todos across backends
+
+Only ever on an **explicit request** — "migrate the todos". The §1 notice never implies it,
+and neither does "Continue todos". The **destination is always the currently configured
+method**: that is the backend the user chose. Rules: **reference §8 ("Migration")**.
+
+Todos are a flat queue — no stage order to preserve, no current pointer to reconstruct — so
+both directions are one item per **open** todo (a closed issue is finished work; a deleted
+file is gone by request):
+
+- **`local` → forge** — file each `<N>-*.md` as a todo issue per §5: `todo` + `claude` as
+  resolved **IDs**, the general `todo` milestone, assignee when configured. Then **offer to
+  delete** the files — never silently.
+- **forge → `local`** — write one numbered file per open todo (§3's helper), then close each
+  issue with a pointer comment naming the file it became. There is no issue-delete method,
+  so closing is the only option.
+
+The general `todo` milestone is permanent in either direction — never auto-close it, even at
+`open_issues == 0` (§7). Then report what moved and where the todos now live.

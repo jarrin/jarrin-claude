@@ -1,7 +1,7 @@
 ---
 name: staged-planning
-description: Jarrin's required workflow for ANY request to "create a plan" (or "make a plan", "plan out X"). Plans are always split into stages, persisted through the backend configured per-repo in .claude/.jarrin.yml under the `backlog.plan` section — local files under .claude/plans/, or milestone-grouped issues on a git forge — and executed ONE stage at a time: stop after every stage, report, and wait for the user to continue in fresh context. Read and follow this whenever the user asks for a plan, or uses a "Continue …" verb to resume one — "Continue plan", "Continue plan-<slug>" for a named plan, or "Continue 1234" for a named ticket.
-version: 0.4.0
+description: Jarrin's required workflow for ANY request to "create a plan" (or "make a plan", "plan out X"). Plans are always split into stages, persisted through the backend configured per-repo in .claude/.jarrin.yml under the `backlog.plan` section — local files under .claude/plans/, or milestone-grouped issues on a git forge — and executed ONE stage at a time: stop after every stage, report, and wait for the user to continue in fresh context. Read and follow this whenever the user asks for a plan, or uses a "Continue …" verb to resume one — "Continue plan", "Continue plan-<slug>" for a named plan, or "Continue 1234" for a named ticket. Also owns "migrate plan-<slug>": moving an existing plan to the currently configured backend.
+version: 0.5.0
 ---
 
 # Staged Planning (Jarrin's workflow)
@@ -271,3 +271,40 @@ After the final stage completes, report the outcome and:
   `open_issues == 0`**: leftover caveat / cleanup / gotcha tickets are still real work, and
   closing over them buries it. There is no issue-delete method — tickets are closed, never
   removed.
+
+## 8. Migrating a plan across backends
+
+Only ever on an **explicit request** — "migrate plan-<slug>", "move the plan to gitea". The
+§1 notice never implies it, and neither does a Continue verb. The **destination is always the
+currently configured method** — migration follows the config rather than taking a destination
+argument, because that is the backend the user chose.
+
+Rules are specified in **reference §8 ("Migration")** — follow it rather than re-deriving.
+What it turns on:
+
+- **`local` → forge** — create per §4 / §5, reusing §5's idempotency verbatim (resolve the
+  milestone, `list_issues(state: "all")`, skip titles that already exist), so a half-migrated
+  plan is safe to re-run. Order stages by the **parsed `<n>`**, never by server order
+  (reference §6: newest-first is *reverse* stage order).
+  - **Finished stages must land closed**, or migration re-runs completed work. Finished = the
+    stage precedes `current.md`'s current stage, or *is* it with status `stage complete`.
+    `current.md` is the pointer of record; the ticked checkboxes are a secondary signal.
+  - `current.md`'s notes section **is** the handoff (§6 reads it from closed stage tickets'
+    comments): attach it as the outcome comment on the **last closed** stage ticket, or the
+    lowest open one if none is closed. Do not mint caveat / cleanup / gotcha tickets out of
+    it — the blob has no per-note structure, and inventing one is a guess.
+  - Then **offer to delete** the local files — never silently; §7's confirm rule governs.
+- **forge → `local`** — write `plan-<slug>.md` + `current.md` from the milestone and its
+  tickets. This direction is **lossy**; say what is dropped rather than dropping it quietly.
+  Preserved: the overview, each stage's title / steps / **Done when**, the closed stages
+  ticked, and — folded into `current.md`'s notes — the closed tickets' outcome comments plus
+  any open caveat / cleanup / gotcha tickets (the notes section is their local
+  representation). Dropped: issue numbers, comment threads, authorship, timestamps, and the
+  **goal title** — a forge stores only `plan-<slug>` and the overview, so `# Plan: <goal>`
+  degrades to `# Plan: <slug>`.
+  - There is **no issue-delete method**: close each migrated ticket with an outcome comment
+    naming where the work went (`migrated to .claude/plans/plan-<slug>.md`). Folding the
+    caveats in is what lets the milestone reach `open_issues == 0` and become closable (§7).
+
+Then report what moved, what was dropped, and where the plan now lives. Migration is **not a
+stage**: it does not advance the plan, and finishing it does not license starting one.

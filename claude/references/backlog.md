@@ -370,7 +370,11 @@ This direction is **lossy**; say what is dropped rather than dropping it quietly
   outcome comments folded into `current.md`'s notes section — that is the handoff, so it must
   survive. Open caveat / cleanup / gotcha tickets fold into the same notes section, which is
   their local representation.
-- **Dropped:** issue numbers, comment threads, authorship, timestamps. State this in the report.
+- **Dropped:** issue numbers, comment threads, authorship, timestamps, and the plan's **goal
+  title** — the local `# Plan: <goal>` heading has no home on a forge, which stores only the
+  `plan-<slug>` title and the overview, so it degrades to `# Plan: <slug>`. State this in the
+  report. Verified by round-tripping a plan `local → gitea → local`: the goal line was the
+  **only** loss in the plan file — every stage title, checkbox tick and **Done when** survived.
 - **The old forge side can only be closed, never removed** — there is no issue-delete method
   (§2). Close each migrated ticket with an outcome comment naming where the work went (e.g.
   `migrated to .claude/plans/plan-<slug>.md`). Folding the caveats in too is what lets the
