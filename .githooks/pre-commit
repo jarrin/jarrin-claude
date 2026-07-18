@@ -1,20 +1,21 @@
 #!/usr/bin/env sh
-# Pre-commit checks: hook unit tests + secret scan (gitleaks). Version-controlled.
+# Pre-commit checks: claudjar CLI gates + secret scan (gitleaks). Version-controlled.
 # Enable per clone with:  git config core.hooksPath .githooks
 
-# 1. Unit tests for the SessionStart rule loader (stdlib python, no deps).
-if command -v python3 >/dev/null 2>&1; then
-  if [ -f bin/claude/test_session_start.py ]; then
-    echo "Running session-start hook tests..." >&2
-    if ! python3 -m unittest discover -s bin/claude -p 'test_*.py' >&2; then
-      echo "" >&2
-      echo "Hook unit tests failed. Commit aborted." >&2
-      echo "  To bypass (NOT recommended): git commit --no-verify" >&2
-      exit 1
-    fi
+# 1. claudjar CLI gate: lint + typecheck + Vitest + build + fresh-dist check.
+#    `pnpm run check` rebuilds the committed bundle and fails if dist/ is stale,
+#    so a source change can never be committed without its rebuilt bundle.
+if command -v pnpm >/dev/null 2>&1 && [ -f package.json ]; then
+  echo "Running claudjar checks (pnpm check)..." >&2
+  if ! pnpm run --silent check >&2; then
+    echo "" >&2
+    echo "claudjar checks failed. Commit aborted." >&2
+    echo "  If dist/ is stale, run 'pnpm run build' and 'git add dist'." >&2
+    echo "  To bypass (NOT recommended): git commit --no-verify" >&2
+    exit 1
   fi
 else
-  echo "python3 not installed - skipping hook unit tests." >&2
+  echo "pnpm not installed - skipping claudjar checks." >&2
 fi
 
 # 2. Secret scan.

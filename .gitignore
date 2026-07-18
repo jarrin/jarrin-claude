@@ -13,3 +13,15 @@ settings.local.json
 # tracked — only the transient plan/todo files below are ignored.
 .claude/plans/
 .claude/todo/
+
+# Per-machine config override, merged over the committed `.jarrin.yml` by the
+# claudjar CLI. Only the `worktree:` block is overridable (machine-specific dir /
+# setup / copy) — never committed. Matched at any depth for nested worktrees.
+.jarrin.local.yml
+**/.jarrin.local.yml
+
+# claudjar CLI: dependencies are not vendored, but the built bundle (dist/) IS
+# committed so a fresh clone can bootstrap `install` without a prior `pnpm i`.
+node_modules/
+*.tsbuildinfo
+.tsup/

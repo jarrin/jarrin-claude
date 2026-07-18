@@ -65,6 +65,14 @@ explicitly asks, per **reference §8**; "Continue todos" never implies it.
 Best-effort: no resolvable `repo`, or no MCP → skip the check silently and carry on. That is
 not the forbidden silent fallback — skipping an advisory check leaves the request untouched.
 
+### Worktree scoping
+
+Also read `worktree.name` from `<repo>/.claude/.jarrin.local.yml` (best-effort; missing → the
+main worktree). When set, forge todos are scoped to that worktree per **reference §9**: creation
+adds the `worktree/<name>` label, and "Continue todos" / the stranded check filter by it — a
+worktree sees only its own todos, main drops worktree-scoped ones. `local` todos are already
+per-directory, so scoping is a `gitea` concern only.
+
 ## 2. Derive title + body
 
 Derive a concise imperative **title** (e.g. "Refactor the download matcher registry"). The
@@ -115,7 +123,8 @@ Then, against the resolved `owner/name`:
 3. **Issue** (§5) — `issue_write create` with the title, the §2 body, `labels` as the
    resolved **IDs** (never names), the milestone **ID**, and `assignees: [<assignee>]` when
    one is configured. A non-collaborator assignee hard-fails loudly — that is the intended
-   signal, not something to work around.
+   signal, not something to work around. In a named worktree, add the `worktree/<name>` label
+   ID too (reference §9).
 
 ### `github` / `gitlab`
 
@@ -138,6 +147,8 @@ Resolve `backlog.todo` (§1), then take the **oldest open** todo:
   repo, then the **lowest issue number**: todos carry no stage numbering, so creation order
   *is* queue order. The response is **newest first**, so sorting is still mandatory
   (reference §6). Read the body with `issue_read get` — `list_issues` does not return it.
+  In a named worktree, add `worktree/<name>` to the `labels`; in main, drop rows carrying a
+  `worktree/*` label (reference §9).
 
 Nothing open → say so; do not reach into the plan milestones for work. Todos are independent
 of plans: a todo is never a plan stage, and "Continue todos" never advances a plan.

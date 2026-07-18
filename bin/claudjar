@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+# Repo-local launcher for the claudjar CLI, so a fresh clone can run
+# `bin/claudjar install` (or `init`) with no prior `pnpm install` — the built
+# bundle in dist/ is committed. For everyday use, `pnpm run ensurepath` installs
+# `claudjar` globally on PATH instead.
+set -eu
+self="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
+repo="$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)"
+exec node "$repo/dist/claudjar.js" "$@"

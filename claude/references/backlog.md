@@ -384,3 +384,44 @@ This direction is **lossy**; say what is dropped rather than dropping it quietly
 todo issue per §5 then offers to delete the files; forge → `local` writes one numbered file per
 open todo, then closes each issue with a pointer comment. The general `todo` milestone is
 permanent either way — never auto-close it (§7).
+
+## 9. Worktree scoping (optional)
+
+`claudjar worktree create <name>` stamps `worktree.name: <name>` into the new worktree's
+gitignored `.jarrin.local.yml`. When set, it scopes forge work to that worktree, so a
+Continue / list verb run **inside** the worktree sees only its own tickets — while the main
+checkout keeps seeing the global queue. It is a filter layered on top of §6, never a backend
+of its own; `local`-method backlogs are per-directory already, so scoping is a `gitea`-only
+concern.
+
+**Reading the identity.** Read `worktree.name` from the worktree's `.claude/.jarrin.local.yml`
+(the `worktree:` block is the *only* thing that file overrides — the rest of config resolution
+in §1 reads the committed `.jarrin.yml` unchanged). Empty, or no local file → the **main
+worktree**: no scoping. Best-effort like every other check here — an unreadable local file
+means "main", never an error.
+
+**The label.** `worktree/<name>` — created on demand like `plan-<slug>` (§3), colour
+`#0a6b5f`. Never blind-create; list-then-create and resolve to a numeric ID (§3). `<name>` is
+a branch name, so it may contain `/` (`worktree/feature/x`) — Gitea label names allow it.
+
+**On create (§5).** In a named worktree, add `worktree/<name>` to **every** ticket created —
+todo, stage, caveat / cleanup / gotcha. In the main worktree, add nothing (the ticket is
+unscoped, and belongs to the global queue).
+
+**On retrieval, selection and stranded-detection (§6, §8).** Scoping composes with the
+existing label AND-filter — one extra label, no extra query:
+
+| Running in        | `list_issues` labels                        | Then client-side                             |
+| ----------------- | ------------------------------------------- | -------------------------------------------- |
+| worktree `<name>` | add `worktree/<name>` to the `labels` array | —                                            |
+| main worktree     | the §6 filter, unchanged                    | drop any issue carrying a `worktree/*` label |
+
+The main-side drop uses the `labels` already in every `list_issues` row (§2) — no `issue_read`
+sweep. It keeps a worktree's in-flight work out of the main queue even though Gitea has no
+server-side "label absent" filter. Milestone selection (§6) and the local↔forge stranded check
+(§8) apply the same rule: a worktree only strands its own tickets; main ignores worktree-scoped
+ones.
+
+**Out of scope.** `worktree/<name>` on a closed ticket is harmless history — nothing prunes it,
+and migration (§8) neither adds nor strips it. Merging a worktree's branch does not reassign its
+tickets; if you want them in the main queue afterward, remove the label by hand.

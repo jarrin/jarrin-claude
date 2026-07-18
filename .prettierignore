@@ -1,0 +1,10 @@
+dist/
+node_modules/
+pnpm-lock.yaml
+
+# Prettier owns only the claudjar CLI's own files (src/, root configs, and the
+# CLI docs). Jarrin's content library — the rule/skill/reference Markdown under
+# claude/ and the repo config under .claude/ — is prose the CLI must never
+# reflow, so it is excluded from formatting.
+claude/
+.claude/

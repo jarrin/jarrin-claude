@@ -34,8 +34,10 @@ is the shared contract behind the `backlog:` block (below), implemented by both
 ## How rules are selected (per project)
 
 Rules are **not** auto-loaded by path globbing. Each project opts in explicitly, and a
-`SessionStart` hook (`bin/claude/session-start`, symlinked to `~/.claude/bin/`) injects
-the selected rules at the start of every session:
+`SessionStart` hook (`bin/claude/session-start` — a launcher for the `claudjar` Node
+bundle, symlinked to `~/.claude/bin/`; needs Node on PATH) injects the selected rules at
+the start of every session. The `claudjar init` command scaffolds and updates a repo's
+`.jarrin.yml`; see the README's **The claudjar CLI** section.
 
 - **`<project>/.claude/.jarrin.yml`** (required to activate) selects rules from three
   tiers and, optionally, declares a command quick-reference. All keys are optional; an
@@ -62,15 +64,29 @@ the selected rules at the start of every session:
   commands:
     - cmd: prdl deploy
       desc: ship to production
+
+  # Shell command run to back up the repo before a new session / clear
+  backup: git bundle create ../jarrin-claude.bundle --all
   ```
 
   Load order is global → local → imports; each rule body is included once (duplicates
   are de-duplicated: `rules` by slug, `imports` by owner+rule). Missing rule files are
   warned about and skipped; a missing `.jarrin.yml` is an error (surfaced on stderr).
-  The parser is a stdlib-only YAML subset — block lists, inline `[a, b]` for the scalar
-  tiers, and `- key: value` mapping lists for `imports`/`commands`. Unknown top-level
-  keys are silently ignored. Override the group root with `JARRIN_GROUP_ROOT` and the
-  library location with `JARRIN_RULES_DIR` (both for testing).
+  The hook parses `.jarrin.yml` with a real YAML library (the `yaml` package) — any valid
+  YAML shape works — but only _consumes_ the four rule/command tiers plus `backup:` and
+  ignores every other top-level key. Unknown top-level keys are silently ignored. Override
+  the group root with `JARRIN_GROUP_ROOT` and the library location with
+  `JARRIN_RULES_DIR` (both for testing).
+
+  The optional **`backup:`** key is a single shell command the hook runs _before_ the
+  session loads, so a repo can snapshot itself before a new conversation. Unlike
+  `backlog:`, it **is hook-consumed**. It is kept a one-line scalar by convention (the
+  parser could nest, but a scalar is the simplest form for a single command).
+  It runs only for the `startup` and `clear` session sources (a genuinely new session
+  and `/clear`); `resume` and `compact` skip it. A failed backup is **fatal**: the hook
+  exits non-zero and injects no context, so the session does not start without its
+  safety net. The command's own output is relayed to stderr — never stdout, which
+  carries the hook's JSON.
 
 - **`<project>/.claude/.jarrin-claude.md`** (optional) is appended verbatim after
   everything above. This is the home for the repo's **always-apply project
@@ -83,16 +99,16 @@ the selected rules at the start of every session:
 
   ```yaml
   backlog:
-    repo: owner/name        # home repo for the forge methods; default for both sections
+    repo: owner/name # home repo for the forge methods; default for both sections
     plan:
-      method: local         # local (alias: repo) | gitea | github | gitlab (default: local)
-      assignee: claude      # forge methods only
-      repo: owner/name      # optional per-section override of backlog.repo
-      dir: .claude/plans    # local method only (default: .claude/plans)
+      method: local # local (alias: repo) | gitea | github | gitlab (default: local)
+      assignee: claude # forge methods only
+      repo: owner/name # optional per-section override of backlog.repo
+      dir: .claude/plans # local method only (default: .claude/plans)
     todo:
       method: gitea
       assignee: claude
-      dir: .claude/todo     # local method only (default: .claude/todo)
+      dir: .claude/todo # local method only (default: .claude/todo)
   ```
 
   `staged-planning` reads `backlog.plan`; `todo` reads `backlog.todo`. Both sections
@@ -102,19 +118,58 @@ the selected rules at the start of every session:
   bodies, retrieval, and the silent API traps — is specified once in
   `claude/references/backlog.md`; change the behaviour there, not in a skill.
 
-  **The hook does not read this block, and cannot.** `backlog:` is skill-consumed: the
-  stdlib YAML subset only recognises the four top-level sections above and has no
-  representation for two-level nesting, so it ignores `backlog:` and everything indented
-  under it. Skills parse the YAML themselves. `bin/claude/test_session_start.py` pins
-  this — a nested `backlog:` block must never corrupt `rules` / `local` / `imports` /
-  `commands`.
+  **The hook does not read this block — by design, not by limitation.** `backlog:` is
+  skill-consumed. The hook now uses a real YAML parser, so it _could_ read nested keys,
+  but it deliberately ignores everything except the four rule/command tiers and `backup:`
+  — `backlog:` is owned by the `staged-planning` and `todo` skills, which parse it
+  themselves. A Vitest test pins the invariant: a nested `backlog:` block must never
+  corrupt `rules` / `local` / `imports` / `commands`.
+
+- A **`worktree:`** block configures `claudjar worktree create <name>` — how a new git
+  worktree for this repo is placed and bootstrapped. It is **CLI-consumed only** (never the
+  hook, never `init`), and lives by convention in the gitignored **`.jarrin.local.yml`**
+  (below), since where worktrees land and how they build is machine-specific:
+
+  ```yaml
+  worktree:
+    dir: ../ # base for new worktrees, relative to the repo root; unset →
+    #        grouped-sibling default <parent>/<repo>-worktrees/<name>
+    copy: # gitignored files carried into a new worktree (always incl. .jarrin.local.yml)
+      - .env
+      - .claude/settings.local.json
+    setup: # shell commands run in the new worktree after creation, in order
+      - poetry install
+      - docker compose up -d
+    name: feature-x # identity marker — stamped by `worktree create`, not hand-set
+  ```
+
+  `create` runs `git worktree add` (new branch unless it exists), copies the `copy:` files
+  across, **stamps `worktree.name`** into the new worktree's `.jarrin.local.yml`, then runs
+  `setup:` in order (stopping on the first failure; `--no-setup` skips them). That stamped
+  `name` is what the `staged-planning` and `todo` skills read to scope forge tickets to the
+  worktree (`worktree/<name>` label; see `claude/references/backlog.md` §9).
+
+- **`<project>/.claude/.jarrin.local.yml`** (optional, **gitignored**) is a per-machine
+  override merged over the committed `.jarrin.yml`. **Only the `worktree:` block is
+  overridable** — every other key is taken from the committed base verbatim (declaring
+  `rules` / `commands` / `backup` here has no effect; that is deliberate, they are shared
+  config). Widen the override surface explicitly in `src/config/merge.ts` if a future key
+  needs it. The merge is CLI-only: the SessionStart hook reads the committed base alone, so
+  the hot path never touches the local file.
+
+`claudjar info` prints the merged, resolved view of all of the above for the current repo:
+config files present, rules with on-disk presence, the command table, backlog methods,
+worktree config, backup, and available skills.
 
 This gives explicit, per-repo control that path globs cannot express (e.g. "this Laravel
 app uses React Native — never Expo"): the project lists the exact rules it wants, its own
 in-repo rules, and the shared rules it imports from sibling repos in the same group.
 
-The hook is covered by unit tests in `bin/claude/test_session_start.py` (all three tiers,
-dedup, missing-file behaviour, `commands` rendering), run by the pre-commit hook.
+The hook and CLI are covered by colocated Vitest tests under `src/` (`*.test.ts`): the
+three tiers, dedup, missing-file behaviour, `commands` rendering, the nested-`backlog:`
+non-corruption invariant, the `worktree:`-only local-override merge, worktree planning /
+name stamping, `info` rendering, config read/write round-trips, and the `--no-interaction`
+detection matrix. They run in the pre-commit hook via `pnpm check`.
 
 ## Rule file format
 
@@ -136,6 +191,7 @@ Every language rule must cover these five sections, in this order. Each is a sho
 enforceable bullet list — name the concrete tool and command, not vague advice.
 
 ### Tooling
+
 - Name the standard package manager and forbid the non-standard one
   (`poetry` not `pip`, `pnpm` not `npm`, plus `composer`, `cargo`, …).
 - Packages are added / updated / removed via that tool only — never by hand-editing the
@@ -143,16 +199,19 @@ enforceable bullet list — name the concrete tool and command, not vague advice
 - Pin the toolchain / runtime version where the ecosystem supports it.
 
 ### Testing
+
 - Name the test runner and the command to run the suite (`pytest`, `vitest`, `phpunit`).
 - Default to **unit tests**; add e2e only when explicitly requested.
 - State where tests live and that new code ships with tests.
 
 ### Linting
+
 - Name the linter / formatter and the exact commands (`ruff check` + `ruff format`,
   `eslint` + `prettier`, `php-cs-fixer`).
 - Lint must pass clean — no disabled rules without a written reason.
 
 ### Enforcing (via git)
+
 - Wire tooling, tests, linting, and type-checking into a **pre-commit hook** (and/or CI)
   so they run automatically and **block a commit / PR on failure**. Never rely on people
   remembering to run checks.
@@ -161,6 +220,7 @@ enforceable bullet list — name the concrete tool and command, not vague advice
 - Secret scanning (gitleaks) is already enforced here — keep it.
 
 ### Strong typing
+
 - Require full type coverage and a type checker in pre-commit / CI
   (`mypy` or `pyright`, `tsc --noEmit`, `phpstan` at max level).
 - Forbid loosely-typed escape hatches (`any`, `@ts-ignore`, `# type: ignore`, `mixed`)

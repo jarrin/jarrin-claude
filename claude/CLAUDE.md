@@ -5,6 +5,21 @@ to every project and repo on this machine and take precedence unless a specific 
 instructions explicitly override a given point. Apply them on every session, before
 writing any code, documentation, or setting up a new project.
 
+## This machine's Claude config (jarrin-claude)
+
+This config is managed by the **jarrin-claude** repo (source for everything symlinked into
+`~/.claude/`). A globally-registered `SessionStart` hook runs in **every** repo, but only
+injects rules, a command table, and project instructions for a repo that has opted in with
+`.claude/.jarrin.yml`. A repo without that file starts normally but loads no project rules.
+
+- **Activate a repo:** run `claudjar init` in it to scaffold/update `.claude/.jarrin.yml`
+  (selects global rule slugs, in-repo rules, cross-repo imports, a command table, and an
+  optional `backup:` / `backlog:` block). Add always-apply prose in `.claude/.jarrin-claude.md`.
+- **Schema & internals:** `~/.claude/rules/` holds the global rule library; the full schema
+  and authoring guide live in the jarrin-claude repo's `CLAUDE.md` and `README.md`.
+- Editing config? Change the canonical files in the jarrin-claude repo, not the `~/.claude/`
+  symlinks.
+
 ## General
 
 1. All written output — code, comments, documentation, skills, README's, `CLAUDE.md`,

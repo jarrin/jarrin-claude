@@ -66,6 +66,15 @@ explicitly asks, per **reference §8**; a Continue verb never implies it.
 Best-effort: no resolvable `repo`, or no MCP → skip the check silently and carry on. That is
 not the forbidden silent fallback — skipping an advisory check leaves the request untouched.
 
+### Worktree scoping
+
+Also read `worktree.name` from `<repo-root>/.claude/.jarrin.local.yml` (best-effort; missing →
+the main worktree). When set, a `gitea` plan is scoped to that worktree per **reference §9**:
+every stage / caveat / cleanup / gotcha ticket created carries the `worktree/<name>` label, and
+plan selection, the Continue verbs and the stranded check filter by it (`worktree/<name>` added
+to the `labels`; main drops rows carrying a `worktree/*` label). `local` plans are already
+per-directory, so scoping is a `gitea` concern only.
+
 ## 2. The plan is the same object in every method
 
 Only the persistence differs. A plan always has an overview, **ordered stages** that are
@@ -154,9 +163,9 @@ labels and the milestone as **numeric IDs**, so they must exist first:
    `-2`, `-3`). The `plan-<slug>` **label name must carry the same suffix as the milestone
    title**, or the index and the grouping diverge.
 3. **Stage tickets** (§5) — one `Stage <n> — <title>` issue per stage, **created in stage
-   order**, labelled `stage` + `plan-<slug>` + `claude` (as IDs), on the milestone ID,
-   assigned to `backlog.plan.assignee` when set. The body carries the §5 **Request** /
-   **Scope** lines, the steps as a checklist, and **Done when**.
+   order**, labelled `stage` + `plan-<slug>` + `claude` (as IDs) — plus `worktree/<name>` in a
+   named worktree (§9) — on the milestone ID, assigned to `backlog.plan.assignee` when set. The
+   body carries the §5 **Request** / **Scope** lines, the steps as a checklist, and **Done when**.
 
 **Re-running must be safe.** A half-created plan is resumed, not duplicated: fetch
 `list_issues(labels: ["plan-<slug>", "stage"], state: "all")` first and skip any stage
