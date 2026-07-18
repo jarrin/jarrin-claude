@@ -33,6 +33,43 @@ injects rules, a command table, and project instructions for a repo that has opt
       manage them.
    c. Always use strong typing, and enforce it (no loosely-typed escape hatches).
 
+## Persisting instructions ("instruct yourself to …")
+
+When Jarrin says **"instruct yourself to …"** — or otherwise asks for a preference, correction, or
+working rule to be remembered — persist it to a **version-controlled file in a repo**. Never write
+it to host-side, outside-repo storage (`~/.claude/projects/*/memory/`, auto-memory, or any
+untracked location under `~/.claude/`): that is invisible to git, unreviewable, unshareable between
+machines, and silently diverges from the repo it describes.
+
+Where it goes depends on scope:
+
+| Scope | File |
+| --- | --- |
+| General / machine-wide — applies to every repo | **this file** (`claude/CLAUDE.md` in jarrin-claude) |
+| Specific to one repo | that repo's `.claude/.jarrin-claude.md` |
+| A reusable stack convention (a language or framework) | the matching `claude/rules/<slug>.md` in jarrin-claude |
+
+Edit the canonical files in the jarrin-claude repo, never the `~/.claude/` symlinks. Editing that
+repo for this purpose is pre-authorised — make the edit, then say what changed and where. If an
+instruction has already been written to host memory, move it into the right file above and delete
+the host copy; do not leave the same rule in two places.
+
+## Committing
+
+- **"Commit" means the whole working tree.** Stage everything (`git add -A`), not only the files
+  changed during the current session — a commit should represent the repo's state, not the
+  assistant's share of it. Read `git status` / `git diff --stat` first and write a message that
+  describes everything actually going in.
+- **Inspect the sweep and warn first** if it contains anything stray, large, or unintentional, and
+  wait for confirmation instead of committing and reporting afterwards: secrets or credentials
+  (`.env`, keys, tokens); files that should be ignored (build output, `node_modules`, caches,
+  logs, editor/OS cruft); large or binary blobs; unusually big diffs that don't match the stated
+  intent; unrelated WIP in parts of the repo the task never touched; codegen output that drifted
+  without its source changing; or deletions that look unintended. A clean, expected sweep needs no
+  round-trip — commit it and say what went in.
+- Never bypass a pre-commit hook (`--no-verify`) to get a commit through. If the gate fails on a
+  pre-existing change, report it.
+
 ## Starting a new project
 
 1. Always bootstrap with the ecosystem's industry-standard tooling — never a deprecated

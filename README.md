@@ -10,7 +10,7 @@ they are not in the working tree.
 
 | Path                       | Purpose                                                                                    |
 | -------------------------- | ------------------------------------------------------------------------------------------ |
-| `src/`, `dist/`            | The `claudjar` CLI (TypeScript source; `dist/claudjar.js` is the committed bundle)         |
+| `src/`, `dist/`            | The `claudjar` CLI (TypeScript source; `dist/claudjar.js` is the built bundle, gitignored) |
 | `bin/claudjar`             | Repo-local launcher for the CLI (`bin/claudjar install`, `init`, …)                        |
 | `CLAUDE.md`                | Guide for working **in this repo** — how to author rule files                              |
 | `claude/CLAUDE.md`         | Global, cross-project instructions (loaded every session)                                  |
@@ -39,9 +39,17 @@ on PATH), enables the secret-scanning git hook, and checks prerequisites (`node`
 `gitleaks`). Re-run it any time; set `CLAUDE_HOME` to target a non-default config dir,
 `--with-gitleaks` to auto-download gitleaks, `--yes` to overwrite without prompting.
 
-The committed `dist/` bundle means `bin/claudjar install` runs on a fresh clone with **no
-prior `pnpm install`** — only Node is required. (To work on the CLI itself, `pnpm install`
-then `pnpm check`.)
+`dist/` is a **gitignored build artifact**, so a fresh clone must build the bundle once
+before `bin/claudjar` or the session hooks can run:
+
+```bash
+pnpm install && pnpm build
+```
+
+The launchers check for the bundle and print exactly that instruction when it is missing —
+`bin/claudjar` exits non-zero, while the two session hooks warn and exit 0 so a missing
+bundle degrades a session (no injected rules) instead of blocking every session on the
+machine.
 
 <details>
 <summary>What it does / manual equivalent</summary>
@@ -148,6 +156,7 @@ subcommands:
 | `claudjar worktree create <n>` | Add a git worktree and bootstrap it from the `worktree:` config (branch, copy, port, setup)                      |
 | `claudjar worktree merge <n>`  | Merge a worktree branch into the current branch, remove the worktree (claude resolves conflicts)                 |
 | `claudjar worktree list`       | List this repo's git worktrees                                                                                   |
+| `claudjar goto <n>`            | Switch to a worktree by starting `claude` there; `main` goes back to the original checkout                       |
 | `claudjar start` / `stop`      | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout               |
 | `claudjar install`             | Machine setup: symlink config into `~/.claude`, enable hooks, check prerequisites                                |
 | `claudjar session-start`       | The SessionStart hook itself (reads the hook JSON on stdin) — not run by hand                                    |
@@ -189,6 +198,16 @@ and reports; on a **conflict** it keeps the worktree and branch and hands off to
 files so Claude Code can resolve them in place. `--no-claude` skips the launch and just prints
 the conflicted paths for a manual resolution.
 
+`claudjar goto <name>` switches between worktrees. Because a process cannot change its parent
+shell's directory, switching means **starting a fresh `claude` session in the target** rather
+than cd-ing — so the new session picks up that worktree's stamped identity and `PROJECT_PORT`
+through the SessionStart hook, and you land back in the shell you started from when it exits.
+`<name>` matches a linked worktree by branch first, then by directory basename (`goto x` reaches
+one created as `feature/x`); the reserved name **`main`** returns to the original checkout.
+Resolution runs against `git worktree list`, from the main worktree, so it works identically from
+the main checkout and from inside any worktree — including hopping straight from one worktree to
+another. An unknown name fails with the list of names that would have worked.
+
 `init` is interactive by default (a clack checklist of rules from `~/.claude/rules`, plus
 prompts for local rules, imports, commands, and a backup command). It auto-detects a
 non-interactive environment (no TTY, `CI`, or `JARRIN_NO_INTERACTION`) and can be forced
@@ -208,8 +227,8 @@ Running the CLI:
 - `pnpm dev <cmd>` — run from TypeScript source with `tsx` (development).
 
 Development gates (`lang-ts` rules): `pnpm run check` = ESLint + Prettier + `tsc --noEmit` +
-Vitest + `tsup` build + a `git diff --exit-code dist` freshness check. The committed bundle
-in `dist/` must always match `src/`; the pre-commit hook enforces this.
+Vitest + `tsup` build. The build runs to prove the source still bundles; `dist/` is
+gitignored, so there is no staleness check. The pre-commit hook runs the whole gate.
 
 ## Notes / caveats
 

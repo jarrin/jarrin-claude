@@ -185,6 +185,14 @@ the start of every session. The `claudjar init` command scaffolds and updates a 
   read to scope forge tickets to the worktree (`worktree/<name>` label; see
   `claude/references/backlog.md` §9); the stamped `port` is the worktree's `PROJECT_PORT`.
 
+  `claudjar goto <name>` switches between worktrees: it resolves `<name>` against
+  `git worktree list` (branch first, then directory basename; the reserved `main` returns to
+  the original checkout) and starts a fresh interactive `claude` there. Switching is a
+  launch, not a `cd`, because a process cannot move its parent shell — and launching is what
+  makes the target's SessionStart hook run, so the new session gets that worktree's stamped
+  identity and `PROJECT_PORT`. It resolves from the main worktree, so it works the same from
+  the main checkout and from inside any worktree.
+
 - **`<project>/.claude/.jarrin.local.yml`** (optional, **gitignored**) is a per-machine
   override merged over the committed `.jarrin.yml`. **Only the `worktree:` block is
   overridable** — every other key is taken from the committed base verbatim (declaring

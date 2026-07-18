@@ -21,7 +21,7 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && git diff --exit-code dist",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
     "ensurepath": "pnpm run build && pnpm setup && pnpm link --global"
   },
   "dependencies": {

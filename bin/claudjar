@@ -1,9 +1,16 @@
 #!/usr/bin/env sh
-# Repo-local launcher for the claudjar CLI, so a fresh clone can run
-# `bin/claudjar install` (or `init`) with no prior `pnpm install` — the built
-# bundle in dist/ is committed. For everyday use, `pnpm run ensurepath` installs
-# `claudjar` globally on PATH instead.
+# Repo-local launcher for the claudjar CLI (`bin/claudjar install`, `init`, …).
+# dist/ is a build artifact and is NOT committed, so a fresh clone must build the
+# bundle once before this works; the guard below says so rather than letting node
+# fail with a bare MODULE_NOT_FOUND. For everyday use, `pnpm run ensurepath`
+# installs `claudjar` globally on PATH instead.
 set -eu
 self="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
 repo="$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)"
-exec node "$repo/dist/claudjar.js" "$@"
+bundle="$repo/dist/claudjar.js"
+if [ ! -f "$bundle" ]; then
+  echo "claudjar: bundle not built ($bundle)." >&2
+  echo "  Run: cd $repo && pnpm install && pnpm build" >&2
+  exit 1
+fi
+exec node "$bundle" "$@"

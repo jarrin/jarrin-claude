@@ -20,8 +20,11 @@ settings.local.json
 .jarrin.local.yml
 **/.jarrin.local.yml
 
-# claudjar CLI: dependencies are not vendored, but the built bundle (dist/) IS
-# committed so a fresh clone can bootstrap `install` without a prior `pnpm i`.
+# claudjar CLI build output. NOT committed — a clone must build the bundle before
+# the launchers (bin/claudjar, bin/claude/session-*) can run:
+#   pnpm install && pnpm build
+# The launchers fail with that instruction when dist/ is missing.
+dist/
 node_modules/
 *.tsbuildinfo
 .tsup/

@@ -1,5 +1,6 @@
 import { buildApplication, buildRouteMap, run } from "@stricli/core";
 
+import { gotoCommand } from "./commands/goto.js";
 import { infoCommand } from "./commands/info.js";
 import { initCommand } from "./commands/init.js";
 import { installCommand } from "./commands/install.js";
@@ -18,6 +19,7 @@ const routes = buildRouteMap({
     info: infoCommand,
     install: installCommand,
     worktree: worktreeRoutes,
+    goto: gotoCommand,
     start: startCommand,
     stop: stopCommand,
     "session-start": sessionStartCommand,
