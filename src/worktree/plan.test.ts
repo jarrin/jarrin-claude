@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { emptyWorktreeConfig } from "../config/schema.js";
-import { planWorktree, validateWorktreeName } from "./plan.js";
+import { nextPort, planWorktree, validateWorktreeName } from "./plan.js";
 
 const LOCAL = join(".claude", ".jarrin.local.yml");
 
@@ -44,6 +44,31 @@ describe("planWorktree", () => {
     };
     const plan = planWorktree({ name: "wt", repoRoot: "/r", cfg });
     expect(plan.setup).toEqual(["poetry install", "docker compose up -d"]);
+  });
+});
+
+describe("nextPort", () => {
+  it("hands out the base when no worktree has a port yet", () => {
+    expect(nextPort(8000, [])).toBe(8000);
+  });
+
+  it("climbs to one past the highest assigned port", () => {
+    expect(nextPort(8000, [8000])).toBe(8001);
+    expect(nextPort(8000, [8000, 8001, 8002])).toBe(8003);
+  });
+
+  it("ignores gaps and order — only the maximum matters", () => {
+    expect(nextPort(8000, [8000, 8003])).toBe(8004);
+    expect(nextPort(8000, [8005, 8001])).toBe(8006);
+  });
+
+  it("never drops below the base even if existing ports are lower", () => {
+    expect(nextPort(9000, [8000, 8001])).toBe(9000);
+  });
+
+  it("treats a zero/negative base as no floor", () => {
+    expect(nextPort(0, [])).toBe(0);
+    expect(nextPort(0, [8000])).toBe(8001);
   });
 });
 

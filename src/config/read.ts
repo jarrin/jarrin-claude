@@ -4,9 +4,14 @@ import type {
   CommandRow,
   ImportRule,
   JarrinConfig,
+  ProjectConfig,
   WorktreeConfig,
 } from "./schema.js";
-import { emptyConfig, emptyWorktreeConfig } from "./schema.js";
+import {
+  emptyConfig,
+  emptyProjectConfig,
+  emptyWorktreeConfig,
+} from "./schema.js";
 
 /**
  * Parse `.claude/.jarrin.yml` into a typed {@link JarrinConfig}.
@@ -45,8 +50,26 @@ export function parseConfig(text: string): JarrinConfig {
   cfg.imports.push(...toImportList(map.imports));
   cfg.commands.push(...toCommandList(map.commands));
   cfg.backup = typeof map.backup === "string" ? map.backup.trim() : "";
+  cfg.project = toProject(map.project);
   cfg.worktree = toWorktree(map.worktree);
   return cfg;
+}
+
+function toProject(value: unknown): ProjectConfig {
+  const project = emptyProjectConfig();
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return project;
+  }
+  const rec = value as Record<string, unknown>;
+  project.port = toPort(rec.port);
+  const commands = rec.commands;
+  if (commands !== null && typeof commands === "object") {
+    const cmd = commands as Record<string, unknown>;
+    project.commands.start =
+      typeof cmd.start === "string" ? cmd.start.trim() : "";
+    project.commands.exit = typeof cmd.exit === "string" ? cmd.exit.trim() : "";
+  }
+  return project;
 }
 
 function toWorktree(value: unknown): WorktreeConfig {
@@ -60,7 +83,14 @@ function toWorktree(value: unknown): WorktreeConfig {
   // setup commands keep internal spaces but drop blank/whitespace-only entries.
   wt.setup = toStringList(rec.setup);
   wt.name = typeof rec.name === "string" ? rec.name.trim() : "";
+  wt.port = toPort(rec.port);
   return wt;
+}
+
+/** Coerce a YAML scalar to a non-negative integer port; anything else → 0. */
+function toPort(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(n) && n > 0 ? n : 0;
 }
 
 function toStringList(value: unknown): string[] {

@@ -108,6 +108,20 @@ function renderTemplate(cfg: JarrinConfig): string {
     lines.push("");
   }
 
+  // The project: stack block is hand-authored (like worktree:/backlog:), so the
+  // template only shows a commented example rather than emitting a live block.
+  lines.push(
+    "# Per-worktree runtime stack. `port` is the starting port worktrees increment",
+    "# from; the start/exit commands run with PROJECT_PORT set, on session start and",
+    "# exit inside a worktree (the main checkout is never affected).",
+    "# project:",
+    "#   port: 8000",
+    "#   commands:",
+    "#     start: docker compose up -d",
+    "#     exit: docker compose down",
+    "",
+  );
+
   return lines.join("\n").replace(/\n+$/, "\n");
 }
 

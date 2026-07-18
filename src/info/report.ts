@@ -1,6 +1,10 @@
 import { parse } from "yaml";
 
-import type { CommandRow, WorktreeConfig } from "../config/schema.js";
+import type {
+  CommandRow,
+  ProjectConfig,
+  WorktreeConfig,
+} from "../config/schema.js";
 
 /** A resolved rule with its on-disk presence, for the info listing. */
 export interface RuleLine {
@@ -24,6 +28,7 @@ export interface InfoReport {
   readonly commands: readonly CommandRow[];
   readonly backup: string;
   readonly hasJarrinMd: boolean;
+  readonly project: ProjectConfig;
   readonly worktree: WorktreeConfig;
   readonly backlog: BacklogMethods;
   readonly skills: readonly string[];
@@ -109,8 +114,19 @@ export function formatReport(r: InfoReport): string {
   );
   lines.push("");
 
+  lines.push("Project stack:");
+  lines.push(
+    `  port:  ${r.project.port ? String(r.project.port) : "(unset — feature off)"}`,
+  );
+  lines.push(`  start: ${r.project.commands.start || "(none)"}`);
+  lines.push(`  exit:  ${r.project.commands.exit || "(none)"}`);
+  lines.push("");
+
   lines.push("Worktree:");
   lines.push(`  name:  ${r.worktree.name || "(main worktree)"}`);
+  lines.push(
+    `  port:  ${r.worktree.port ? String(r.worktree.port) : "(none — main worktree)"}`,
+  );
   lines.push(
     `  dir:   ${r.worktree.dir || "(default: <repo>-worktrees sibling)"}`,
   );

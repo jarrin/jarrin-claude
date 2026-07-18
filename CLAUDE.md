@@ -73,10 +73,11 @@ the start of every session. The `claudjar init` command scaffolds and updates a 
   are de-duplicated: `rules` by slug, `imports` by owner+rule). Missing rule files are
   warned about and skipped; a missing `.jarrin.yml` is an error (surfaced on stderr).
   The hook parses `.jarrin.yml` with a real YAML library (the `yaml` package) — any valid
-  YAML shape works — but only _consumes_ the four rule/command tiers plus `backup:` and
-  ignores every other top-level key. Unknown top-level keys are silently ignored. Override
-  the group root with `JARRIN_GROUP_ROOT` and the library location with
-  `JARRIN_RULES_DIR` (both for testing).
+  YAML shape works — but only _consumes_ the four rule/command tiers, `backup:`, the
+  `project:` stack block, and the `worktree:` **identity** (`name` / `port`); it ignores
+  every other top-level key. Unknown top-level keys are silently ignored. Override the group
+  root with `JARRIN_GROUP_ROOT` and the library location with `JARRIN_RULES_DIR` (both for
+  testing).
 
   The optional **`backup:`** key is a single shell command the hook runs _before_ the
   session loads, so a repo can snapshot itself before a new conversation. Unlike
@@ -120,15 +121,47 @@ the start of every session. The `claudjar init` command scaffolds and updates a 
 
   **The hook does not read this block — by design, not by limitation.** `backlog:` is
   skill-consumed. The hook now uses a real YAML parser, so it _could_ read nested keys,
-  but it deliberately ignores everything except the four rule/command tiers and `backup:`
-  — `backlog:` is owned by the `staged-planning` and `todo` skills, which parse it
-  themselves. A Vitest test pins the invariant: a nested `backlog:` block must never
-  corrupt `rules` / `local` / `imports` / `commands`.
+  but it deliberately ignores everything except the four rule/command tiers, `backup:`,
+  `project:`, and the `worktree:` identity — `backlog:` is owned by the `staged-planning`
+  and `todo` skills, which parse it themselves. A Vitest test pins the invariant: a nested
+  `backlog:` block must never corrupt `rules` / `local` / `imports` / `commands`.
+
+- A **`project:`** block in `.jarrin.yml` (committed, shared like the rule tiers) declares a
+  **per-worktree runtime stack** — a service stack (e.g. `docker compose`) that lives only
+  as long as a Claude shell is open in a worktree, on a port unique to each worktree:
+
+  ```yaml
+  project:
+    port: 8000 # starting port; worktrees increment from here (main checkout unaffected)
+    commands:
+      start: docker compose up -d # run on a new shell inside a worktree
+      exit: docker compose down # run when that shell exits
+  ```
+
+  Both `start` and `exit` run with the worktree's assigned port in the environment as
+  **`PROJECT_PORT`** (so a compose file binds `${PROJECT_PORT}`). The lifecycle is driven by
+  hooks and gated on a stamped `worktree.name`, so **the main checkout is never affected**:
+
+  - **SessionStart** runs `start` **only** on a genuinely new shell (`source: startup`) —
+    never on `/clear`, `resume`, or `compact`. On both `startup` and `clear` it injects the
+    running port into the session context (so a `/clear` shows the port without restarting).
+  - **SessionEnd** (`bin/claude/session-end`, registered in `claude/settings.json`) runs
+    `exit`, tearing the stack down — **except** on `reason: clear`, so a `/clear` (which
+    fires SessionEnd→SessionStart) never kills the stack the next session reuses. Teardown
+    is naive: any real session end runs `exit`.
+
+  `claudjar start` / `claudjar stop` drive the same start/exit by hand from inside a
+  worktree. Both hooks and CLI resolve the effective port as `worktree.port` (the worktree's
+  stamped assignment) falling back to `project.port`. Because the assigned port lives in the
+  gitignored local file, the SessionStart/SessionEnd hooks now read `.jarrin.local.yml` too
+  (via the merged config), not the committed base alone.
 
 - A **`worktree:`** block configures `claudjar worktree create <name>` — how a new git
-  worktree for this repo is placed and bootstrapped. It is **CLI-consumed only** (never the
-  hook, never `init`), and lives by convention in the gitignored **`.jarrin.local.yml`**
-  (below), since where worktrees land and how they build is machine-specific:
+  worktree for this repo is placed and bootstrapped. Its recipe (`dir`/`copy`/`setup`) is
+  **CLI-consumed** (never `init`); its **identity** (`name`/`port`, stamped on create) is
+  read by the CLI, the session lifecycle hooks, and the `todo`/`staged-planning` skills. The
+  whole block lives by convention in the gitignored **`.jarrin.local.yml`** (below), since
+  where worktrees land, how they build, and each worktree's port are machine-specific:
 
   ```yaml
   worktree:
@@ -139,26 +172,32 @@ the start of every session. The `claudjar init` command scaffolds and updates a 
       - .claude/settings.local.json
     setup: # shell commands run in the new worktree after creation, in order
       - poetry install
-      - docker compose up -d
     name: feature-x # identity marker — stamped by `worktree create`, not hand-set
+    port: 8001 # assigned PROJECT_PORT — stamped by `worktree create`, not hand-set
   ```
 
   `create` runs `git worktree add` (new branch unless it exists), copies the `copy:` files
-  across, **stamps `worktree.name`** into the new worktree's `.jarrin.local.yml`, then runs
-  `setup:` in order (stopping on the first failure; `--no-setup` skips them). That stamped
-  `name` is what the `staged-planning` and `todo` skills read to scope forge tickets to the
-  worktree (`worktree/<name>` label; see `claude/references/backlog.md` §9).
+  across, assigns the next **`PROJECT_PORT`** (one past the highest already handed to a
+  sibling worktree, never below `project.port`), **stamps `worktree.name` + `worktree.port`**
+  into the new worktree's `.jarrin.local.yml`, then runs `setup:` in order (stopping on the
+  first failure; `--no-setup` skips them). `create` does not launch the stack — the session's
+  SessionStart hook does. The stamped `name` is what the `staged-planning` and `todo` skills
+  read to scope forge tickets to the worktree (`worktree/<name>` label; see
+  `claude/references/backlog.md` §9); the stamped `port` is the worktree's `PROJECT_PORT`.
 
 - **`<project>/.claude/.jarrin.local.yml`** (optional, **gitignored**) is a per-machine
   override merged over the committed `.jarrin.yml`. **Only the `worktree:` block is
   overridable** — every other key is taken from the committed base verbatim (declaring
   `rules` / `commands` / `backup` here has no effect; that is deliberate, they are shared
   config). Widen the override surface explicitly in `src/config/merge.ts` if a future key
-  needs it. The merge is CLI-only: the SessionStart hook reads the committed base alone, so
-  the hot path never touches the local file.
+  needs it. The SessionStart and SessionEnd hooks now read the merged view (base + local),
+  because the per-worktree `project:` stack lifecycle needs the local file's stamped
+  `worktree.name` / `worktree.port`; rules, commands, and `backup` still resolve from the
+  committed base alone.
 
 `claudjar info` prints the merged, resolved view of all of the above for the current repo:
-config files present, rules with on-disk presence, the command table, backlog methods,
+config files present, rules with on-disk presence, the command table, the `project:` stack,
+backlog methods,
 worktree config, backup, and available skills.
 
 This gives explicit, per-repo control that path globs cannot express (e.g. "this Laravel

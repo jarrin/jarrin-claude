@@ -12552,8 +12552,11 @@ import { readFileSync } from "fs";
 import { join as join2 } from "path";
 
 // src/config/schema.ts
+function emptyProjectConfig() {
+  return { port: 0, commands: { start: "", exit: "" } };
+}
 function emptyWorktreeConfig() {
-  return { dir: "", copy: [], setup: [], name: "" };
+  return { dir: "", copy: [], setup: [], name: "", port: 0 };
 }
 function emptyConfig() {
   return {
@@ -12562,6 +12565,7 @@ function emptyConfig() {
     imports: [],
     commands: [],
     backup: "",
+    project: emptyProjectConfig(),
     worktree: emptyWorktreeConfig()
   };
 }
@@ -12574,6 +12578,10 @@ function mergeConfig(base, local) {
   merged.imports.push(...base.imports);
   merged.commands.push(...base.commands);
   merged.backup = base.backup;
+  merged.project = {
+    port: base.project.port,
+    commands: { ...base.project.commands }
+  };
   merged.worktree = mergeWorktree(base.worktree, local.worktree);
   return merged;
 }
@@ -12582,7 +12590,8 @@ function mergeWorktree(base, local) {
     dir: local.dir || base.dir,
     copy: unionStrings(base.copy, local.copy),
     setup: local.setup.length > 0 ? [...local.setup] : [...base.setup],
-    name: local.name || base.name
+    name: local.name || base.name,
+    port: local.port || base.port
   };
 }
 function unionStrings(a2, b3) {
@@ -12620,8 +12629,24 @@ function parseConfig(text2) {
   cfg.imports.push(...toImportList(map.imports));
   cfg.commands.push(...toCommandList(map.commands));
   cfg.backup = typeof map.backup === "string" ? map.backup.trim() : "";
+  cfg.project = toProject(map.project);
   cfg.worktree = toWorktree(map.worktree);
   return cfg;
+}
+function toProject(value) {
+  const project = emptyProjectConfig();
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return project;
+  }
+  const rec = value;
+  project.port = toPort(rec.port);
+  const commands = rec.commands;
+  if (commands !== null && typeof commands === "object") {
+    const cmd = commands;
+    project.commands.start = typeof cmd.start === "string" ? cmd.start.trim() : "";
+    project.commands.exit = typeof cmd.exit === "string" ? cmd.exit.trim() : "";
+  }
+  return project;
 }
 function toWorktree(value) {
   const wt = emptyWorktreeConfig();
@@ -12633,7 +12658,12 @@ function toWorktree(value) {
   wt.copy = toStringList(rec.copy);
   wt.setup = toStringList(rec.setup);
   wt.name = typeof rec.name === "string" ? rec.name.trim() : "";
+  wt.port = toPort(rec.port);
   return wt;
+}
+function toPort(value) {
+  const n3 = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(n3) && n3 > 0 ? n3 : 0;
 }
 function toStringList(value) {
   if (!Array.isArray(value)) return [];
@@ -12801,8 +12831,18 @@ function formatReport(r2) {
     `  plan: ${r2.backlog.plan}   todo: ${r2.backlog.todo}${r2.backlog.repo ? `   repo: ${r2.backlog.repo}` : ""}`
   );
   lines.push("");
+  lines.push("Project stack:");
+  lines.push(
+    `  port:  ${r2.project.port ? String(r2.project.port) : "(unset \u2014 feature off)"}`
+  );
+  lines.push(`  start: ${r2.project.commands.start || "(none)"}`);
+  lines.push(`  exit:  ${r2.project.commands.exit || "(none)"}`);
+  lines.push("");
   lines.push("Worktree:");
   lines.push(`  name:  ${r2.worktree.name || "(main worktree)"}`);
+  lines.push(
+    `  port:  ${r2.worktree.port ? String(r2.worktree.port) : "(none \u2014 main worktree)"}`
+  );
   lines.push(
     `  dir:   ${r2.worktree.dir || "(default: <repo>-worktrees sibling)"}`
   );
@@ -12875,6 +12915,7 @@ function renderCommands(commands) {
 }
 function composeAdditionalContext(opts) {
   const parts = [HEADER];
+  if (opts.stackStatus) parts.push(opts.stackStatus);
   if (opts.commandsTable) parts.push(opts.commandsTable);
   if (opts.ruleBlocks.length > 0)
     parts.push(opts.ruleBlocks.join("\n\n---\n\n"));
@@ -12907,6 +12948,7 @@ function runInfo() {
     commands: cfg.commands,
     backup: cfg.backup,
     hasJarrinMd: isFile2(join4(claudeDir, ".jarrin-claude.md")),
+    project: cfg.project,
     worktree: cfg.worktree,
     // `backlog:` is skill-owned and not overridable — read it from the committed
     // base only.
@@ -13028,6 +13070,17 @@ function renderTemplate(cfg) {
     lines.push(`backup: ${quoteIfNeeded(cfg.backup)}`);
     lines.push("");
   }
+  lines.push(
+    "# Per-worktree runtime stack. `port` is the starting port worktrees increment",
+    "# from; the start/exit commands run with PROJECT_PORT set, on session start and",
+    "# exit inside a worktree (the main checkout is never affected).",
+    "# project:",
+    "#   port: 8000",
+    "#   commands:",
+    "#     start: docker compose up -d",
+    "#     exit: docker compose down",
+    ""
+  );
   return lines.join("\n").replace(/\n+$/, "\n");
 }
 function quoteIfNeeded(value) {
@@ -13610,25 +13663,120 @@ var installCommand = buildCommand({
   }
 });
 
-// src/commands/session-start.ts
+// src/commands/session-end.ts
+import { join as join8 } from "path";
+
+// src/project/stack.ts
 import { spawnSync as spawnSync3 } from "child_process";
-import { readFileSync as readFileSync4, statSync as statSync5 } from "fs";
-import { dirname as dirname5, join as join8, resolve as resolve3 } from "path";
-var TAG = "[jarrin session-start]";
-var BACKUP_SOURCES = /* @__PURE__ */ new Set(["startup", "clear"]);
-async function runSessionStart() {
+var PORT_ENV = "PROJECT_PORT";
+function effectivePort(cfg) {
+  return cfg.worktree.port || cfg.project.port;
+}
+function resolveStack(cfg) {
+  const port = effectivePort(cfg);
+  return {
+    active: cfg.worktree.name !== "" && port > 0,
+    port,
+    name: cfg.worktree.name,
+    start: cfg.project.commands.start,
+    exit: cfg.project.commands.exit
+  };
+}
+function runStackCommand(command, port, cwd, proc) {
+  const result = spawnSync3(command, {
+    cwd,
+    shell: true,
+    encoding: "utf8",
+    env: { ...proc.env, [PORT_ENV]: String(port) }
+  });
+  if (result.stdout) proc.stderr.write(result.stdout);
+  if (result.stderr) proc.stderr.write(result.stderr);
+  if (result.error) {
+    proc.stderr.write(`error launching command: ${result.error.message}
+`);
+    return 1;
+  }
+  return result.status ?? 1;
+}
+function isStartSource(source) {
+  return source === "startup";
+}
+function showsPort(source) {
+  return source === "startup" || source === "clear";
+}
+function isExitReason(reason) {
+  return reason !== "clear";
+}
+function stackStatusText(name, port) {
+  return `## Project stack
+
+Worktree \`${name}\` runs its project stack on ${PORT_ENV}=**${String(port)}**.`;
+}
+
+// src/commands/session-end.ts
+var TAG = "[jarrin session-end]";
+async function runSessionEnd() {
   const proc = this.process;
   const err = (msg) => void proc.stderr.write(msg);
   const payload = await readPayload(proc);
   const cwd = payload.cwd ?? proc.cwd();
+  const reason = payload.reason ?? "";
+  if (!isExitReason(reason)) return;
+  const cfg = loadEffectiveConfig(join8(cwd, ".claude")).merged;
+  const stack = resolveStack(cfg);
+  if (!stack.active || !stack.exit) return;
+  err(
+    `${TAG} stopping project stack (PROJECT_PORT=${String(stack.port)}): ${stack.exit}
+`
+  );
+  const status = runStackCommand(stack.exit, stack.port, cwd, proc);
+  if (status !== 0) {
+    err(`${TAG} WARNING: exit command exited ${String(status)}.
+`);
+  }
+}
+async function readPayload(proc) {
+  if (proc.stdin.isTTY) return {};
+  try {
+    const chunks = [];
+    for await (const chunk of proc.stdin) {
+      chunks.push(Buffer.from(chunk));
+    }
+    const text2 = Buffer.concat(chunks).toString("utf8").trim();
+    if (!text2) return {};
+    const parsed = JSON.parse(text2);
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch {
+  }
+  return {};
+}
+var sessionEndCommand = buildCommand({
+  func: runSessionEnd,
+  parameters: { flags: {} },
+  docs: {
+    brief: "SessionEnd hook: tear down this worktree's project stack (reads stdin JSON)"
+  }
+});
+
+// src/commands/session-start.ts
+import { spawnSync as spawnSync4 } from "child_process";
+import { readFileSync as readFileSync4, statSync as statSync5 } from "fs";
+import { dirname as dirname5, join as join9, resolve as resolve3 } from "path";
+var TAG2 = "[jarrin session-start]";
+var BACKUP_SOURCES = /* @__PURE__ */ new Set(["startup", "clear"]);
+async function runSessionStart() {
+  const proc = this.process;
+  const err = (msg) => void proc.stderr.write(msg);
+  const payload = await readPayload2(proc);
+  const cwd = payload.cwd ?? proc.cwd();
   const source = payload.source ?? "";
   const groupRoot = proc.env.JARRIN_GROUP_ROOT ?? dirname5(resolve3(cwd));
-  const claudeDir = join8(cwd, ".claude");
-  const jarrinYml = join8(claudeDir, ".jarrin.yml");
-  const jarrinMd = join8(claudeDir, ".jarrin-claude.md");
+  const claudeDir = join9(cwd, ".claude");
+  const jarrinYml = join9(claudeDir, ".jarrin.yml");
+  const jarrinMd = join9(claudeDir, ".jarrin-claude.md");
   if (!isFile4(jarrinYml)) {
     err(
-      `${TAG} ERROR: ${jarrinYml} not found. Create it to declare which rules to load, e.g.
+      `${TAG2} ERROR: ${jarrinYml} not found. Create it to declare which rules to load, e.g.
     rules:
       - lang-ts
 `
@@ -13636,19 +13784,10 @@ async function runSessionStart() {
     proc.exitCode = 1;
     return;
   }
-  let cfgText;
-  try {
-    cfgText = readFileSync4(jarrinYml, "utf8");
-  } catch (e) {
-    err(`${TAG} ERROR reading ${jarrinYml}: ${String(e)}
-`);
-    proc.exitCode = 1;
-    return;
-  }
-  const cfg = parseConfig(cfgText);
+  const cfg = loadEffectiveConfig(claudeDir).merged;
   if (cfg.backup && BACKUP_SOURCES.has(source)) {
     if (runBackup(this, cfg.backup, cwd) !== 0) {
-      err(`${TAG} ERROR: backup command failed; session blocked.
+      err(`${TAG2} ERROR: backup command failed; session blocked.
 `);
       proc.exitCode = 1;
       return;
@@ -13669,11 +13808,32 @@ async function runSessionStart() {
     }
   }
   if (missing.length > 0) {
-    err(`${TAG} WARNING: rule(s) not found: ${missing.join(", ")}
+    err(`${TAG2} WARNING: rule(s) not found: ${missing.join(", ")}
 `);
   }
   const extraMd = isFile4(jarrinMd) ? readFileSync4(jarrinMd, "utf8").trim() : "";
+  const stack = resolveStack(cfg);
+  let stackStatus;
+  if (stack.active) {
+    if (isStartSource(source) && stack.start) {
+      err(
+        `${TAG2} starting project stack (PROJECT_PORT=${String(stack.port)}): ${stack.start}
+`
+      );
+      const status = runStackCommand(stack.start, stack.port, cwd, proc);
+      if (status !== 0) {
+        err(
+          `${TAG2} WARNING: start command exited ${String(status)}; continuing.
+`
+        );
+      }
+    }
+    if (showsPort(source)) {
+      stackStatus = stackStatusText(stack.name, stack.port);
+    }
+  }
   const additionalContext = composeAdditionalContext({
+    stackStatus,
     commandsTable: cfg.commands.length > 0 ? renderCommands(cfg.commands) : void 0,
     ruleBlocks,
     extraMd: extraMd || void 0
@@ -13688,7 +13848,7 @@ async function runSessionStart() {
     }) + "\n"
   );
 }
-async function readPayload(proc) {
+async function readPayload2(proc) {
   if (proc.stdin.isTTY) return {};
   try {
     const chunks = [];
@@ -13704,9 +13864,9 @@ async function readPayload(proc) {
   return {};
 }
 function runBackup(ctx, command, cwd) {
-  ctx.process.stderr.write(`${TAG} backup: ${command}
+  ctx.process.stderr.write(`${TAG2} backup: ${command}
 `);
-  const result = spawnSync3(command, {
+  const result = spawnSync4(command, {
     cwd,
     shell: true,
     encoding: "utf8"
@@ -13715,7 +13875,7 @@ function runBackup(ctx, command, cwd) {
   if (result.stderr) ctx.process.stderr.write(result.stderr);
   if (result.error) {
     ctx.process.stderr.write(
-      `${TAG} ERROR launching backup: ${result.error.message}
+      `${TAG2} ERROR launching backup: ${result.error.message}
 `
     );
     return 1;
@@ -13737,8 +13897,64 @@ var sessionStartCommand = buildCommand({
   }
 });
 
+// src/commands/start.ts
+import { join as join10 } from "path";
+function runLifecycle(ctx, kind) {
+  const proc = ctx.process;
+  const out = (msg) => void proc.stdout.write(msg);
+  const repoRoot = toplevel(proc.cwd());
+  if (!repoRoot) {
+    proc.stderr.write(`${kind}: not inside a git repository.
+`);
+    proc.exitCode = 1;
+    return;
+  }
+  const cfg = loadEffectiveConfig(join10(repoRoot, ".claude")).merged;
+  const stack = resolveStack(cfg);
+  if (!stack.active) {
+    out(
+      "No project stack for this checkout (the main repo is not affected; only worktrees created by `claudjar worktree create` run a stack).\n"
+    );
+    return;
+  }
+  const command = kind === "start" ? stack.start : stack.exit;
+  if (!command) {
+    out(`No project.commands.${kind} configured; nothing to run.
+`);
+    return;
+  }
+  out(
+    `${kind === "start" ? "Starting" : "Stopping"} project stack (PROJECT_PORT=${String(stack.port)})\u2026
+`
+  );
+  const status = runStackCommand(command, stack.port, repoRoot, proc);
+  if (status !== 0) {
+    proc.stderr.write(`${kind}: command failed (exit ${String(status)}).
+`);
+    proc.exitCode = 1;
+  }
+}
+var startCommand = buildCommand({
+  func: function() {
+    runLifecycle(this, "start");
+  },
+  parameters: { flags: {} },
+  docs: {
+    brief: "Bring up this worktree's project stack (project.commands.start, PROJECT_PORT set)"
+  }
+});
+var stopCommand = buildCommand({
+  func: function() {
+    runLifecycle(this, "exit");
+  },
+  parameters: { flags: {} },
+  docs: {
+    brief: "Tear down this worktree's project stack (project.commands.exit, PROJECT_PORT set)"
+  }
+});
+
 // src/commands/worktree.ts
-import { spawnSync as spawnSync4 } from "child_process";
+import { spawnSync as spawnSync5 } from "child_process";
 import {
   cpSync,
   existsSync as existsSync3,
@@ -13746,7 +13962,7 @@ import {
   readFileSync as readFileSync5,
   writeFileSync as writeFileSync3
 } from "fs";
-import { dirname as dirname7, join as join10, relative, resolve as resolve5 } from "path";
+import { dirname as dirname7, join as join12, relative, resolve as resolve5 } from "path";
 
 // src/worktree/merge.ts
 function parseWorktreeList(porcelain) {
@@ -13826,22 +14042,28 @@ function conflictPrompt(opts) {
 }
 
 // src/worktree/plan.ts
-import { basename as basename3, dirname as dirname6, isAbsolute, join as join9, resolve as resolve4 } from "path";
-var ALWAYS_COPY = [join9(".claude", LOCAL_FILE)];
+import { basename as basename3, dirname as dirname6, isAbsolute, join as join11, resolve as resolve4 } from "path";
+var ALWAYS_COPY = [join11(".claude", LOCAL_FILE)];
 function planWorktree(opts) {
   const name = opts.name.trim();
   const baseDir = resolveBaseDir(opts.cfg.dir, opts.repoRoot);
   return {
     branch: name,
     baseDir,
-    path: join9(baseDir, name),
+    path: join11(baseDir, name),
     copy: dedup2([...ALWAYS_COPY, ...opts.cfg.copy]),
     setup: [...opts.cfg.setup]
   };
 }
 function resolveBaseDir(dir, repoRoot) {
   if (dir) return isAbsolute(dir) ? dir : resolve4(repoRoot, dir);
-  return join9(dirname6(repoRoot), `${basename3(repoRoot)}-worktrees`);
+  return join11(dirname6(repoRoot), `${basename3(repoRoot)}-worktrees`);
+}
+function nextPort(base, existing) {
+  const start = base > 0 ? base : 0;
+  if (existing.length === 0) return start;
+  const highest = existing.reduce((max, p3) => p3 > max ? p3 : max, 0);
+  return Math.max(start, highest + 1);
 }
 function validateWorktreeName(raw) {
   const name = raw.trim();
@@ -13865,14 +14087,16 @@ function dedup2(items) {
 
 // src/worktree/stamp.ts
 var import_yaml4 = __toESM(require_dist(), 1);
-function stampWorktreeName(existing, name) {
+function stampWorktree(existing, identity) {
   const doc = (0, import_yaml4.parseDocument)(existing.trim() ? existing : "");
   let wt = doc.get("worktree");
   if (!(wt instanceof import_yaml4.YAMLMap)) {
     wt = new import_yaml4.YAMLMap();
     doc.set("worktree", wt);
   }
-  wt.set("name", name);
+  const map = wt;
+  map.set("name", identity.name);
+  if (identity.port > 0) map.set("port", identity.port);
   return doc.toString();
 }
 
@@ -13890,7 +14114,7 @@ function runWorktreeCreate(flags, name) {
   const branch = name.trim();
   const repoRoot = mainWorktreeRoot(proc.cwd());
   if (!repoRoot) return fail("not inside a git repository.");
-  const cfg = loadEffectiveConfig(join10(repoRoot, ".claude")).merged;
+  const cfg = loadEffectiveConfig(join12(repoRoot, ".claude")).merged;
   const plan = planWorktree({ name: branch, repoRoot, cfg: cfg.worktree });
   if (existsSync3(plan.path)) {
     return fail(`target already exists: ${plan.path}`);
@@ -13899,22 +14123,29 @@ function runWorktreeCreate(flags, name) {
   const gitArgs = exists ? ["-C", repoRoot, "worktree", "add", plan.path, branch] : ["-C", repoRoot, "worktree", "add", "-b", branch, plan.path];
   out(`Creating worktree ${plan.path} (branch ${branch})\u2026
 `);
-  const add = spawnSync4("git", gitArgs, { stdio: "inherit" });
+  const add = spawnSync5("git", gitArgs, { stdio: "inherit" });
   if (add.status !== 0) return fail("`git worktree add` failed.");
   for (const rel of plan.copy) {
-    const src = join10(repoRoot, rel);
+    const src = join12(repoRoot, rel);
     if (!existsSync3(src)) continue;
-    const dest = join10(plan.path, rel);
+    const dest = join12(plan.path, rel);
     mkdirSync3(dirname7(dest), { recursive: true });
     cpSync(src, dest, { recursive: true });
     out(`  copied ${rel}
 `);
   }
-  const localPath = join10(plan.path, ".claude", LOCAL_FILE);
+  const port = cfg.project.port > 0 ? nextPort(cfg.project.port, assignedPorts(repoRoot)) : 0;
+  const localPath = join12(plan.path, ".claude", LOCAL_FILE);
   const existing = existsSync3(localPath) ? readFileSync5(localPath, "utf8") : "";
   mkdirSync3(dirname7(localPath), { recursive: true });
-  writeFileSync3(localPath, stampWorktreeName(existing, branch), "utf8");
+  writeFileSync3(
+    localPath,
+    stampWorktree(existing, { name: branch, port }),
+    "utf8"
+  );
   out(`  stamped worktree.name: ${branch} in .claude/${LOCAL_FILE}
+`);
+  if (port > 0) out(`  assigned PROJECT_PORT: ${String(port)}
 `);
   if (flags.setup && plan.setup.length > 0) {
     out(`Running setup (${String(plan.setup.length)} command(s))\u2026
@@ -13922,7 +14153,7 @@ function runWorktreeCreate(flags, name) {
     for (const command of plan.setup) {
       out(`  $ ${command}
 `);
-      const res = spawnSync4(command, {
+      const res = spawnSync5(command, {
         cwd: plan.path,
         shell: true,
         stdio: "inherit"
@@ -13943,6 +14174,23 @@ The worktree exists at ${plan.path}; fix and re-run setup by hand.`
   out(`
 Done. cd ${relative(proc.cwd(), plan.path) || plan.path}
 `);
+}
+function assignedPorts(repoRoot) {
+  const porcelain = worktreeListPorcelain(repoRoot);
+  if (!porcelain) return [];
+  const ports = [];
+  for (const line of porcelain.split("\n")) {
+    if (!line.startsWith("worktree ")) continue;
+    const wtPath = line.slice("worktree ".length).trim();
+    const localPath = join12(wtPath, ".claude", LOCAL_FILE);
+    if (!existsSync3(localPath)) continue;
+    try {
+      const port = parseConfig(readFileSync5(localPath, "utf8")).worktree.port;
+      if (port > 0) ports.push(port);
+    } catch {
+    }
+  }
+  return ports;
 }
 function runWorktreeMerge(flags, name) {
   const proc = this.process;
@@ -13973,7 +14221,7 @@ function runWorktreeMerge(flags, name) {
   }
   out(`Merging ${branch} into ${onBranch ?? "HEAD"}\u2026
 `);
-  const merge = spawnSync4("git", ["-C", target, "merge", "--no-edit", branch], {
+  const merge = spawnSync5("git", ["-C", target, "merge", "--no-edit", branch], {
     stdio: "inherit"
   });
   if (merge.status !== 0) {
@@ -14005,7 +14253,7 @@ Resolve the conflicts and commit. (--no-claude: not launching claude.)
     out(`
 Launching claude to resolve the conflict\u2026
 `);
-    const claude = spawnSync4("claude", [prompt], {
+    const claude = spawnSync5("claude", [prompt], {
       cwd: target,
       stdio: "inherit"
     });
@@ -14031,7 +14279,7 @@ ${prompt}
     return;
   }
   if (wtPath) {
-    const rm = spawnSync4("git", ["-C", target, "worktree", "remove", wtPath], {
+    const rm = spawnSync5("git", ["-C", target, "worktree", "remove", wtPath], {
       stdio: "inherit"
     });
     if (rm.status !== 0) {
@@ -14042,7 +14290,7 @@ ${prompt}
     out(`  removed worktree ${wtPath}
 `);
   }
-  const del = spawnSync4("git", ["-C", target, "branch", "-d", branch], {
+  const del = spawnSync5("git", ["-C", target, "branch", "-d", branch], {
     stdio: "inherit"
   });
   if (del.status !== 0) {
@@ -14058,7 +14306,7 @@ Done.
 function runWorktreeList() {
   const proc = this.process;
   const repoRoot = mainWorktreeRoot(proc.cwd()) ?? proc.cwd();
-  const res = spawnSync4("git", ["-C", repoRoot, "worktree", "list"], {
+  const res = spawnSync5("git", ["-C", repoRoot, "worktree", "list"], {
     stdio: "inherit"
   });
   if (res.status !== 0) {
@@ -14139,10 +14387,10 @@ var worktreeRoutes = buildRouteMap({
 
 // src/context.ts
 import { homedir as homedir2 } from "os";
-import { join as join11 } from "path";
+import { join as join13 } from "path";
 function buildContext(proc) {
-  const rulesDir = proc.env.JARRIN_RULES_DIR ?? join11(homedir2(), ".claude", "rules");
-  const skillsDir = proc.env.JARRIN_SKILLS_DIR ?? join11(homedir2(), ".claude", "skills");
+  const rulesDir = proc.env.JARRIN_RULES_DIR ?? join13(homedir2(), ".claude", "rules");
+  const skillsDir = proc.env.JARRIN_SKILLS_DIR ?? join13(homedir2(), ".claude", "skills");
   return { process: proc, rulesDir, skillsDir };
 }
 
@@ -14154,7 +14402,10 @@ var routes = buildRouteMap({
     info: infoCommand,
     install: installCommand,
     worktree: worktreeRoutes,
-    "session-start": sessionStartCommand
+    start: startCommand,
+    stop: stopCommand,
+    "session-start": sessionStartCommand,
+    "session-end": sessionEndCommand
   },
   docs: {
     brief: "Manage Jarrin's Claude Code config",

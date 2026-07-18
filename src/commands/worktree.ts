@@ -11,6 +11,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { buildCommand, buildRouteMap } from "@stricli/core";
 
 import { LOCAL_FILE, loadEffectiveConfig } from "../config/load.js";
+import { parseConfig } from "../config/read.js";
 import type { LocalContext } from "../context.js";
 import {
   branchExists,
@@ -21,8 +22,12 @@ import {
   worktreeListPorcelain,
 } from "../git.js";
 import { conflictPrompt, worktreePathForBranch } from "../worktree/merge.js";
-import { planWorktree, validateWorktreeName } from "../worktree/plan.js";
-import { stampWorktreeName } from "../worktree/stamp.js";
+import {
+  nextPort,
+  planWorktree,
+  validateWorktreeName,
+} from "../worktree/plan.js";
+import { stampWorktree } from "../worktree/stamp.js";
 
 interface CreateFlags {
   readonly setup: boolean;
@@ -79,15 +84,29 @@ function runWorktreeCreate(
     out(`  copied ${rel}\n`);
   }
 
-  // 3. Stamp the worktree's identity into its own .jarrin.local.yml so the
-  //    todo / staged-planning skills can scope forge work to it.
+  // 3. Assign this worktree a PROJECT_PORT: one past the highest already handed
+  //    out to a sibling worktree, never below the project's starting port. Only
+  //    linked worktrees carry a port — the main checkout is never assigned one.
+  const port =
+    cfg.project.port > 0
+      ? nextPort(cfg.project.port, assignedPorts(repoRoot))
+      : 0;
+
+  // 4. Stamp the worktree's identity (name + port) into its own .jarrin.local.yml
+  //    so the todo / staged-planning skills can scope forge work to it and the
+  //    session lifecycle hooks know its PROJECT_PORT.
   const localPath = join(plan.path, ".claude", LOCAL_FILE);
   const existing = existsSync(localPath) ? readFileSync(localPath, "utf8") : "";
   mkdirSync(dirname(localPath), { recursive: true });
-  writeFileSync(localPath, stampWorktreeName(existing, branch), "utf8");
+  writeFileSync(
+    localPath,
+    stampWorktree(existing, { name: branch, port }),
+    "utf8",
+  );
   out(`  stamped worktree.name: ${branch} in .claude/${LOCAL_FILE}\n`);
+  if (port > 0) out(`  assigned PROJECT_PORT: ${String(port)}\n`);
 
-  // 4. Run setup commands in the new worktree, in order; stop on the first fail.
+  // 5. Run setup commands in the new worktree, in order; stop on the first fail.
   if (flags.setup && plan.setup.length > 0) {
     out(`Running setup (${String(plan.setup.length)} command(s))…\n`);
     for (const command of plan.setup) {
@@ -111,6 +130,30 @@ function runWorktreeCreate(
   }
 
   out(`\nDone. cd ${relative(proc.cwd(), plan.path) || plan.path}\n`);
+}
+
+/**
+ * PROJECT_PORTs already assigned to this repo's linked worktrees, read from each
+ * worktree's stamped `.jarrin.local.yml`. Drives the incrementing assignment in
+ * {@link nextPort}; the main worktree carries no port and contributes nothing.
+ */
+function assignedPorts(repoRoot: string): number[] {
+  const porcelain = worktreeListPorcelain(repoRoot);
+  if (!porcelain) return [];
+  const ports: number[] = [];
+  for (const line of porcelain.split("\n")) {
+    if (!line.startsWith("worktree ")) continue;
+    const wtPath = line.slice("worktree ".length).trim();
+    const localPath = join(wtPath, ".claude", LOCAL_FILE);
+    if (!existsSync(localPath)) continue;
+    try {
+      const port = parseConfig(readFileSync(localPath, "utf8")).worktree.port;
+      if (port > 0) ports.push(port);
+    } catch {
+      // Unreadable local config — skip; a fresh port is still safe to hand out.
+    }
+  }
+  return ports;
 }
 
 interface MergeFlags {

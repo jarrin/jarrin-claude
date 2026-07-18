@@ -14,8 +14,9 @@ they are not in the working tree.
 | `bin/claudjar`             | Repo-local launcher for the CLI (`bin/claudjar install`, `init`, …)                        |
 | `CLAUDE.md`                | Guide for working **in this repo** — how to author rule files                              |
 | `claude/CLAUDE.md`         | Global, cross-project instructions (loaded every session)                                  |
-| `claude/settings.json`     | Global Claude Code settings (registers the SessionStart hook)                              |
+| `claude/settings.json`     | Global Claude Code settings (registers the SessionStart + SessionEnd hooks)                |
 | `bin/claude/session-start` | SessionStart hook launcher → `dist/claudjar.js session-start` (linked to `~/.claude/bin/`) |
+| `bin/claude/session-end`   | SessionEnd hook launcher → `dist/claudjar.js session-end` (linked to `~/.claude/bin/`)     |
 | `claude/rules/*.md`        | Global rule library (`lang-php.md`, `fw-laravel.md`, …)                                    |
 | `claude/skills/*/`         | Global skills (e.g. `add-skill/` — how to author a skill)                                  |
 | `claude/references/*.md`   | Shared reference docs read by more than one skill (`backlog.md`)                           |
@@ -117,6 +118,11 @@ ignores it — it is skill-consumed, read by the `staged-planning` and `todo` sk
 `CLAUDE.md` for the schema, and `claude/references/backlog.md` for the shared rules both
 skills implement (config resolution, labels, milestones, retrieval).
 
+A committed **`project:`** block gives each worktree a runtime stack (see **The claudjar
+CLI** below): the SessionStart hook runs its `start` on a new shell and shows the
+worktree's `PROJECT_PORT`; a companion **SessionEnd** hook (`bin/claude/session-end`)
+runs its `exit` when the shell exits. The main checkout is never affected.
+
 The hook reads the session `cwd` from its stdin JSON, resolves the three tiers (global →
 local → imports, each rule included once), renders the `commands` table, appends
 `.jarrin-claude.md`, and emits the combined text as the SessionStart `additionalContext`.
@@ -135,24 +141,45 @@ repo's directory; override it with `JARRIN_GROUP_ROOT` and the global library wi
 One typed entrypoint (`@stricli/core` + `@clack/prompts`, strict TypeScript) backs the
 subcommands:
 
-| Command                        | What it does                                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------------------------------- |
-| `claudjar init`                | Set up (new repo) or update `.claude/.jarrin.yml`, preserving comments + `backlog:`               |
-| `claudjar info`                | Print the merged, resolved config for this repo: rules (✓/✗), commands, backlog, worktree, skills |
-| `claudjar worktree create <n>` | Add a git worktree and bootstrap it from the `worktree:` config (branch, copy, setup)             |
-| `claudjar worktree merge <n>`  | Merge a worktree branch into the current branch, remove the worktree (claude resolves conflicts)  |
-| `claudjar worktree list`       | List this repo's git worktrees                                                                    |
-| `claudjar install`             | Machine setup: symlink config into `~/.claude`, enable hooks, check prerequisites                 |
-| `claudjar session-start`       | The SessionStart hook itself (reads the hook JSON on stdin) — not run by hand                     |
+| Command                        | What it does                                                                                                     |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `claudjar init`                | Set up (new repo) or update `.claude/.jarrin.yml`, preserving comments + `backlog:`                              |
+| `claudjar info`                | Print the merged, resolved config for this repo: rules (✓/✗), commands, project stack, backlog, worktree, skills |
+| `claudjar worktree create <n>` | Add a git worktree and bootstrap it from the `worktree:` config (branch, copy, port, setup)                      |
+| `claudjar worktree merge <n>`  | Merge a worktree branch into the current branch, remove the worktree (claude resolves conflicts)                 |
+| `claudjar worktree list`       | List this repo's git worktrees                                                                                   |
+| `claudjar start` / `stop`      | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout               |
+| `claudjar install`             | Machine setup: symlink config into `~/.claude`, enable hooks, check prerequisites                                |
+| `claudjar session-start`       | The SessionStart hook itself (reads the hook JSON on stdin) — not run by hand                                    |
+| `claudjar session-end`         | The SessionEnd hook itself (reads the hook JSON on stdin) — not run by hand                                      |
 
 `worktree create` reads the `worktree:` block from `.claude/.jarrin.local.yml` (a gitignored,
 per-machine override merged over the committed `.jarrin.yml` — **only `worktree:` overrides**).
 It runs `git worktree add` (a new branch unless one exists), copies the configured gitignored
-files across — always `.jarrin.local.yml`, into which it **stamps the worktree's `name`** — then
-runs the `setup:` commands in order (`--no-setup` skips them). The stamped name scopes forge
-todos/plans to the worktree (`worktree/<name>` label; see `claude/references/backlog.md` §9). New
-worktrees default to the grouped sibling `<parent>/<repo>-worktrees/<name>`; set `worktree.dir`
-to change that.
+files across — always `.jarrin.local.yml`, into which it **stamps the worktree's `name` and its
+assigned `PROJECT_PORT`** (one past the highest already handed to a sibling worktree, never below
+`project.port`) — then runs the `setup:` commands in order (`--no-setup` skips them). The stamped
+name scopes forge todos/plans to the worktree (`worktree/<name>` label; see
+`claude/references/backlog.md` §9). New worktrees default to the grouped sibling
+`<parent>/<repo>-worktrees/<name>`; set `worktree.dir` to change that.
+
+The optional **`project:`** block in the committed `.jarrin.yml` gives each worktree a runtime
+stack that lives only as long as a Claude shell is open in it:
+
+```yaml
+project:
+  port: 8000 # starting port; worktrees increment from here (main checkout unaffected)
+  commands:
+    start: docker compose up -d
+    exit: docker compose down
+```
+
+The **SessionStart** hook runs `start` on a genuinely new shell (never on `/clear`, `resume`, or
+`compact`) and surfaces the worktree's port in context on both `startup` and `clear`; the
+**SessionEnd** hook runs `exit` when the shell exits (skipping `reason: clear`, so a `/clear`
+never kills the stack). Both commands run with the worktree's port as **`PROJECT_PORT`**. The
+whole feature is gated on a stamped `worktree.name`, so the main checkout is never affected.
+`claudjar start` / `claudjar stop` drive the same start/exit by hand.
 
 `worktree merge <name>` is the other half: run from the target worktree (e.g. `main`), it runs
 `git merge --no-edit <name>` to pull the worktree's branch in, then removes the worktree and

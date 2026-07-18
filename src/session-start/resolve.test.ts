@@ -57,16 +57,27 @@ describe("composeAdditionalContext", () => {
     expect(composeAdditionalContext({ ruleBlocks: [] })).toBeNull();
   });
 
-  it("joins commands, rules and extra md with the header", () => {
+  it("joins stack status, commands, rules and extra md with the header", () => {
     const out = composeAdditionalContext({
+      stackStatus: "STACK ON 8001",
       commandsTable: "## Commands",
       ruleBlocks: ["RULE A", "RULE B"],
       extraMd: "PROJECT MD",
     });
     expect(out).not.toBeNull();
     expect(out).toContain("# Jarrin project rules");
+    expect(out).toContain("STACK ON 8001");
     expect(out).toContain("RULE A\n\n---\n\nRULE B");
     expect(out).toContain("PROJECT MD");
     expect(out?.endsWith("\n")).toBe(true);
+  });
+
+  it("injects stack status even when no rules or commands are selected", () => {
+    const out = composeAdditionalContext({
+      stackStatus: "STACK ON 8001",
+      ruleBlocks: [],
+    });
+    expect(out).not.toBeNull();
+    expect(out).toContain("STACK ON 8001");
   });
 });

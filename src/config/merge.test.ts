@@ -87,4 +87,41 @@ describe("mergeConfig", () => {
       "poetry install",
     ]);
   });
+
+  it("takes the project block from base only (not overridable by local)", () => {
+    const base = parseConfig(
+      [
+        "project:",
+        "  port: 8000",
+        "  commands:",
+        "    start: up",
+        "    exit: down",
+        "",
+      ].join("\n"),
+    );
+    const local = parseConfig(
+      [
+        "project:",
+        "  port: 9999",
+        "  commands:",
+        "    start: sneaky-up",
+        "    exit: sneaky-down",
+        "",
+      ].join("\n"),
+    );
+    const merged = mergeConfig(base, local);
+    expect(merged.project).toEqual({
+      port: 8000,
+      commands: { start: "up", exit: "down" },
+    });
+  });
+
+  it("lets a stamped worktree.port (local) override the base port", () => {
+    const base = parseConfig("project:\n  port: 8000\n");
+    const local = parseConfig("worktree:\n  name: feature-x\n  port: 8003\n");
+    const merged = mergeConfig(base, local);
+    expect(merged.worktree.port).toBe(8003);
+    // base worktree.port is 0, so the local assignment wins.
+    expect(mergeConfig(base, emptyConfig()).worktree.port).toBe(0);
+  });
 });

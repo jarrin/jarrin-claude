@@ -3,7 +3,9 @@ import { buildApplication, buildRouteMap, run } from "@stricli/core";
 import { infoCommand } from "./commands/info.js";
 import { initCommand } from "./commands/init.js";
 import { installCommand } from "./commands/install.js";
+import { sessionEndCommand } from "./commands/session-end.js";
 import { sessionStartCommand } from "./commands/session-start.js";
+import { startCommand, stopCommand } from "./commands/start.js";
 import { worktreeRoutes } from "./commands/worktree.js";
 import { buildContext } from "./context.js";
 
@@ -15,7 +17,10 @@ const routes = buildRouteMap({
     info: infoCommand,
     install: installCommand,
     worktree: worktreeRoutes,
+    start: startCommand,
+    stop: stopCommand,
     "session-start": sessionStartCommand,
+    "session-end": sessionEndCommand,
   },
   docs: {
     brief: "Manage Jarrin's Claude Code config",

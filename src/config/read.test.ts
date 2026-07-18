@@ -73,12 +73,13 @@ describe("parseConfig", () => {
     expect(cfg.rules).toEqual([]);
   });
 
-  it("parses the worktree block (dir, copy, setup, name)", () => {
+  it("parses the worktree block (dir, copy, setup, name, port)", () => {
     const cfg = parseConfig(
       [
         "worktree:",
         "  dir: ../wts",
         "  name: feature-x",
+        "  port: 8001",
         "  copy:",
         "    - .env",
         "    - .claude/settings.local.json",
@@ -91,6 +92,7 @@ describe("parseConfig", () => {
     expect(cfg.worktree).toEqual({
       dir: "../wts",
       name: "feature-x",
+      port: 8001,
       copy: [".env", ".claude/settings.local.json"],
       setup: ["poetry install", "docker compose up -d"],
     });
@@ -98,6 +100,40 @@ describe("parseConfig", () => {
 
   it("defaults to an empty worktree block when absent", () => {
     const cfg = parseConfig("rules:\n  - lang-ts\n");
-    expect(cfg.worktree).toEqual({ dir: "", copy: [], setup: [], name: "" });
+    expect(cfg.worktree).toEqual({
+      dir: "",
+      copy: [],
+      setup: [],
+      name: "",
+      port: 0,
+    });
+  });
+
+  it("parses the project block (port + start/exit commands)", () => {
+    const cfg = parseConfig(
+      [
+        "project:",
+        "  port: 8000",
+        "  commands:",
+        "    start: docker compose up -d",
+        "    exit: docker compose down",
+        "",
+      ].join("\n"),
+    );
+    expect(cfg.project).toEqual({
+      port: 8000,
+      commands: { start: "docker compose up -d", exit: "docker compose down" },
+    });
+  });
+
+  it("defaults the project block, and coerces a non-integer port to 0", () => {
+    expect(parseConfig("rules:\n  - lang-ts\n").project).toEqual({
+      port: 0,
+      commands: { start: "", exit: "" },
+    });
+    expect(parseConfig("project:\n  port: not-a-number\n").project.port).toBe(
+      0,
+    );
+    expect(parseConfig("project:\n  port: 0\n").project.port).toBe(0);
   });
 });

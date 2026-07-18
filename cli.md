@@ -100,12 +100,23 @@ alternative of pointing settings at `jarrin session-start` directly).
 buildRouteMap({
   routes: {
     init: initCommand, // setup/update .claude/.jarrin.yml
+    info: infoCommand, // print the merged, resolved config
     install: installCommand, // machine setup (symlinks, hooks, checks)
+    worktree: worktreeRoutes, // create/merge/list git worktrees
+    start: startCommand, // bring this worktree's project: stack up
+    stop: stopCommand, // tear this worktree's project: stack down
     "session-start": sessionStartCommand, // the SessionStart hook (stdin JSON in)
+    "session-end": sessionEndCommand, // the SessionEnd hook (stdin JSON in)
   },
   docs: { brief: "Manage Jarrin's Claude Code config" },
 });
 ```
+
+> The `project:` stack lifecycle: `worktree create` assigns each worktree an
+> incrementing `PROJECT_PORT`; the SessionStart hook runs `project.commands.start`
+> on a new shell (and shows the port on startup/`clear`), the SessionEnd hook runs
+> `project.commands.exit` on exit (skipping `reason: clear`). `start`/`stop` drive
+> the same by hand. The main checkout is never affected.
 
 `src/cli.ts` is the only file that calls `run(app, process.argv.slice(2), ctx)`.
 `ctx` is `buildContext()` for real runs; tests pass a fake context.

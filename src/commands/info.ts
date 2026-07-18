@@ -47,6 +47,7 @@ function runInfo(this: LocalContext): void {
     commands: cfg.commands,
     backup: cfg.backup,
     hasJarrinMd: isFile(join(claudeDir, ".jarrin-claude.md")),
+    project: cfg.project,
     worktree: cfg.worktree,
     // `backlog:` is skill-owned and not overridable — read it from the committed
     // base only.

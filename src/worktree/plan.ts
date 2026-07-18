@@ -54,6 +54,19 @@ function resolveBaseDir(dir: string, repoRoot: string): string {
 }
 
 /**
+ * The next PROJECT_PORT to assign to a new worktree. Never below `base` (the
+ * `project.port` starting point); otherwise one past the highest port already
+ * assigned to an existing worktree, so ports only ever climb. Pure — the caller
+ * gathers `existing` from the other worktrees' stamped local configs.
+ */
+export function nextPort(base: number, existing: readonly number[]): number {
+  const start = base > 0 ? base : 0;
+  if (existing.length === 0) return start;
+  const highest = existing.reduce((max, p) => (p > max ? p : max), 0);
+  return Math.max(start, highest + 1);
+}
+
+/**
  * Validate a worktree/branch name. Allows git's `feature/x` slashes but rejects
  * the obviously unsafe: empty, leading `-` (parsed as a flag), `..` traversal,
  * and absolute paths. Returns an error string, or null when valid.

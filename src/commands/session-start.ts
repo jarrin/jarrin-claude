@@ -4,8 +4,15 @@ import { dirname, join, resolve } from "node:path";
 
 import { buildCommand } from "@stricli/core";
 
-import { parseConfig } from "../config/read.js";
+import { loadEffectiveConfig } from "../config/load.js";
 import type { LocalContext } from "../context.js";
+import {
+  isStartSource,
+  resolveStack,
+  runStackCommand,
+  showsPort,
+  stackStatusText,
+} from "../project/stack.js";
 import {
   composeAdditionalContext,
   renderCommands,
@@ -51,18 +58,11 @@ async function runSessionStart(this: LocalContext): Promise<void> {
     return;
   }
 
-  // The hook reads the committed `.jarrin.yml` only. `.jarrin.local.yml`
-  // overrides just the CLI-owned `worktree:` block (see config/merge.ts), none
-  // of which the hook consumes — so there is no reason to read it on the hot path.
-  let cfgText: string;
-  try {
-    cfgText = readFileSync(jarrinYml, "utf8");
-  } catch (e) {
-    err(`${TAG} ERROR reading ${jarrinYml}: ${String(e)}\n`);
-    proc.exitCode = 1;
-    return;
-  }
-  const cfg = parseConfig(cfgText);
+  // The hook now reads the committed `.jarrin.yml` AND the gitignored
+  // `.jarrin.local.yml`: rules/backup/commands still come from the committed base
+  // (merged verbatim), but the per-worktree stack lifecycle needs the local file's
+  // stamped `worktree.name`/`worktree.port` to know this worktree's PROJECT_PORT.
+  const cfg = loadEffectiveConfig(claudeDir).merged;
 
   // Back up the repo before a new session (or /clear). A failed backup is fatal.
   if (cfg.backup && BACKUP_SOURCES.has(source)) {
@@ -93,7 +93,31 @@ async function runSessionStart(this: LocalContext): Promise<void> {
 
   const extraMd = isFile(jarrinMd) ? readFileSync(jarrinMd, "utf8").trim() : "";
 
+  // Per-worktree project stack. `start` runs ONLY on a genuinely new shell — never
+  // on /clear, resume, or compact — so the stack's lifetime tracks the Claude
+  // shell (SessionEnd tears it down). The main checkout is never active. On both
+  // startup and /clear we surface the running port in the session's context.
+  const stack = resolveStack(cfg);
+  let stackStatus: string | undefined;
+  if (stack.active) {
+    if (isStartSource(source) && stack.start) {
+      err(
+        `${TAG} starting project stack (PROJECT_PORT=${String(stack.port)}): ${stack.start}\n`,
+      );
+      const status = runStackCommand(stack.start, stack.port, cwd, proc);
+      if (status !== 0) {
+        err(
+          `${TAG} WARNING: start command exited ${String(status)}; continuing.\n`,
+        );
+      }
+    }
+    if (showsPort(source)) {
+      stackStatus = stackStatusText(stack.name, stack.port);
+    }
+  }
+
   const additionalContext = composeAdditionalContext({
+    stackStatus,
     commandsTable:
       cfg.commands.length > 0 ? renderCommands(cfg.commands) : undefined,
     ruleBlocks,

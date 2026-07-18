@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { emptyWorktreeConfig } from "../config/schema.js";
+import { emptyProjectConfig, emptyWorktreeConfig } from "../config/schema.js";
 import type { InfoReport } from "./report.js";
 import { backlogMethods, formatReport } from "./report.js";
 
@@ -52,9 +52,14 @@ describe("formatReport", () => {
     commands: [{ cmd: "pnpm check", desc: "gates" }],
     backup: "git bundle create ../b --all",
     hasJarrinMd: true,
+    project: {
+      port: 8000,
+      commands: { start: "docker compose up -d", exit: "docker compose down" },
+    },
     worktree: {
       ...emptyWorktreeConfig(),
       name: "feature-x",
+      port: 8001,
       setup: ["poetry install"],
     },
     backlog: { plan: "gitea", todo: "local", repo: "owner/name" },
@@ -71,6 +76,12 @@ describe("formatReport", () => {
     expect(out).toContain("name:  feature-x");
     expect(out).toContain("poetry install");
     expect(out).toContain("todo, staged-planning");
+    // Project stack section + the worktree's assigned port.
+    expect(out).toContain("Project stack:");
+    expect(out).toContain("port:  8000");
+    expect(out).toContain("start: docker compose up -d");
+    expect(out).toContain("exit:  docker compose down");
+    expect(out).toContain("port:  8001");
     expect(out.endsWith("\n")).toBe(true);
   });
 
@@ -80,6 +91,7 @@ describe("formatReport", () => {
       rules: [],
       commands: [],
       backup: "",
+      project: emptyProjectConfig(),
       worktree: emptyWorktreeConfig(),
       skills: [],
     });
@@ -87,5 +99,7 @@ describe("formatReport", () => {
     expect(out).toContain("(main worktree)");
     expect(out).toContain("Backup: (none)");
     expect(out).toContain("(none found)");
+    expect(out).toContain("(unset — feature off)");
+    expect(out).toContain("(none — main worktree)");
   });
 });
