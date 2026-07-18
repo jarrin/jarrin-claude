@@ -13953,6 +13953,65 @@ var stopCommand = buildCommand({
   }
 });
 
+// src/commands/statusline.ts
+import { basename as basename3, join as join11 } from "path";
+var RESET = "\x1B[0m";
+var DIM = "\x1B[2m";
+var CYAN = "\x1B[36m";
+var YELLOW = "\x1B[33m";
+var BOLD = "\x1B[1m";
+var SEP = `${DIM} \xB7 ${RESET}`;
+function formatStatusline(data) {
+  const parts = [`${DIM}${data.modelName}${RESET}`, data.dirName];
+  if (data.branch) parts.push(`${CYAN}${data.branch}${RESET}`);
+  let line = parts.join(SEP);
+  if (data.worktreeName) {
+    const portLabel = data.port > 0 ? ` ${DIM}:${RESET}${YELLOW}${String(data.port)}` : "";
+    line += `  ${BOLD}${YELLOW}\u2442 ${data.worktreeName}${RESET}${portLabel}${RESET}`;
+  }
+  return line;
+}
+function renderStatusline(dir, modelName) {
+  const root = toplevel(dir) ?? dir;
+  const cfg = loadEffectiveConfig(join11(root, ".claude")).merged;
+  return formatStatusline({
+    modelName,
+    dirName: basename3(root),
+    branch: currentBranch(root),
+    worktreeName: cfg.worktree.name,
+    port: effectivePort(cfg)
+  });
+}
+async function readPayload3(proc) {
+  if (proc.stdin.isTTY) return {};
+  try {
+    const chunks = [];
+    for await (const chunk of proc.stdin) {
+      chunks.push(Buffer.from(chunk));
+    }
+    const text2 = Buffer.concat(chunks).toString("utf8").trim();
+    if (!text2) return {};
+    const parsed = JSON.parse(text2);
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch {
+  }
+  return {};
+}
+async function runStatusline() {
+  const proc = this.process;
+  const payload = await readPayload3(proc);
+  const dir = payload.workspace?.current_dir ?? payload.cwd ?? proc.cwd();
+  const modelName = payload.model?.display_name?.trim() || "claude";
+  proc.stdout.write(renderStatusline(dir, modelName) + "\n");
+}
+var statuslineCommand = buildCommand({
+  func: runStatusline,
+  parameters: { flags: {} },
+  docs: {
+    brief: "statusLine hook: render model \xB7 dir \xB7 branch, plus worktree name+port (reads stdin JSON)"
+  }
+});
+
 // src/commands/worktree.ts
 import { spawnSync as spawnSync5 } from "child_process";
 import {
@@ -13962,7 +14021,7 @@ import {
   readFileSync as readFileSync5,
   writeFileSync as writeFileSync3
 } from "fs";
-import { dirname as dirname7, join as join12, relative, resolve as resolve5 } from "path";
+import { dirname as dirname7, join as join13, relative, resolve as resolve5 } from "path";
 
 // src/worktree/merge.ts
 function parseWorktreeList(porcelain) {
@@ -14042,22 +14101,22 @@ function conflictPrompt(opts) {
 }
 
 // src/worktree/plan.ts
-import { basename as basename3, dirname as dirname6, isAbsolute, join as join11, resolve as resolve4 } from "path";
-var ALWAYS_COPY = [join11(".claude", LOCAL_FILE)];
+import { basename as basename4, dirname as dirname6, isAbsolute, join as join12, resolve as resolve4 } from "path";
+var ALWAYS_COPY = [join12(".claude", LOCAL_FILE)];
 function planWorktree(opts) {
   const name = opts.name.trim();
   const baseDir = resolveBaseDir(opts.cfg.dir, opts.repoRoot);
   return {
     branch: name,
     baseDir,
-    path: join11(baseDir, name),
+    path: join12(baseDir, name),
     copy: dedup2([...ALWAYS_COPY, ...opts.cfg.copy]),
     setup: [...opts.cfg.setup]
   };
 }
 function resolveBaseDir(dir, repoRoot) {
   if (dir) return isAbsolute(dir) ? dir : resolve4(repoRoot, dir);
-  return join11(dirname6(repoRoot), `${basename3(repoRoot)}-worktrees`);
+  return join12(dirname6(repoRoot), `${basename4(repoRoot)}-worktrees`);
 }
 function nextPort(base, existing) {
   const start = base > 0 ? base : 0;
@@ -14114,7 +14173,7 @@ function runWorktreeCreate(flags, name) {
   const branch = name.trim();
   const repoRoot = mainWorktreeRoot(proc.cwd());
   if (!repoRoot) return fail("not inside a git repository.");
-  const cfg = loadEffectiveConfig(join12(repoRoot, ".claude")).merged;
+  const cfg = loadEffectiveConfig(join13(repoRoot, ".claude")).merged;
   const plan = planWorktree({ name: branch, repoRoot, cfg: cfg.worktree });
   if (existsSync3(plan.path)) {
     return fail(`target already exists: ${plan.path}`);
@@ -14126,16 +14185,16 @@ function runWorktreeCreate(flags, name) {
   const add = spawnSync5("git", gitArgs, { stdio: "inherit" });
   if (add.status !== 0) return fail("`git worktree add` failed.");
   for (const rel of plan.copy) {
-    const src = join12(repoRoot, rel);
+    const src = join13(repoRoot, rel);
     if (!existsSync3(src)) continue;
-    const dest = join12(plan.path, rel);
+    const dest = join13(plan.path, rel);
     mkdirSync3(dirname7(dest), { recursive: true });
     cpSync(src, dest, { recursive: true });
     out(`  copied ${rel}
 `);
   }
   const port = cfg.project.port > 0 ? nextPort(cfg.project.port, assignedPorts(repoRoot)) : 0;
-  const localPath = join12(plan.path, ".claude", LOCAL_FILE);
+  const localPath = join13(plan.path, ".claude", LOCAL_FILE);
   const existing = existsSync3(localPath) ? readFileSync5(localPath, "utf8") : "";
   mkdirSync3(dirname7(localPath), { recursive: true });
   writeFileSync3(
@@ -14182,7 +14241,7 @@ function assignedPorts(repoRoot) {
   for (const line of porcelain.split("\n")) {
     if (!line.startsWith("worktree ")) continue;
     const wtPath = line.slice("worktree ".length).trim();
-    const localPath = join12(wtPath, ".claude", LOCAL_FILE);
+    const localPath = join13(wtPath, ".claude", LOCAL_FILE);
     if (!existsSync3(localPath)) continue;
     try {
       const port = parseConfig(readFileSync5(localPath, "utf8")).worktree.port;
@@ -14387,10 +14446,10 @@ var worktreeRoutes = buildRouteMap({
 
 // src/context.ts
 import { homedir as homedir2 } from "os";
-import { join as join13 } from "path";
+import { join as join14 } from "path";
 function buildContext(proc) {
-  const rulesDir = proc.env.JARRIN_RULES_DIR ?? join13(homedir2(), ".claude", "rules");
-  const skillsDir = proc.env.JARRIN_SKILLS_DIR ?? join13(homedir2(), ".claude", "skills");
+  const rulesDir = proc.env.JARRIN_RULES_DIR ?? join14(homedir2(), ".claude", "rules");
+  const skillsDir = proc.env.JARRIN_SKILLS_DIR ?? join14(homedir2(), ".claude", "skills");
   return { process: proc, rulesDir, skillsDir };
 }
 
@@ -14405,7 +14464,8 @@ var routes = buildRouteMap({
     start: startCommand,
     stop: stopCommand,
     "session-start": sessionStartCommand,
-    "session-end": sessionEndCommand
+    "session-end": sessionEndCommand,
+    statusline: statuslineCommand
   },
   docs: {
     brief: "Manage Jarrin's Claude Code config",

@@ -3,6 +3,10 @@
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark",
   "tui": "fullscreen",
+  "statusLine": {
+    "type": "command",
+    "command": "$HOME/.claude/bin/statusline"
+  },
   "hooks": {
     "SessionStart": [
       {

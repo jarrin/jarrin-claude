@@ -6,6 +6,7 @@ import { installCommand } from "./commands/install.js";
 import { sessionEndCommand } from "./commands/session-end.js";
 import { sessionStartCommand } from "./commands/session-start.js";
 import { startCommand, stopCommand } from "./commands/start.js";
+import { statuslineCommand } from "./commands/statusline.js";
 import { worktreeRoutes } from "./commands/worktree.js";
 import { buildContext } from "./context.js";
 
@@ -21,6 +22,7 @@ const routes = buildRouteMap({
     stop: stopCommand,
     "session-start": sessionStartCommand,
     "session-end": sessionEndCommand,
+    statusline: statuslineCommand,
   },
   docs: {
     brief: "Manage Jarrin's Claude Code config",
