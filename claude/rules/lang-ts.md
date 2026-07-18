@@ -11,6 +11,9 @@ TypeScript over plain JavaScript, always.
   - `pnpm dlx <pkg>` for one-off tool runs
 - Pin the toolchain with the `"packageManager": "pnpm@<version>"` field (Corepack). Use the
   current Node LTS. Commit `pnpm-lock.yaml`.
+- For a **monorepo**, use pnpm workspaces (`pnpm-workspace.yaml`, `workspace:*` deps) and a task
+  runner — **turbo** (`turbo run <task>` with a `turbo.json` pipeline) — to fan lint/typecheck/
+  test/build across packages.
 
 ### Testing
 - Runner: **Vitest**. Run with `pnpm vitest run` (add a `test` script); watch with
@@ -19,7 +22,8 @@ TypeScript over plain JavaScript, always.
   e2e unless explicitly requested. New code ships with tests.
 
 ### Linting
-- Linter: **ESLint** (flat config, `eslint.config.mjs`). Formatter: **Prettier**.
+- Linter: **ESLint** (flat config — `eslint.config.mjs`, or `eslint.config.ts` when you want a
+  typed config, loaded via `jiti`). Formatter: **Prettier**.
   - `eslint .` (check) / `eslint . --fix`
   - `prettier --write .` (or `--check` in CI)
 - Let Prettier own formatting and ESLint own correctness. Exclude generated code via
@@ -29,6 +33,9 @@ TypeScript over plain JavaScript, always.
 - Wire `eslint .`, `prettier --check .`, `tsc --noEmit`, and `vitest run` into a
   **pre-commit hook** under `.githooks/` that blocks on failure; enable with
   `git config core.hooksPath .githooks`. Keep gitleaks secret-scanning enforced.
+- Wrapping the whole gate behind one aggregate command (a `task check` / turbo target the hook
+  calls) is fine — and preferred in a monorepo — as long as it runs every step above and blocks
+  on the first failure.
 
 ### Strong typing
 - `tsconfig.json` in `strict` mode. Type check with `tsc --noEmit`.

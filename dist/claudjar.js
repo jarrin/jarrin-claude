@@ -12718,6 +12718,21 @@ function mainWorktreeRoot(cwd) {
 function branchExists(cwd, name) {
   return git(cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${name}`]) !== null;
 }
+function currentBranch(cwd) {
+  return git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+}
+function worktreeListPorcelain(cwd) {
+  return git(cwd, ["worktree", "list", "--porcelain"]);
+}
+function conflictedFiles(cwd) {
+  const r2 = spawnSync(
+    "git",
+    ["-C", cwd, "diff", "--name-only", "--diff-filter=U"],
+    { encoding: "utf8" }
+  );
+  if (r2.status !== 0 || typeof r2.stdout !== "string") return [];
+  return r2.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+}
 
 // src/info/report.ts
 var import_yaml2 = __toESM(require_dist(), 1);
@@ -13731,7 +13746,84 @@ import {
   readFileSync as readFileSync5,
   writeFileSync as writeFileSync3
 } from "fs";
-import { dirname as dirname7, join as join10, relative } from "path";
+import { dirname as dirname7, join as join10, relative, resolve as resolve5 } from "path";
+
+// src/worktree/merge.ts
+function parseWorktreeList(porcelain) {
+  const entries = [];
+  let path2 = null;
+  let branch = null;
+  const flush = () => {
+    if (path2) entries.push({ path: path2, branch });
+    path2 = null;
+    branch = null;
+  };
+  for (const raw of porcelain.split("\n")) {
+    const line = raw.trim();
+    if (line.startsWith("worktree ")) {
+      flush();
+      path2 = line.slice("worktree ".length);
+    } else if (line.startsWith("branch ")) {
+      branch = line.slice("branch ".length).replace(/^refs\/heads\//, "");
+    } else if (line === "") {
+      flush();
+    }
+  }
+  flush();
+  return entries;
+}
+function worktreePathForBranch(porcelain, branch) {
+  return parseWorktreeList(porcelain).find((e) => e.branch === branch)?.path ?? null;
+}
+function conflictPrompt(opts) {
+  const list = opts.files.length ? opts.files.map((f2) => `  - ${f2}`).join("\n") : "  (none captured \u2014 run `git status` to see the conflicted paths)";
+  return [
+    `You are picking up a Git merge that is paused mid-conflict. There is no`,
+    `earlier conversation \u2014 everything you need is below and in the repository`,
+    `you have been started in.`,
+    ``,
+    `## What just happened`,
+    ``,
+    `This project used a separate git worktree for the branch '${opts.branch}'.`,
+    `That work is now being merged back: 'git merge ${opts.branch}' was run while`,
+    `'${opts.targetBranch}' was checked out, and Git stopped because the two sides`,
+    `changed overlapping lines. The merge is IN PROGRESS \u2014 the working tree holds`,
+    `conflict markers (<<<<<<<, =======, >>>>>>>) and MERGE_HEAD still exists.`,
+    `Nothing has been committed or lost.`,
+    ``,
+    `## Conflicted files`,
+    ``,
+    list,
+    ``,
+    `## Your job`,
+    ``,
+    `1. Run 'git status' and 'git diff' to see the full picture; open each`,
+    `   conflicted file and read the markers. The '${opts.targetBranch}' side is`,
+    `   labelled HEAD / "ours"; the incoming '${opts.branch}' side is "theirs".`,
+    `2. Resolve every conflict by UNDERSTANDING both changes and combining their`,
+    `   intent \u2014 do not blindly pick one side, and never delete a marker without`,
+    `   deciding what the merged code should actually be. Read the surrounding`,
+    `   code so the result is coherent, not just marker-free.`,
+    `3. Remove all conflict markers. Make sure the file still parses and the`,
+    `   change reads like the rest of the codebase.`,
+    `4. Stage each resolved file with 'git add <file>'. When 'git status' shows no`,
+    `   remaining unmerged paths, finish the merge with 'git commit --no-edit'`,
+    `   (keep the default merge message).`,
+    `5. Verify: run this repo's checks and fix anything that breaks BEFORE you`,
+    `   call it done \u2014 look for the project's gate (e.g. 'pnpm check', 'pnpm test',`,
+    `   'composer check', 'poetry run pytest', a Makefile target, or the commands`,
+    `   in its README / CLAUDE.md) and run it.`,
+    ``,
+    `## Rules`,
+    ``,
+    `- Do NOT run 'git merge --abort' or 'git reset' \u2014 that throws the merge away.`,
+    `- Do NOT force-push or rewrite history.`,
+    `- If a conflict is genuinely ambiguous and you cannot determine the right`,
+    `  resolution from the code, stop and explain the specific decision you need`,
+    `  rather than guessing.`,
+    `- When finished, summarise what conflicted and how you resolved each one.`
+  ].join("\n");
+}
 
 // src/worktree/plan.ts
 import { basename as basename3, dirname as dirname6, isAbsolute, join as join9, resolve as resolve4 } from "path";
@@ -13852,6 +13944,117 @@ The worktree exists at ${plan.path}; fix and re-run setup by hand.`
 Done. cd ${relative(proc.cwd(), plan.path) || plan.path}
 `);
 }
+function runWorktreeMerge(flags, name) {
+  const proc = this.process;
+  const out = (msg) => void proc.stdout.write(msg);
+  const fail = (msg) => {
+    proc.stderr.write(`worktree merge: ${msg}
+`);
+    proc.exitCode = 1;
+  };
+  const nameError = validateWorktreeName(name);
+  if (nameError) return fail(nameError);
+  const branch = name.trim();
+  const target = toplevel(proc.cwd());
+  if (!target) return fail("not inside a git repository.");
+  if (!branchExists(target, branch)) return fail(`no such branch: ${branch}`);
+  const onBranch = currentBranch(target);
+  if (onBranch === branch) {
+    return fail(
+      `'${branch}' is checked out here; run merge from the branch you want to merge it into.`
+    );
+  }
+  const porcelain = worktreeListPorcelain(target);
+  const wtPath = porcelain ? worktreePathForBranch(porcelain, branch) : null;
+  if (wtPath && resolve5(wtPath) === resolve5(target)) {
+    return fail(
+      `you are inside the worktree for '${branch}'; run merge from the target worktree instead.`
+    );
+  }
+  out(`Merging ${branch} into ${onBranch ?? "HEAD"}\u2026
+`);
+  const merge = spawnSync4("git", ["-C", target, "merge", "--no-edit", branch], {
+    stdio: "inherit"
+  });
+  if (merge.status !== 0) {
+    const files = conflictedFiles(target);
+    if (files.length === 0) {
+      return fail("`git merge` failed (not a conflict); resolve and retry.");
+    }
+    proc.stderr.write(
+      `worktree merge: conflict in ${String(files.length)} file(s); worktree and branch kept.
+`
+    );
+    if (!flags.claude) {
+      out(
+        `
+Conflicted files:
+${files.map((f2) => `  - ${f2}`).join("\n")}
+
+Resolve the conflicts and commit. (--no-claude: not launching claude.)
+`
+      );
+      proc.exitCode = 1;
+      return;
+    }
+    const prompt = conflictPrompt({
+      branch,
+      targetBranch: onBranch ?? "HEAD",
+      files
+    });
+    out(`
+Launching claude to resolve the conflict\u2026
+`);
+    const claude = spawnSync4("claude", [prompt], {
+      cwd: target,
+      stdio: "inherit"
+    });
+    if (claude.error) {
+      proc.stderr.write(
+        `worktree merge: could not launch 'claude' (${claude.error.message}).
+`
+      );
+      out(`
+Resolve manually with this prompt:
+
+${prompt}
+`);
+      proc.exitCode = 1;
+    }
+    return;
+  }
+  out(`Merged ${branch} cleanly.
+`);
+  if (flags.keep) {
+    out(`Kept the worktree and branch (--keep).
+`);
+    return;
+  }
+  if (wtPath) {
+    const rm = spawnSync4("git", ["-C", target, "worktree", "remove", wtPath], {
+      stdio: "inherit"
+    });
+    if (rm.status !== 0) {
+      return fail(
+        `merged, but 'git worktree remove ${wtPath}' failed (uncommitted changes there?). Clean it up by hand, or re-run with --keep.`
+      );
+    }
+    out(`  removed worktree ${wtPath}
+`);
+  }
+  const del = spawnSync4("git", ["-C", target, "branch", "-d", branch], {
+    stdio: "inherit"
+  });
+  if (del.status !== 0) {
+    return fail(
+      `merged and removed the worktree, but 'git branch -d ${branch}' failed. Delete the branch by hand.`
+    );
+  }
+  out(`  deleted branch ${branch}
+
+Done.
+`);
+}
 function runWorktreeList() {
   const proc = this.process;
   const repoRoot = mainWorktreeRoot(proc.cwd()) ?? proc.cwd();
@@ -13888,6 +14091,36 @@ var worktreeCreateCommand = buildCommand({
     brief: "Add a git worktree and bootstrap it from the worktree: config"
   }
 });
+var worktreeMergeCommand = buildCommand({
+  func: runWorktreeMerge,
+  parameters: {
+    positional: {
+      kind: "tuple",
+      parameters: [
+        {
+          brief: "Worktree / branch name to merge in (e.g. feature/x)",
+          parse: String,
+          placeholder: "name"
+        }
+      ]
+    },
+    flags: {
+      keep: {
+        kind: "boolean",
+        brief: "Keep the worktree and branch after a clean merge",
+        default: false
+      },
+      claude: {
+        kind: "boolean",
+        brief: "On conflict, launch claude to resolve (use --no-claude to skip)",
+        default: true
+      }
+    }
+  },
+  docs: {
+    brief: "Merge a worktree branch into the current branch, then remove it (claude resolves conflicts)"
+  }
+});
 var worktreeListCommand = buildCommand({
   func: runWorktreeList,
   parameters: { flags: {} },
@@ -13896,6 +14129,7 @@ var worktreeListCommand = buildCommand({
 var worktreeRoutes = buildRouteMap({
   routes: {
     create: worktreeCreateCommand,
+    merge: worktreeMergeCommand,
     list: worktreeListCommand
   },
   docs: {

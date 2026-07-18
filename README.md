@@ -140,6 +140,7 @@ subcommands:
 | `claudjar init`                | Set up (new repo) or update `.claude/.jarrin.yml`, preserving comments + `backlog:`               |
 | `claudjar info`                | Print the merged, resolved config for this repo: rules (✓/✗), commands, backlog, worktree, skills |
 | `claudjar worktree create <n>` | Add a git worktree and bootstrap it from the `worktree:` config (branch, copy, setup)             |
+| `claudjar worktree merge <n>`  | Merge a worktree branch into the current branch, remove the worktree (claude resolves conflicts)  |
 | `claudjar worktree list`       | List this repo's git worktrees                                                                    |
 | `claudjar install`             | Machine setup: symlink config into `~/.claude`, enable hooks, check prerequisites                 |
 | `claudjar session-start`       | The SessionStart hook itself (reads the hook JSON on stdin) — not run by hand                     |
@@ -152,6 +153,14 @@ runs the `setup:` commands in order (`--no-setup` skips them). The stamped name 
 todos/plans to the worktree (`worktree/<name>` label; see `claude/references/backlog.md` §9). New
 worktrees default to the grouped sibling `<parent>/<repo>-worktrees/<name>`; set `worktree.dir`
 to change that.
+
+`worktree merge <name>` is the other half: run from the target worktree (e.g. `main`), it runs
+`git merge --no-edit <name>` to pull the worktree's branch in, then removes the worktree and
+deletes the branch (`--keep` merges only, leaving both in place). A **clean** merge tears down
+and reports; on a **conflict** it keeps the worktree and branch and hands off to an interactive
+`claude` session in the target, seeded with a prompt that names both sides and the conflicted
+files so Claude Code can resolve them in place. `--no-claude` skips the launch and just prints
+the conflicted paths for a manual resolution.
 
 `init` is interactive by default (a clack checklist of rules from `~/.claude/rules`, plus
 prompts for local rules, imports, commands, and a backup command). It auto-detects a

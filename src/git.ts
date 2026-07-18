@@ -38,3 +38,30 @@ export function branchExists(cwd: string, name: string): boolean {
     null
   );
 }
+
+/** Short name of the branch checked out at `cwd` (e.g. `main`), or null. */
+export function currentBranch(cwd: string): string | null {
+  return git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+}
+
+/** Raw `git worktree list --porcelain` output for `cwd`, or null on failure. */
+export function worktreeListPorcelain(cwd: string): string | null {
+  return git(cwd, ["worktree", "list", "--porcelain"]);
+}
+
+/**
+ * Paths of files left unmerged (conflicted) in `cwd`'s working tree. Empty when
+ * there is no conflict — used to tell a merge conflict apart from other failures.
+ */
+export function conflictedFiles(cwd: string): string[] {
+  const r = spawnSync(
+    "git",
+    ["-C", cwd, "diff", "--name-only", "--diff-filter=U"],
+    { encoding: "utf8" },
+  );
+  if (r.status !== 0 || typeof r.stdout !== "string") return [];
+  return r.stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}

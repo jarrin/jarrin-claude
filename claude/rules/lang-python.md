@@ -24,16 +24,24 @@
   clean — no disabled rules without a written reason.
 
 ### Enforcing (via git)
-- Wire `ruff check .`, `ruff format --check .`, `mypy`, and `pytest` into a **pre-commit
+- Wire `ruff check .`, `ruff format --check .`, `basedpyright`, and `pytest` into a **pre-commit
   hook** under `.githooks/` that blocks on failure; enable with
   `git config core.hooksPath .githooks`. Keep gitleaks secret-scanning enforced.
+- Wrapping the whole gate behind one aggregate command (a `task check` / `composer check`-style
+  target the hook calls) is fine — and preferred in a monorepo — as long as it runs every step
+  above and blocks on the first failure.
 
 ### Strong typing
-- Type checker: **mypy** in `strict` mode. Run `poetry run mypy <package> tests`; scope with
-  `files = ["<package>", "tests"]` and `python_version = "3.11"`.
-- Full annotations required. No `# type: ignore` without a written reason; no untyped `Any`
-  back doors.
-- For a stubless third-party lib, do not disable typing globally — confine the untyped import
-  to one adapter module and add a scoped `[[tool.mypy.overrides]]` with
-  `ignore_missing_imports = true` and a comment justifying it. Prefer `types-*` stub packages
-  where they exist.
+- Type checker: **basedpyright** in `strict` mode. Run `poetry run basedpyright`. Set
+  `typeCheckingMode = "strict"` under `[tool.basedpyright]` and promote the `Any`-guards to
+  errors: `reportAny`, `reportExplicitAny`, `reportMissingTypeStubs`, `reportImplicitOverride`;
+  pin `pythonVersion` to the project's runtime. (basedpyright over mypy: `reportAny` closes the
+  untyped-`Any` hole mypy leaves open — it is the rule that matters.)
+- Full annotations required (ruff `ANN`, incl. `ANN401` — no `Any` in annotations). No
+  `# pyright: ignore[<rule>]` (or `# type: ignore`) without a rule code and a written reason;
+  no untyped `Any` back doors.
+- For a stubless third-party lib, do not loosen typing globally — confine the untyped import to
+  one adapter module that validates the value into a typed model (e.g. a pydantic model), and
+  scope a `# pyright: ignore[reportMissingTypeStubs]` with a justifying comment. Prefer `types-*`
+  stub packages where they exist. Exclude generated code via `exclude` (the parallel of ruff's
+  `extend-exclude`).
