@@ -93,6 +93,7 @@ describe("parseConfig", () => {
       dir: "../wts",
       name: "feature-x",
       port: 8001,
+      slug: "",
       copy: [".env", ".claude/settings.local.json"],
       setup: ["poetry install", "docker compose up -d"],
     });
@@ -106,6 +107,7 @@ describe("parseConfig", () => {
       setup: [],
       name: "",
       port: 0,
+      slug: "",
     });
   });
 
@@ -121,6 +123,7 @@ describe("parseConfig", () => {
       ].join("\n"),
     );
     expect(cfg.project).toEqual({
+      slug: "",
       port: 8000,
       commands: {
         start: "docker compose up -d",
@@ -161,6 +164,7 @@ describe("parseConfig", () => {
 
   it("defaults the project block, and coerces a non-integer port to 0", () => {
     expect(parseConfig("rules:\n  - lang-ts\n").project).toEqual({
+      slug: "",
       port: 0,
       commands: { start: "", exit: "", build: "" },
       dist: { version: "", sync: [] },
@@ -169,5 +173,26 @@ describe("parseConfig", () => {
       0,
     );
     expect(parseConfig("project:\n  port: 0\n").project.port).toBe(0);
+  });
+  it("parses project.slug, accepting a numeric YAML scalar", () => {
+    expect(parseConfig("project:\n  slug: prdl\n").project.slug).toBe("prdl");
+    // `slug: 2048` is a plausible project name YAML hands over as a number.
+    expect(parseConfig("project:\n  slug: 2048\n").project.slug).toBe("2048");
+    expect(parseConfig("project:\n  slug:\n    a: b\n").project.slug).toBe("");
+  });
+
+  it("parses the caddy block as a strict opt-in", () => {
+    expect(parseConfig("caddy:\n  enabled: true\n").caddy.enabled).toBe(true);
+    expect(parseConfig("caddy:\n  enabled: false\n").caddy.enabled).toBe(false);
+    expect(parseConfig("rules:\n  - lang-ts\n").caddy.enabled).toBe(false);
+    // Only a real boolean opts in — a stray string must not enable a proxy.
+    expect(parseConfig("caddy:\n  enabled: yes-please\n").caddy.enabled).toBe(
+      false,
+    );
+    expect(parseConfig("caddy: true\n").caddy.enabled).toBe(false);
+  });
+
+  it("parses the worktree caddy segment override", () => {
+    expect(parseConfig("worktree:\n  slug: fl\n").worktree.slug).toBe("fl");
   });
 });

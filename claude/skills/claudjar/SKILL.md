@@ -50,6 +50,9 @@ table.
 | To delete a worktree without merging     | `claudjar worktree remove <name>`           |
 | To see the repo's worktrees              | `claudjar worktree list`                    |
 | To start / stop the project's services   | `claudjar start` / `claudjar stop`          |
+| A `<slug>.localhost` domain for the repo | `claudjar caddy join` (once per project)    |
+| To start / stop the machine-wide proxy   | `claudjar caddy up` / `claudjar caddy down` |
+| To see what is routed where              | `claudjar caddy status`                     |
 | To cut / tag a release                   | `claudjar release [--bump major\|minor]`    |
 | To see this repo's resolved config       | `claudjar info`                             |
 | To activate a repo / change its rules    | `claudjar init`                             |
@@ -82,6 +85,15 @@ survives and is reported rather than discarded. Run it from a *different* worktr
 starts a fresh `claude` in the target worktree. That is deliberate: launching is what
 makes the target's SessionStart hook run, giving the new session its stamped identity
 and port.
+
+**caddy is half a system, on purpose.** claudjar runs one proxy container on host port 80
+and generates only its own config. The project supplies its **own** caddy — its compose
+file, its network membership (`claudjar`, as an external network), listening on container
+port **8000**, answering to `caddy-<slug>` (or `caddy-<slug>-<worktree>`). Never write a
+project's compose file or Caddyfile from this skill and never claim a domain works before
+the project side exists: until it does, the domain resolves and 502s. If the user asks why
+their `.localhost` 502s, check `claudjar caddy status` first, then their container's name
+and network — not claudjar's config.
 
 **`release` refuses more than it does.** It runs only on `main` with a clean tree, and
 never pushes. If it refuses, relay the reason — do not work around it by tagging or

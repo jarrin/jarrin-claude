@@ -10,6 +10,10 @@ import { dirname, join, relative, resolve } from "node:path";
 
 import { buildCommand, buildRouteMap } from "@stricli/core";
 
+import type { CaddyTarget } from "../caddy/resolve.js";
+import { resolveTarget } from "../caddy/resolve.js";
+import { PROJECT_CADDY_PORT } from "../caddy/route.js";
+import { deregisterTarget, registerTarget } from "../caddy/sync.js";
 import { LOCAL_FILE, loadEffectiveConfig } from "../config/load.js";
 import { parseConfig } from "../config/read.js";
 import type { LocalContext } from "../context.js";
@@ -192,7 +196,57 @@ function runWorktreeCreate(
     }
   }
 
+  // 7. Give the new worktree its own <worktree>.<slug>.localhost route. Resolved
+  //    from the worktree's OWN merged config — it was just stamped, so this is
+  //    where its identity actually lives — and only when the project opted in.
+  const wtCfg = loadEffectiveConfig(join(plan.path, ".claude")).merged;
+  const target = resolveTarget(wtCfg, plan.path);
+  if (target?.enabled) {
+    const sync = registerTarget(this.caddyDir, target.entry);
+    out(`  registered caddy route: ${target.hosts[0] ?? ""}\n`);
+    out(
+      `    → ${target.entry.upstream}:${String(PROJECT_CADDY_PORT)} ` +
+        `(this worktree's own caddy must answer to that name)\n`,
+    );
+    if (sync.error)
+      proc.stderr.write(`  ! caddy reload failed: ${sync.error}\n`);
+  }
+
   out(`\nDone. cd ${relative(proc.cwd(), plan.path) || plan.path}\n`);
+}
+
+/**
+ * Read a worktree's caddy identity from its own config — necessarily *before*
+ * the directory is deleted, since afterwards there is nothing left to read.
+ *
+ * `enabled` is ignored on the removal path: a worktree that registered while
+ * caddy was on must still be able to deregister after it was turned off, or the
+ * route would outlive the worktree with nothing able to retire it.
+ */
+function caddyTargetAt(wtPath: string): CaddyTarget | null {
+  if (!existsSync(join(wtPath, ".claude"))) return null;
+  return resolveTarget(
+    loadEffectiveConfig(join(wtPath, ".claude")).merged,
+    wtPath,
+  );
+}
+
+/** Retire a captured route after its worktree is gone. Silent when unregistered. */
+function dropCaddyRoute(
+  ctx: LocalContext,
+  target: CaddyTarget | null,
+  out: (msg: string) => void,
+): void {
+  if (!target) return;
+  const sync = deregisterTarget(
+    ctx.caddyDir,
+    target.entry.slug,
+    target.entry.worktree,
+  );
+  if (!sync.changed) return;
+  out(`  deregistered caddy route: ${target.hosts[0] ?? ""}\n`);
+  if (sync.error)
+    ctx.process.stderr.write(`  ! caddy reload failed: ${sync.error}\n`);
 }
 
 /**
@@ -337,6 +391,7 @@ function runWorktreeMerge(
     out(`  no worktree checked out for ${branch}\n`);
   }
 
+  const caddyTarget = wtPath ? caddyTargetAt(wtPath) : null;
   const result = removeWorktree(
     {
       gitRoot: target,
@@ -349,6 +404,7 @@ function runWorktreeMerge(
     out,
   );
   if (!result.ok) return fail(`merged, but ${result.error}`);
+  dropCaddyRoute(this, caddyTarget, out);
   if (result.hookError)
     return fail(`merged and removed, but ${result.hookError}`);
   out(`\nDone.\n`);
@@ -404,6 +460,7 @@ function runWorktreeRemove(
   }
 
   out(`Removing worktree ${wtPath} (branch ${branch})…\n`);
+  const caddyTarget = caddyTargetAt(wtPath);
   const result = removeWorktree(
     {
       gitRoot: mainRoot,
@@ -416,6 +473,7 @@ function runWorktreeRemove(
     out,
   );
   if (!result.ok) return fail(result.error);
+  dropCaddyRoute(this, caddyTarget, out);
   if (result.hookError) return fail(`removed, but ${result.hookError}`);
   out(`\nDone.\n`);
 }

@@ -3,6 +3,9 @@ import { basename, join } from "node:path";
 
 import { buildCommand } from "@stricli/core";
 
+import { resolveTarget } from "../caddy/resolve.js";
+import { PROJECT_CADDY_PORT } from "../caddy/route.js";
+import { registerTarget } from "../caddy/sync.js";
 import { discoverRuleSlugs } from "../config/catalog.js";
 import { parseConfig } from "../config/read.js";
 import type { CommandRow, ImportRule, JarrinConfig } from "../config/schema.js";
@@ -91,7 +94,33 @@ async function runInit(this: LocalContext, flags: InitFlags): Promise<void> {
   if (scaffoldMd && isFile(jarrinMd)) {
     proc.stdout.write(`Scaffolded ${basename(jarrinMd)}\n`);
   }
+
+  // Keep the machine-wide caddy in step with the file we just wrote. Re-parsed
+  // from `output` rather than read off `cfg`: `caddy:` and `project:` are
+  // hand-authored blocks that `init` preserves but never models, so the written
+  // document is the only place their current values exist.
+  syncCaddy(this, parseConfig(output), cwd);
+
   proc.stdout.write("Restart your Claude Code session to load the rules.\n");
+}
+
+/**
+ * Register this repo with the machine-wide caddy when it has opted in, so a
+ * freshly-initialised project is routable without a second command. Silent when
+ * caddy is not configured — the overwhelmingly common case — and never fatal:
+ * failing to reload a proxy is not a reason for `init` to report failure.
+ */
+function syncCaddy(ctx: LocalContext, cfg: JarrinConfig, root: string): void {
+  const target = resolveTarget(cfg, root);
+  if (!target?.enabled) return;
+  const sync = registerTarget(ctx.caddyDir, target.entry);
+  ctx.process.stdout.write(
+    `Registered caddy route: http://${target.hosts[0] ?? ""} → ` +
+      `${target.entry.upstream}:${String(PROJECT_CADDY_PORT)}\n`,
+  );
+  if (sync.error) {
+    ctx.process.stderr.write(`  ! caddy reload failed: ${sync.error}\n`);
+  }
 }
 
 /** Merge CLI flags additively onto the existing config (union, deduped). */

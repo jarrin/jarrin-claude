@@ -50,6 +50,7 @@ function runInfo(this: LocalContext): void {
     project: cfg.project,
     hooks: cfg.hooks,
     worktree: cfg.worktree,
+    caddy: cfg.caddy,
     // `backlog:` is skill-owned and not overridable — read it from the committed
     // base only.
     backlog: backlogMethods(baseText ?? ""),

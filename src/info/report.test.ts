@@ -57,6 +57,7 @@ describe("formatReport", () => {
     backup: "git bundle create ../b --all",
     hasJarrinMd: true,
     project: {
+      slug: "app",
       port: 8000,
       commands: {
         start: "docker compose up -d",
@@ -77,6 +78,7 @@ describe("formatReport", () => {
       port: 8001,
       setup: ["poetry install"],
     },
+    caddy: { enabled: true },
     backlog: { plan: "gitea", todo: "local", repo: "owner/name" },
     skills: ["todo", "staged-planning"],
   };

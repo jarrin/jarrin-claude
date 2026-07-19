@@ -111,6 +111,7 @@ describe("mergeConfig", () => {
     );
     const merged = mergeConfig(base, local);
     expect(merged.project).toEqual({
+      slug: "",
       port: 8000,
       commands: { start: "up", exit: "down", build: "" },
       dist: { version: "", sync: [] },
@@ -164,5 +165,26 @@ describe("mergeConfig", () => {
     expect(merged.worktree.port).toBe(8003);
     // base worktree.port is 0, so the local assignment wins.
     expect(mergeConfig(base, emptyConfig()).worktree.port).toBe(0);
+  });
+  it("takes the caddy block from base only", () => {
+    // caddy: is committed, shared config like project:. A machine-local file
+    // must not be able to switch a proxy on behind the repo's back.
+    const merged = mergeConfig(
+      parseConfig("caddy:\n  enabled: false\n"),
+      parseConfig("caddy:\n  enabled: true\n"),
+    );
+    expect(merged.caddy.enabled).toBe(false);
+    expect(
+      mergeConfig(parseConfig("caddy:\n  enabled: true\n"), emptyConfig()).caddy
+        .enabled,
+    ).toBe(true);
+  });
+
+  it("lets the local file override the worktree caddy segment", () => {
+    const merged = mergeConfig(
+      parseConfig("project:\n  slug: prdl\n"),
+      parseConfig("worktree:\n  name: feature/long\n  slug: fl\n"),
+    );
+    expect(merged.worktree.slug).toBe("fl");
   });
 });

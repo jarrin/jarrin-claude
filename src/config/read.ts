@@ -1,6 +1,7 @@
 import { parse } from "yaml";
 
 import type {
+  CaddyConfig,
   CommandRow,
   HooksConfig,
   ImportRule,
@@ -9,6 +10,7 @@ import type {
   WorktreeConfig,
 } from "./schema.js";
 import {
+  emptyCaddyConfig,
   emptyConfig,
   emptyHooksConfig,
   emptyProjectConfig,
@@ -55,6 +57,7 @@ export function parseConfig(text: string): JarrinConfig {
   cfg.project = toProject(map.project);
   cfg.worktree = toWorktree(map.worktree);
   cfg.hooks = toHooks(map.hooks);
+  cfg.caddy = toCaddy(map.caddy);
   return cfg;
 }
 
@@ -84,6 +87,7 @@ function toProject(value: unknown): ProjectConfig {
     return project;
   }
   const rec = value as Record<string, unknown>;
+  project.slug = toSlug(rec.slug);
   project.port = toPort(rec.port);
   const commands = rec.commands;
   if (commands !== null && typeof commands === "object") {
@@ -130,7 +134,28 @@ function toWorktree(value: unknown): WorktreeConfig {
   wt.setup = toStringList(rec.setup);
   wt.name = typeof rec.name === "string" ? rec.name.trim() : "";
   wt.port = toPort(rec.port);
+  wt.slug = toSlug(rec.slug);
   return wt;
+}
+
+function toCaddy(value: unknown): CaddyConfig {
+  const caddy = emptyCaddyConfig();
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return caddy;
+  }
+  caddy.enabled = (value as Record<string, unknown>).enabled === true;
+  return caddy;
+}
+
+/**
+ * Coerce a YAML scalar to a slug. Numbers are accepted for the same reason
+ * {@link toVersionString} accepts them — `slug: 2048` is a plausible project
+ * name that YAML hands over as a number. Structural values yield "".
+ */
+function toSlug(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number") return String(value);
+  return "";
 }
 
 /**

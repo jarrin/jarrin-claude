@@ -46,6 +46,12 @@ export interface DistConfig {
  * carries the new number.
  */
 export interface ProjectConfig {
+  /**
+   * Project identity, and the last DNS label before `.localhost` in every route
+   * `caddy:` generates (`<slug>.localhost`). "" = unset, which disables caddy
+   * for this repo however `caddy.enabled` is set — a route needs a name.
+   */
+  slug: string;
   /** Starting port; worktrees increment from here. 0 = unset. */
   port: number;
   /** Lifecycle commands run with PROJECT_PORT in the environment. */
@@ -79,6 +85,23 @@ export interface HooksConfig {
 }
 
 /**
+ * The `caddy:` block (committed to `.jarrin.yml`, shared like `project:`).
+ *
+ * It is a single opt-in switch on purpose. claudjar owns exactly one side of the
+ * reverse-proxy arrangement: a machine-wide caddy on host port 80 that routes
+ * `*.<slug>.localhost` to each registered project's OWN caddy container over the
+ * shared `claudjar` docker network. Everything inside a project — its compose
+ * file, its caddy config, its service routing, and joining the `claudjar`
+ * network — is the project's responsibility, and claudjar never reads or writes
+ * any of it. So there is nothing else to configure here: the upstream is derived
+ * by convention from the slug, and the project must answer to that name.
+ */
+export interface CaddyConfig {
+  /** Opt in to registration with the machine-wide caddy. */
+  enabled: boolean;
+}
+
+/**
  * The `worktree:` block. `dir`/`copy`/`setup` are the creation recipe and live
  * (by convention) in the gitignored `.jarrin.local.yml`, since where worktrees
  * land and how they bootstrap is machine-specific. `name` and `port` are the
@@ -97,6 +120,12 @@ export interface WorktreeConfig {
   name: string;
   /** Assigned PROJECT_PORT for THIS worktree, stamped on create; 0 for the main worktree. */
   port: number;
+  /**
+   * Override for this worktree's caddy segment — the label between the service
+   * and the project slug (`<service>.<slug>.<project>.localhost`). Defaults to
+   * `name`, so it only exists to shorten or disambiguate a long branch name.
+   */
+  slug: string;
 }
 
 export interface JarrinConfig {
@@ -116,10 +145,13 @@ export interface JarrinConfig {
   worktree: WorktreeConfig;
   /** Lifecycle hook commands (committed, shared; CLI-consumed) */
   hooks: HooksConfig;
+  /** Opt-in to the machine-wide caddy (committed, shared; CLI-consumed) */
+  caddy: CaddyConfig;
 }
 
 export function emptyProjectConfig(): ProjectConfig {
   return {
+    slug: "",
     port: 0,
     commands: { start: "", exit: "", build: "" },
     dist: { version: "", sync: [] },
@@ -131,7 +163,11 @@ export function emptyHooksConfig(): HooksConfig {
 }
 
 export function emptyWorktreeConfig(): WorktreeConfig {
-  return { dir: "", copy: [], setup: [], name: "", port: 0 };
+  return { dir: "", copy: [], setup: [], name: "", port: 0, slug: "" };
+}
+
+export function emptyCaddyConfig(): CaddyConfig {
+  return { enabled: false };
 }
 
 export function emptyConfig(): JarrinConfig {
@@ -144,5 +180,6 @@ export function emptyConfig(): JarrinConfig {
     project: emptyProjectConfig(),
     worktree: emptyWorktreeConfig(),
     hooks: emptyHooksConfig(),
+    caddy: emptyCaddyConfig(),
   };
 }

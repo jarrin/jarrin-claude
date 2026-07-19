@@ -1,6 +1,8 @@
 import { parse } from "yaml";
 
+import { PROJECT_CADDY_PORT, hostsFor, upstreamFor } from "../caddy/route.js";
 import type {
+  CaddyConfig,
   CommandRow,
   HooksConfig,
   ProjectConfig,
@@ -32,6 +34,7 @@ export interface InfoReport {
   readonly project: ProjectConfig;
   readonly hooks: HooksConfig;
   readonly worktree: WorktreeConfig;
+  readonly caddy: CaddyConfig;
   readonly backlog: BacklogMethods;
   readonly skills: readonly string[];
 }
@@ -117,11 +120,27 @@ export function formatReport(r: InfoReport): string {
   lines.push("");
 
   lines.push("Project stack:");
+  lines.push(`  slug:  ${r.project.slug || "(unset — no caddy route)"}`);
   lines.push(
     `  port:  ${r.project.port ? String(r.project.port) : "(unset — feature off)"}`,
   );
   lines.push(`  start: ${r.project.commands.start || "(none)"}`);
   lines.push(`  exit:  ${r.project.commands.exit || "(none)"}`);
+  lines.push("");
+
+  lines.push("Caddy:");
+  lines.push(`  enabled: ${r.caddy.enabled ? "yes" : "no"}`);
+  if (r.caddy.enabled && r.project.slug) {
+    const worktree = r.worktree.slug || r.worktree.name;
+    const domain = hostsFor(r.project.slug, worktree)[0] ?? "";
+    lines.push(`  domain:  http://${domain}  (+ *.${domain})`);
+    lines.push(
+      `  upstream: ${upstreamFor(r.project.slug, worktree)}:${String(PROJECT_CADDY_PORT)}` +
+        `  (this project's own caddy container)`,
+    );
+  } else if (r.caddy.enabled) {
+    lines.push("  domain:  (no project.slug — nothing to route)");
+  }
   lines.push("");
 
   lines.push("Release (project.dist):");

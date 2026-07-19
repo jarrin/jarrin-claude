@@ -178,6 +178,77 @@ FLAGS
   -h --help  Print help information and exit
 ```
 
+### claudjar caddy up
+
+```
+USAGE
+  claudjar caddy up
+  claudjar caddy up --help
+
+Create the 'claudjar' docker network if missing, regenerate the Caddyfile from the registry, and run the 'claudjar-caddy' container publishing host port 80.
+
+Machine-wide, not per-repo: one container serves every registered project. Running it when it is already up reloads the config instead.
+
+FLAGS
+  -h --help  Print help information and exit
+```
+
+### claudjar caddy down
+
+```
+USAGE
+  claudjar caddy down
+  claudjar caddy down --help
+
+Removes the container only. The registry survives, so `caddy up` restores every route exactly as it was.
+
+FLAGS
+  -h --help  Print help information and exit
+```
+
+### claudjar caddy status
+
+```
+USAGE
+  claudjar caddy status
+  claudjar caddy status --help
+
+Show the caddy container state and every registered route
+
+FLAGS
+  -h --help  Print help information and exit
+```
+
+### claudjar caddy join
+
+```
+USAGE
+  claudjar caddy join
+  claudjar caddy join --help
+
+Read this checkout's project.slug and worktree identity, add a route to ~/.claudjar/caddy/registry.yml, regenerate the Caddyfile, and reload the running caddy.
+
+Run once per project. Worktrees register themselves automatically on `claudjar worktree create`.
+
+claudjar only routes the domain to your project's own caddy container — bringing that container up on the shared network, and routing services behind it, stays your project's job.
+
+FLAGS
+  -h --help  Print help information and exit
+```
+
+### claudjar caddy leave
+
+```
+USAGE
+  claudjar caddy leave
+  claudjar caddy leave --help
+
+Remove this checkout's route from the registry, regenerate the Caddyfile, and reload. Works even after `caddy.enabled` has been turned off, so a repo can always retire its own route.
+
+FLAGS
+  -h --help  Print help information and exit
+```
+
 ### claudjar release
 
 ```

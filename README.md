@@ -154,20 +154,23 @@ repo's directory; override it with `JARRIN_GROUP_ROOT` and the global library wi
 One typed entrypoint (`@stricli/core` + `@clack/prompts`, strict TypeScript) backs the
 subcommands:
 
-| Command                        | What it does                                                                                                       |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `claudjar init`                | Set up (new repo) or update `.claude/.jarrin.yml`, preserving comments + `backlog:`                                |
-| `claudjar info`                | Print the merged, resolved config for this repo: rules (✓/✗), commands, project stack, backlog, worktree, skills   |
-| `claudjar worktree create <n>` | Add a git worktree and bootstrap it from the `worktree:` config (branch, copy, port, setup)                        |
-| `claudjar worktree merge <n>`  | Merge a worktree branch into the current branch, keeping it (`--remove` to clean up; claude resolves conflicts)    |
-| `claudjar worktree remove <n>` | Remove a worktree: stop its stack, delete the directory, safely delete the branch (`--no-teardown` skips the stop) |
-| `claudjar worktree list`       | List this repo's git worktrees                                                                                     |
-| `claudjar goto <n>`            | Switch to a worktree by starting `claude` there; `main` goes back to the original checkout                         |
-| `claudjar start` / `stop`      | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout                 |
-| `claudjar release`             | Cut a version: bump `project.dist.version`, mirror it into `sync:` files, build, commit, tag (never pushes)        |
-| `claudjar install`             | Machine setup: symlink config into `~/.claude`, link the binary onto PATH, enable hooks, check prerequisites       |
-| `claudjar help --full`         | Print every command's help as one Markdown document (`--include-internal` adds the `api` commands)                 |
-| `claudjar api …`               | **Internal.** The hook entrypoints Claude Code invokes (`session-start`, `statusline`) — never run by hand         |
+| Command                         | What it does                                                                                                       |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `claudjar init`                 | Set up (new repo) or update `.claude/.jarrin.yml`, preserving comments + `backlog:`                                |
+| `claudjar info`                 | Print the merged, resolved config for this repo: rules (✓/✗), commands, project stack, backlog, worktree, skills   |
+| `claudjar worktree create <n>`  | Add a git worktree and bootstrap it from the `worktree:` config (branch, copy, port, setup)                        |
+| `claudjar worktree merge <n>`   | Merge a worktree branch into the current branch, keeping it (`--remove` to clean up; claude resolves conflicts)    |
+| `claudjar worktree remove <n>`  | Remove a worktree: stop its stack, delete the directory, safely delete the branch (`--no-teardown` skips the stop) |
+| `claudjar worktree list`        | List this repo's git worktrees                                                                                     |
+| `claudjar goto <n>`             | Switch to a worktree by starting `claude` there; `main` goes back to the original checkout                         |
+| `claudjar start` / `stop`       | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout                 |
+| `claudjar caddy up` / `down`    | Start / stop the machine-wide caddy on host port 80 (one container serves every registered project)                |
+| `claudjar caddy join` / `leave` | Register / deregister this checkout's `<slug>.localhost` route (worktrees register themselves on create)           |
+| `claudjar caddy status`         | Show the caddy container state and every registered route                                                          |
+| `claudjar release`              | Cut a version: bump `project.dist.version`, mirror it into `sync:` files, build, commit, tag (never pushes)        |
+| `claudjar install`              | Machine setup: symlink config into `~/.claude`, link the binary onto PATH, enable hooks, check prerequisites       |
+| `claudjar help --full`          | Print every command's help as one Markdown document (`--include-internal` adds the `api` commands)                 |
+| `claudjar api …`                | **Internal.** The hook entrypoints Claude Code invokes (`session-start`, `statusline`) — never run by hand         |
 
 `worktree create` reads the `worktree:` block from `.claude/.jarrin.local.yml` (a gitignored,
 per-machine override merged over the committed `.jarrin.yml` — **only `worktree:` overrides**).
@@ -248,6 +251,48 @@ are project policy every clone applies — so setup runs first and hooks may ass
 bootstrapped tree. `remove` hooks necessarily run after the directory is gone, so they execute
 from the checkout that ordered the removal and `WORKTREE_PATH` names a path that no longer
 exists; the port is captured before deletion, while the worktree's stamped config still exists.
+
+### Domains (`caddy:`)
+
+Add a slug and one switch, and the repo gets a `.localhost` domain:
+
+```yaml
+project:
+  slug: prdl
+
+caddy:
+  enabled: true
+```
+
+The scheme is `<service>.<worktree>.<slug>.localhost`, both leading segments optional —
+`prdl.localhost`, `studio.prdl.localhost`, `studio.dev.prdl.localhost`. A worktree's segment is
+its stamped `worktree.name` (or `worktree.slug`, to shorten a long branch name in a URL).
+
+**claudjar owns one side only.** It runs a single `claudjar-caddy` container on host port 80,
+attached to a shared `claudjar` docker network, and generates that container's config. Your
+project brings its **own** caddy: in its own compose file, on its own network, joining `claudjar`
+as an external second network, listening on container port **8000**. claudjar proxies the whole
+domain there and stops — routing `studio.` to a service is your project's config, which claudjar
+never reads or writes. The original `Host` header is preserved, so the project's caddy sees the
+full name.
+
+Since the two sides never negotiate, the upstream name is a **convention**: `caddy-<slug>`, or
+`caddy-<slug>-<worktree>` for a worktree. Name your caddy container that, or give it that network
+alias. A project that isn't up yet just 502s — the two halves start independently.
+
+```sh
+claudjar caddy up      # once per machine: network + container on :80
+claudjar caddy join    # once per project: register <slug>.localhost
+claudjar caddy status  # container state + every registered route
+```
+
+Routes live in `~/.claudjar/caddy/registry.yml` (machine-wide, since the generated Caddyfile
+names projects the current directory knows nothing about). That registry is the source of truth;
+the `Caddyfile` beside it is regenerated wholesale on every change, so hand-edits there are lost.
+`worktree create` registers a new worktree's route automatically, `worktree remove` /
+`merge --remove` drop it, and `init` registers the repo when the config it writes opts in.
+Reloading a caddy that isn't running is a no-op rather than an error, so `join` works before
+`caddy up` was ever run.
 
 ### Releasing
 

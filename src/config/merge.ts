@@ -6,8 +6,8 @@ import { emptyConfig } from "./schema.js";
  * `.jarrin.yml` (`base`) into the effective config the CLI acts on.
  *
  * **Only `worktree:` is overridable.** Every other key — the rule tiers, the
- * command table, `backup`, the `project:` block (stack + release surface), and
- * `hooks:` — is taken from `base` verbatim; declaring them in the local file has
+ * command table, `backup`, the `project:` block (stack + release surface),
+ * `hooks:`, and `caddy:` — is taken from `base` verbatim; declaring them in the local file has
  * no effect (deliberately: they are committed, shared config). The local file
  * exists to carry machine-specific worktree settings out of git. If a future key
  * needs a per-machine override, widen this function explicitly.
@@ -28,6 +28,7 @@ export function mergeConfig(
   merged.commands.push(...base.commands);
   merged.backup = base.backup;
   merged.project = {
+    slug: base.project.slug,
     port: base.project.port,
     commands: { ...base.project.commands },
     dist: {
@@ -41,6 +42,7 @@ export function mergeConfig(
       remove: [...base.hooks.worktree.remove],
     },
   };
+  merged.caddy = { enabled: base.caddy.enabled };
   merged.worktree = mergeWorktree(base.worktree, local.worktree);
   return merged;
 }
@@ -55,6 +57,7 @@ function mergeWorktree(
     setup: local.setup.length > 0 ? [...local.setup] : [...base.setup],
     name: local.name || base.name,
     port: local.port || base.port,
+    slug: local.slug || base.slug,
   };
 }
 

@@ -203,6 +203,59 @@ fails to parse, rather than starting a session that silently lost all its rules.
   the release; a file with no version field is warned about and skipped. Adding a format
   means one handler and one test, and nothing else in the flow changes.
 
+- A **`caddy:`** block plus **`project.slug`** puts the repo on a `.localhost` domain,
+  served by one machine-wide reverse proxy:
+
+  ```yaml
+  project:
+    slug: prdl # last label before .localhost; also derives the upstream name
+
+  caddy:
+    enabled: true # the whole block — a single opt-in switch
+  ```
+
+  The domain scheme is `<service>.<worktree>.<slug>.localhost`, both leading segments
+  optional: `prdl.localhost`, `studio.prdl.localhost`, `studio.dev.prdl.localhost`. A
+  worktree's segment is its stamped `worktree.name`, or `worktree.slug` when that name is
+  too long to want in a URL.
+
+  **claudjar owns exactly one side of this.** It runs a single `claudjar-caddy` container
+  on host port 80, attached to a shared `claudjar` docker network, and generates only that
+  container's config. Each project supplies its **own** caddy — in its own compose file, on
+  its own network, joining `claudjar` as an external second network, listening on container
+  port **8000**. claudjar proxies the whole domain to that container and stops; routing
+  `studio.` to a service happens inside the project, in config claudjar never reads or
+  writes. That is the entire reason `caddy:` has one key: there is nothing else claudjar is
+  entitled to know.
+
+  Because the two sides never negotiate, the upstream is a **convention**: `caddy-<slug>`
+  for a main checkout, `caddy-<slug>-<worktree>` for a worktree. A project whose caddy
+  container is named differently adds that as a network alias.
+
+  Routes live in a machine-wide registry, `~/.claudjar/caddy/registry.yml`
+  (`JARRIN_CADDY_DIR` overrides), because the generated Caddyfile has to name projects the
+  current directory knows nothing about. The registry is the source of truth and the
+  Caddyfile beside it is regenerated wholesale on every change — hand-edits to it are lost.
+  `claudjar caddy join` / `leave` add and remove the current checkout's entry;
+  `up` / `down` / `status` drive the container. Registration is also automatic at three
+  points: `init` (when the written config opts in), `worktree create`, and `worktree remove`
+  / `merge --remove`, which capture the route _before_ the directory is deleted and drop it
+  after. A reload when nothing is running is a no-op, not a failure, so `join` works before
+  `caddy up` was ever run and the routes are picked up later.
+
+  Two details in `src/caddy/` are load-bearing and were both found by testing live, not by
+  reading docs:
+
+  - Site addresses are **`http://`-prefixed**. A bare `prdl.localhost {` binds Caddy's
+    HTTPS port (443) even under `auto_https off` — that directive governs certificates, not
+    the default port. claudjar publishes host port 80 alone, so an unschemed site listens
+    where nothing is mapped and every request is refused.
+  - The container runs with **`--dns-search .`**. Without it, an upstream that is merely not
+    running does not fail: Docker's embedded DNS falls through to the host resolver, which
+    appends the machine's search domain and can resolve `caddy-<slug>` to a real **external**
+    host — quietly proxying a local request off the machine. Cleared, the single label either
+    hits a container on the network or 502s.
+
 - A **`hooks:`** block in `.jarrin.yml` (committed, shared) runs shell commands at claudjar
   lifecycle points, in order, stopping at the first failure:
 
