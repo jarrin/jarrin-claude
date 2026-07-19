@@ -41,7 +41,7 @@ project:
   commands:
     build: pnpm run build
   dist:
-    version: 0.1.1
+    version: 0.1.2
     sync:
       - package.json
 
