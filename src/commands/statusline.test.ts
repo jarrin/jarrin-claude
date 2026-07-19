@@ -14,22 +14,51 @@ describe("formatStatusline", () => {
       branch: "main",
       worktreeName: "",
       port: 0,
+      up: null,
     });
     expect(strip(line)).toBe("opus · jarrin-claude · main");
     expect(line).not.toContain("⑂");
   });
 
-  it("appends a worktree name + port segment when a worktree is stamped", () => {
+  it("marks a live stack with a filled dot", () => {
     const line = formatStatusline({
       modelName: "opus",
       dirName: "jarrin-claude-feat",
       branch: "feat",
       worktreeName: "feature-x",
       port: 8001,
+      up: true,
     });
     expect(strip(line)).toBe(
-      "opus · jarrin-claude-feat · feat  ⑂ feature-x :8001",
+      "opus · jarrin-claude-feat · feat  ⑂ feature-x ●8001",
     );
+  });
+
+  it("marks an assigned-but-unserved port with a hollow dot", () => {
+    const line = formatStatusline({
+      modelName: "opus",
+      dirName: "jarrin-claude-feat",
+      branch: "feat",
+      worktreeName: "feature-x",
+      port: 8001,
+      up: false,
+    });
+    expect(strip(line)).toBe(
+      "opus · jarrin-claude-feat · feat  ⑂ feature-x ○8001",
+    );
+  });
+
+  it("treats an unprobed port as down rather than claiming it is up", () => {
+    const line = formatStatusline({
+      modelName: "opus",
+      dirName: "repo",
+      branch: "wip",
+      worktreeName: "feature-x",
+      port: 8001,
+      up: null,
+    });
+    expect(strip(line)).toContain("○8001");
+    expect(strip(line)).not.toContain("●");
   });
 
   it("shows the worktree name without a port when none is assigned", () => {
@@ -39,9 +68,9 @@ describe("formatStatusline", () => {
       branch: "wip",
       worktreeName: "feature-x",
       port: 0,
+      up: null,
     });
     expect(strip(line)).toBe("opus · repo · wip  ⑂ feature-x");
-    expect(strip(line)).not.toContain(":");
   });
 
   it("omits the branch segment on a detached HEAD / non-repo dir", () => {
@@ -51,6 +80,7 @@ describe("formatStatusline", () => {
       branch: null,
       worktreeName: "",
       port: 0,
+      up: null,
     });
     expect(strip(line)).toBe("claude · loose");
   });

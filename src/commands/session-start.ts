@@ -6,13 +6,7 @@ import { buildCommand } from "@stricli/core";
 
 import { loadEffectiveConfig } from "../config/load.js";
 import type { LocalContext } from "../context.js";
-import {
-  isStartSource,
-  resolveStack,
-  runStackCommand,
-  showsPort,
-  stackStatusText,
-} from "../project/stack.js";
+import { resolveStack, showsPort, stackStatusText } from "../project/stack.js";
 import {
   composeAdditionalContext,
   renderCommands,
@@ -93,28 +87,16 @@ async function runSessionStart(this: LocalContext): Promise<void> {
 
   const extraMd = isFile(jarrinMd) ? readFileSync(jarrinMd, "utf8").trim() : "";
 
-  // Per-worktree project stack. `start` runs ONLY on a genuinely new shell — never
-  // on /clear, resume, or compact — so the stack's lifetime tracks the Claude
-  // shell (SessionEnd tears it down). The main checkout is never active. On both
-  // startup and /clear we surface the running port in the session's context.
+  // Per-worktree project stack. This hook NEVER starts it — the stack is driven
+  // by hand (`claudjar start` / `claudjar stop`), and torn down when the worktree
+  // is merged away. All the session does is surface the worktree's assigned
+  // PROJECT_PORT in context, on startup and /clear. The main checkout, having no
+  // stamped worktree identity, is never active.
   const stack = resolveStack(cfg);
-  let stackStatus: string | undefined;
-  if (stack.active) {
-    if (isStartSource(source) && stack.start) {
-      err(
-        `${TAG} starting project stack (PROJECT_PORT=${String(stack.port)}): ${stack.start}\n`,
-      );
-      const status = runStackCommand(stack.start, stack.port, cwd, proc);
-      if (status !== 0) {
-        err(
-          `${TAG} WARNING: start command exited ${String(status)}; continuing.\n`,
-        );
-      }
-    }
-    if (showsPort(source)) {
-      stackStatus = stackStatusText(stack.name, stack.port);
-    }
-  }
+  const stackStatus =
+    stack.active && showsPort(source)
+      ? stackStatusText(stack.name, stack.port)
+      : undefined;
 
   const additionalContext = composeAdditionalContext({
     stackStatus,
@@ -188,6 +170,13 @@ export const sessionStartCommand = buildCommand({
   parameters: { flags: {} },
   docs: {
     brief:
-      "SessionStart hook: inject the project's selected rules (reads stdin JSON)",
+      "[internal] SessionStart hook: inject the project's selected rules (reads stdin JSON)",
+    fullDescription:
+      "INTERNAL — invoked by Claude Code through ~/.claude/bin/session-start; not " +
+      "for manual use.\n\n" +
+      "Reads the SessionStart hook payload on stdin, resolves the repo's rule " +
+      "selection from .claude/.jarrin.yml (+ .jarrin.local.yml), and writes the " +
+      "combined text to stdout as hook JSON. Diagnostics go to stderr, because " +
+      "stdout carries the contract.",
   },
 });

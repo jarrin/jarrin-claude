@@ -127,39 +127,52 @@ the start of every session. The `claudjar init` command scaffolds and updates a 
   `backlog:` block must never corrupt `rules` / `local` / `imports` / `commands`.
 
 - A **`project:`** block in `.jarrin.yml` (committed, shared like the rule tiers) declares a
-  **per-worktree runtime stack** — a service stack (e.g. `docker compose`) that lives only
-  as long as a Claude shell is open in a worktree, on a port unique to each worktree:
+  **per-worktree runtime stack** — a service stack (e.g. `docker compose`) bound to a port
+  unique to each worktree:
 
   ```yaml
   project:
     port: 8000 # starting port; worktrees increment from here (main checkout unaffected)
     commands:
-      start: docker compose up -d # run on a new shell inside a worktree
-      exit: docker compose down # run when that shell exits
+      start: docker compose up -d # run by `claudjar start`
+      exit: docker compose down # run by `claudjar stop` and `worktree remove`
   ```
 
   Both `start` and `exit` run with the worktree's assigned port in the environment as
-  **`PROJECT_PORT`** (so a compose file binds `${PROJECT_PORT}`). The lifecycle is driven by
-  hooks and gated on a stamped `worktree.name`, so **the main checkout is never affected**:
+  **`PROJECT_PORT`** (so a compose file binds `${PROJECT_PORT}`). The whole feature is gated
+  on a stamped `worktree.name`, so **the main checkout is never affected**.
 
-  - **SessionStart** runs `start` **only** on a genuinely new shell (`source: startup`) —
-    never on `/clear`, `resume`, or `compact`. On both `startup` and `clear` it injects the
-    running port into the session context (so a `/clear` shows the port without restarting).
-  - **SessionEnd** (`bin/claude/session-end`, registered in `claude/settings.json`) runs
-    `exit`, tearing the stack down — **except** on `reason: clear`, so a `/clear` (which
-    fires SessionEnd→SessionStart) never kills the stack the next session reuses. Teardown
-    is naive: any real session end runs `exit`.
+  **The stack is manual.** `claudjar start` / `claudjar stop` are the only way it goes up and
+  down by intent. Sessions do not touch it — there is no SessionEnd hook, and SessionStart
+  starts nothing; it only injects the worktree's assigned port into context (on `startup` and
+  `clear`). This is deliberate: a stack whose lifetime tracked the Claude shell was torn down
+  and rebuilt by every window close, and `/clear` had to be special-cased to avoid killing a
+  stack the next session reused.
 
-  `claudjar start` / `claudjar stop` drive the same start/exit by hand from inside a
-  worktree. Both hooks and CLI resolve the effective port as `worktree.port` (the worktree's
-  stamped assignment) falling back to `project.port`. Because the assigned port lives in the
-  gitignored local file, the SessionStart/SessionEnd hooks now read `.jarrin.local.yml` too
-  (via the merged config), not the committed base alone.
+  Two things report or reclaim, rather than drive:
+
+  - **The statusline** (`claudjar api statusline`) probes the port on each render and shows
+    `⑂ <name> ●<port>` in green when something is listening, `○<port>` dim when not. Since
+    nothing autostarts, that dot is the only honest signal that `start` was actually run.
+    The probe is a 50 ms loopback TCP connect (`src/project/liveness.ts`) — on localhost a
+    listener accepts in microseconds and a closed port refuses immediately, so it needs no
+    cache despite running on the render path.
+  - **`claudjar worktree remove`** (and `merge --remove`, which shares its implementation
+    in `src/worktree/remove.ts`) runs `exit` in the worktree before deleting it — via
+    `stopStackAt`, reading that worktree's own stamped config, so `exit` gets the port it
+    was actually assigned. A failed teardown aborts before the removal, so containers never
+    outlive the directory that can stop them; `--no-teardown` opts out.
+
+  Both CLI and hook resolve the effective port as `worktree.port` (the worktree's stamped
+  assignment) falling back to `project.port`. Because the assigned port lives in the
+  gitignored local file, the SessionStart hook reads `.jarrin.local.yml` too (via the merged
+  config), not the committed base alone.
 
 - A **`worktree:`** block configures `claudjar worktree create <name>` — how a new git
   worktree for this repo is placed and bootstrapped. Its recipe (`dir`/`copy`/`setup`) is
   **CLI-consumed** (never `init`); its **identity** (`name`/`port`, stamped on create) is
-  read by the CLI, the session lifecycle hooks, and the `todo`/`staged-planning` skills. The
+  read by the CLI, the SessionStart hook, the statusline, and the `todo`/`staged-planning`
+  skills. The
   whole block lives by convention in the gitignored **`.jarrin.local.yml`** (below), since
   where worktrees land, how they build, and each worktree's port are machine-specific:
 
@@ -180,10 +193,27 @@ the start of every session. The `claudjar init` command scaffolds and updates a 
   across, assigns the next **`PROJECT_PORT`** (one past the highest already handed to a
   sibling worktree, never below `project.port`), **stamps `worktree.name` + `worktree.port`**
   into the new worktree's `.jarrin.local.yml`, then runs `setup:` in order (stopping on the
-  first failure; `--no-setup` skips them). `create` does not launch the stack — the session's
-  SessionStart hook does. The stamped `name` is what the `staged-planning` and `todo` skills
+  first failure; `--no-setup` skips them). `create` does not launch the stack — nothing does
+  automatically; run `claudjar start` in the new worktree. The stamped `name` is what the
+  `staged-planning` and `todo` skills
   read to scope forge tickets to the worktree (`worktree/<name>` label; see
   `claude/references/backlog.md` §9); the stamped `port` is the worktree's `PROJECT_PORT`.
+
+  **`create` is keyed on the worktree it runs in, not the main checkout.** The new branch is
+  cut from the current worktree's HEAD (passed to `git worktree add` as an explicit SHA,
+  since the command itself runs with `-C <mainRoot>` where a bare `HEAD` would mean main's
+  commit), the `copy:` files are read from the current worktree, and the current worktree's
+  stamped `name` **prefixes** the new one: `create x` inside `dev` yields `dev-x`. The prefix
+  is applied to the branch _and_ the directory basename — several call sites (`goto`'s
+  basename fallback, `worktreePathForBranch`) assume the two are identical — and is skipped
+  when the name already carries it, so `create x` and `create dev-x` from `dev` are the same
+  request. **Only the base directory resolves against the main root**, which is what keeps
+  the worktrees folder flat: `dev-x` is a sibling of `dev`, never nested inside it, however
+  long the chain (`dev` → `dev-x` → `dev-x-y`). In the main checkout current === main, so
+  there is no prefix and behaviour is unchanged. Merging composes: from `dev`, running
+  `claudjar worktree merge dev-x` folds the child back into its parent, since `merge` targets
+  the branch checked out where it runs. `merge` **keeps** the worktree by default; `--remove`
+  (or a later `claudjar worktree remove dev-x`) retires it.
 
   `claudjar goto <name>` switches between worktrees: it resolves `<name>` against
   `git worktree list` (branch first, then directory basename; the reserved `main` returns to
@@ -198,8 +228,8 @@ the start of every session. The `claudjar init` command scaffolds and updates a 
   overridable** — every other key is taken from the committed base verbatim (declaring
   `rules` / `commands` / `backup` here has no effect; that is deliberate, they are shared
   config). Widen the override surface explicitly in `src/config/merge.ts` if a future key
-  needs it. The SessionStart and SessionEnd hooks now read the merged view (base + local),
-  because the per-worktree `project:` stack lifecycle needs the local file's stamped
+  needs it. The SessionStart hook and the statusline read the merged view (base + local),
+  because the per-worktree `project:` stack needs the local file's stamped
   `worktree.name` / `worktree.port`; rules, commands, and `backup` still resolve from the
   committed base alone.
 
@@ -207,6 +237,33 @@ the start of every session. The `claudjar init` command scaffolds and updates a 
 config files present, rules with on-disk presence, the command table, the `project:` stack,
 backlog methods,
 worktree config, backup, and available skills.
+
+### The public / internal command split
+
+The route tree is built by `buildRoutes(hideInternal)` in `src/routes.ts` — a factory, not a
+constant, so the same tree renders two ways. Everything Claude Code invokes rather than a
+person lives under **`claudjar api`** (`session-start`, `statusline`), marked with stricli's
+`hideRoute` so it stays out of the default help. Hidden is not disabled: `claudjar api --help`,
+`--helpAll`, and `help --full --include-internal` all reach it, and the `bin/claude/` launchers
+call it as `api session-start` / `api statusline`. Each internal command's brief starts with
+`[internal]` and its `fullDescription` says why not to run it by hand.
+
+**`claudjar help --full`** renders every command's help into one Markdown document via stricli's
+own `generateHelpTextForAllCommands`, so the output cannot drift from the real flags. Because
+that helper skips hidden routes, `--include-internal` works by building a _second_ application
+from the same factory with `hideInternal: false` — which is the whole reason `buildRoutes` takes
+a parameter instead of being a top-level constant. A test pins that the two views differ only in
+the `api` routes.
+
+That command generates the **`claudjar` skill's** command reference
+(`claude/skills/claudjar/references/commands.md`). The skill exists so that a session in _any_
+repo reaches for `claudjar worktree create` instead of a bare `git worktree add` — which would
+produce a worktree with no copied `.env`, no `PROJECT_PORT`, no stamped identity, and no setup
+run. After changing any command's flags or docs, regenerate it:
+
+```sh
+claudjar help --full > claude/skills/claudjar/references/commands.md
+```
 
 This gives explicit, per-repo control that path globs cannot express (e.g. "this Laravel
 app uses React Native — never Expo"): the project lists the exact rules it wants, its own

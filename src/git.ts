@@ -44,6 +44,16 @@ export function currentBranch(cwd: string): string | null {
   return git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
 }
 
+/**
+ * The commit `cwd`'s worktree has checked out, as a full SHA — the start point a
+ * new branch is cut from. A SHA rather than `HEAD` or a branch name because
+ * `worktree add` runs with `-C <mainRoot>`, where `HEAD` would mean the *main*
+ * checkout's commit, not this worktree's. Null in a repo with no commits yet.
+ */
+export function headCommit(cwd: string): string | null {
+  return git(cwd, ["rev-parse", "HEAD"]);
+}
+
 /** Raw `git worktree list --porcelain` output for `cwd`, or null on failure. */
 export function worktreeListPorcelain(cwd: string): string | null {
   return git(cwd, ["worktree", "list", "--porcelain"]);

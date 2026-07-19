@@ -17,11 +17,13 @@ import {
   branchExists,
   conflictedFiles,
   currentBranch,
+  headCommit,
   mainWorktreeRoot,
   toplevel,
   worktreeListPorcelain,
 } from "../git.js";
 import { conflictPrompt, worktreePathForBranch } from "../worktree/merge.js";
+import { removeWorktree } from "../worktree/remove.js";
 import {
   nextPort,
   planWorktree,
@@ -38,6 +40,14 @@ interface CreateFlags {
  * the merged `worktree:` config: create the branch, copy gitignored files across
  * (always `.jarrin.local.yml`, stamped with the worktree's identity), then run
  * the configured setup commands (poetry, docker, …) in the new worktree.
+ *
+ * Everything except the base directory is keyed on the worktree the command runs
+ * in ("current"), not the main checkout: the new branch is cut from the current
+ * HEAD, gitignored files are copied from here, and the current worktree's stamped
+ * name prefixes the new one (`create x` in `dev` → `dev-x`). Only the base dir
+ * resolves against the main root, which keeps the worktree folder flat however
+ * long the chain gets. From the main checkout current === main, so a create there
+ * behaves exactly as it always has.
  */
 function runWorktreeCreate(
   this: LocalContext,
@@ -53,30 +63,56 @@ function runWorktreeCreate(
 
   const nameError = validateWorktreeName(name);
   if (nameError) return fail(nameError);
-  const branch = name.trim();
 
-  const repoRoot = mainWorktreeRoot(proc.cwd());
-  if (!repoRoot) return fail("not inside a git repository.");
+  const mainRoot = mainWorktreeRoot(proc.cwd());
+  const currentRoot = toplevel(proc.cwd());
+  if (!mainRoot || !currentRoot) return fail("not inside a git repository.");
 
-  const cfg = loadEffectiveConfig(join(repoRoot, ".claude")).merged;
-  const plan = planWorktree({ name: branch, repoRoot, cfg: cfg.worktree });
+  // Config comes from the current worktree: its copy list, setup recipe, and —
+  // crucially — its stamped identity, which becomes the new worktree's prefix.
+  const cfg = loadEffectiveConfig(join(currentRoot, ".claude")).merged;
+  const plan = planWorktree({
+    name: name.trim(),
+    parent: cfg.worktree.name,
+    mainRoot,
+    cfg: cfg.worktree,
+  });
+  const branch = plan.branch;
 
   if (existsSync(plan.path)) {
     return fail(`target already exists: ${plan.path}`);
   }
 
-  // 1. Create the worktree (and branch, unless it already exists).
-  const exists = branchExists(repoRoot, branch);
+  // 1. Create the worktree, branching from the CURRENT worktree's HEAD. The
+  //    start point is passed explicitly as a SHA because `worktree add` runs in
+  //    the main root, where a bare HEAD would mean the main checkout's commit.
+  const exists = branchExists(mainRoot, branch);
+  const from = currentBranch(currentRoot);
+  const startPoint = headCommit(currentRoot);
   const gitArgs = exists
-    ? ["-C", repoRoot, "worktree", "add", plan.path, branch]
-    : ["-C", repoRoot, "worktree", "add", "-b", branch, plan.path];
-  out(`Creating worktree ${plan.path} (branch ${branch})…\n`);
+    ? ["-C", mainRoot, "worktree", "add", plan.path, branch]
+    : [
+        "-C",
+        mainRoot,
+        "worktree",
+        "add",
+        "-b",
+        branch,
+        plan.path,
+        // No start point in a repo without commits — let git use its default.
+        ...(startPoint ? [startPoint] : []),
+      ];
+  const basedOn = exists
+    ? "existing branch"
+    : `branched from ${from ?? "HEAD"}`;
+  out(`Creating worktree ${plan.path} (branch ${branch}, ${basedOn})…\n`);
   const add = spawnSync("git", gitArgs, { stdio: "inherit" });
   if (add.status !== 0) return fail("`git worktree add` failed.");
 
-  // 2. Carry gitignored files across (env, local settings, local config).
+  // 2. Carry gitignored files across (env, local settings, local config) from
+  //    the current worktree, so they match the code the branch was cut from.
   for (const rel of plan.copy) {
-    const src = join(repoRoot, rel);
+    const src = join(currentRoot, rel);
     if (!existsSync(src)) continue;
     const dest = join(plan.path, rel);
     mkdirSync(dirname(dest), { recursive: true });
@@ -87,9 +123,10 @@ function runWorktreeCreate(
   // 3. Assign this worktree a PROJECT_PORT: one past the highest already handed
   //    out to a sibling worktree, never below the project's starting port. Only
   //    linked worktrees carry a port — the main checkout is never assigned one.
+  //    Scanned from the main root, since the port space is repo-wide.
   const port =
     cfg.project.port > 0
-      ? nextPort(cfg.project.port, assignedPorts(repoRoot))
+      ? nextPort(cfg.project.port, assignedPorts(mainRoot))
       : 0;
 
   // 4. Stamp the worktree's identity (name + port) into its own .jarrin.local.yml
@@ -157,7 +194,8 @@ function assignedPorts(repoRoot: string): number[] {
 }
 
 interface MergeFlags {
-  readonly keep: boolean;
+  readonly remove: boolean;
+  readonly teardown: boolean;
   readonly claude: boolean;
 }
 
@@ -165,8 +203,13 @@ interface MergeFlags {
  * `claudjar worktree merge <name>` — merge worktree branch `<name>` into the
  * branch checked out where the command runs, then tear the worktree down.
  *
- * On a clean merge it removes the worktree and deletes its branch (unless
- * `--keep`). On a conflict it keeps everything and hands off to an interactive
+ * Merging **keeps** the worktree and branch by default — folding work into the
+ * parent is not the same as being done with the worktree, and you often merge
+ * several times before the branch's life ends. Pass `--remove` to clean up in the
+ * same step, which tears the worktree's project stack down first (`--no-teardown`
+ * to skip that) — the same path `worktree remove` takes.
+ *
+ * On a conflict it keeps everything regardless and hands off to an interactive
  * `claude` session seeded with a resolution prompt (unless `--no-claude`).
  */
 function runWorktreeMerge(
@@ -253,34 +296,90 @@ function runWorktreeMerge(
 
   out(`Merged ${branch} cleanly.\n`);
 
-  if (flags.keep) {
-    out(`Kept the worktree and branch (--keep).\n`);
+  if (!flags.remove) {
+    out(
+      `Kept the worktree and branch. Pass --remove to clean up, or run ` +
+        `'claudjar worktree remove ${branch}' later.\n`,
+    );
     return;
   }
 
-  if (wtPath) {
-    const rm = spawnSync("git", ["-C", target, "worktree", "remove", wtPath], {
-      stdio: "inherit",
-    });
-    if (rm.status !== 0) {
-      return fail(
-        `merged, but 'git worktree remove ${wtPath}' failed (uncommitted ` +
-          `changes there?). Clean it up by hand, or re-run with --keep.`,
-      );
-    }
-    out(`  removed worktree ${wtPath}\n`);
+  if (!wtPath) {
+    // The branch merged but has no worktree checked out — nothing to remove but
+    // the branch itself, which the shared path handles via a safe delete.
+    out(`  no worktree checked out for ${branch}\n`);
   }
 
-  const del = spawnSync("git", ["-C", target, "branch", "-d", branch], {
-    stdio: "inherit",
-  });
-  if (del.status !== 0) {
+  const result = removeWorktree(
+    {
+      gitRoot: target,
+      branch,
+      wtPath: wtPath ?? "",
+      teardown: flags.teardown && wtPath !== null,
+    },
+    proc,
+    out,
+  );
+  if (!result.ok) return fail(`merged, but ${result.error}`);
+  out(`\nDone.\n`);
+}
+
+interface RemoveFlags {
+  readonly teardown: boolean;
+}
+
+/**
+ * `claudjar worktree remove <name>` — retire a worktree without merging it: tear
+ * its project stack down (unless `--no-teardown`), remove the directory, and
+ * safely delete the branch.
+ *
+ * The branch is deleted with `git branch -d`, so unmerged work is never discarded
+ * silently — the branch simply survives and is reported. This is the counterpart
+ * to `worktree create`, and the same path `worktree merge --remove` runs.
+ */
+function runWorktreeRemove(
+  this: LocalContext,
+  flags: RemoveFlags,
+  name: string,
+): void {
+  const proc = this.process;
+  const out = (msg: string): void => void proc.stdout.write(msg);
+  const fail = (msg: string): void => {
+    proc.stderr.write(`worktree remove: ${msg}\n`);
+    proc.exitCode = 1;
+  };
+
+  const nameError = validateWorktreeName(name);
+  if (nameError) return fail(nameError);
+  const branch = name.trim();
+
+  // Resolve from the main root so this works identically from the main checkout
+  // and from any sibling worktree.
+  const mainRoot = mainWorktreeRoot(proc.cwd());
+  const currentRoot = toplevel(proc.cwd());
+  if (!mainRoot || !currentRoot) return fail("not inside a git repository.");
+
+  const porcelain = worktreeListPorcelain(mainRoot);
+  const wtPath = porcelain ? worktreePathForBranch(porcelain, branch) : null;
+  if (!wtPath) return fail(`no worktree checked out for branch '${branch}'.`);
+
+  // Removing the ground you are standing on would leave the shell in a deleted
+  // directory (and git refuses anyway) — say so plainly instead.
+  if (resolve(wtPath) === resolve(currentRoot)) {
     return fail(
-      `merged and removed the worktree, but 'git branch -d ${branch}' failed. ` +
-        `Delete the branch by hand.`,
+      `you are inside the worktree for '${branch}'; run this from another ` +
+        `worktree (e.g. 'claudjar goto main' first).`,
     );
   }
-  out(`  deleted branch ${branch}\n\nDone.\n`);
+
+  out(`Removing worktree ${wtPath} (branch ${branch})…\n`);
+  const result = removeWorktree(
+    { gitRoot: mainRoot, branch, wtPath, teardown: flags.teardown },
+    proc,
+    out,
+  );
+  if (!result.ok) return fail(result.error);
+  out(`\nDone.\n`);
 }
 
 /** `claudjar worktree list` — thin pass-through to `git worktree list`. */
@@ -336,10 +435,17 @@ const worktreeMergeCommand = buildCommand({
       ],
     },
     flags: {
-      keep: {
+      remove: {
         kind: "boolean",
-        brief: "Keep the worktree and branch after a clean merge",
+        brief:
+          "After a clean merge, also remove the worktree and delete the branch",
         default: false,
+      },
+      teardown: {
+        kind: "boolean",
+        brief:
+          "With --remove, stop the project stack first (use --no-teardown to skip)",
+        default: true,
       },
       claude: {
         kind: "boolean",
@@ -351,8 +457,55 @@ const worktreeMergeCommand = buildCommand({
   },
   docs: {
     brief:
-      "Merge a worktree branch into the current branch, then remove it " +
+      "Merge a worktree branch into the current branch, keeping the worktree " +
       "(claude resolves conflicts)",
+    fullDescription:
+      "Run from the worktree you want to merge INTO (e.g. main), naming the " +
+      "branch to pull in.\n\n" +
+      "The worktree and branch are KEPT by default — merging work up is not the " +
+      "same as being finished with the worktree. Add --remove to clean up in the " +
+      "same step: that stops the worktree's project stack, removes the directory, " +
+      "and safely deletes the branch (--no-teardown leaves the stack running).\n\n" +
+      "On a conflict nothing is removed: the worktree and branch stay put and an " +
+      "interactive claude session opens in the target, seeded with both sides and " +
+      "the conflicted paths. --no-claude prints the paths instead.",
+  },
+});
+
+const worktreeRemoveCommand = buildCommand({
+  func: runWorktreeRemove,
+  parameters: {
+    positional: {
+      kind: "tuple",
+      parameters: [
+        {
+          brief: "Worktree / branch name to remove (e.g. feature/x)",
+          parse: String,
+          placeholder: "name",
+        },
+      ],
+    },
+    flags: {
+      teardown: {
+        kind: "boolean",
+        brief:
+          "Stop the worktree's project stack first (use --no-teardown to skip)",
+        default: true,
+      },
+    },
+  },
+  docs: {
+    brief:
+      "Remove a worktree: stop its project stack, delete the directory and branch",
+    fullDescription:
+      "The counterpart to `worktree create`, and the cleanup half of " +
+      "`worktree merge --remove`.\n\n" +
+      "Stops the worktree's project stack (with its own assigned PROJECT_PORT), " +
+      "removes the directory, then deletes the branch with `git branch -d`. That " +
+      "safe delete succeeds only when the branch is fully merged, so unmerged work " +
+      "is never discarded silently — the branch survives and is reported.\n\n" +
+      "Run it from another worktree; removing the one you are standing in is " +
+      "refused. --no-teardown removes the worktree while leaving the stack running.",
   },
 });
 
@@ -366,6 +519,7 @@ export const worktreeRoutes = buildRouteMap({
   routes: {
     create: worktreeCreateCommand,
     merge: worktreeMergeCommand,
+    remove: worktreeRemoveCommand,
     list: worktreeListCommand,
   },
   docs: {

@@ -8,18 +8,18 @@ they are not in the working tree.
 
 ## Layout
 
-| Path                       | Purpose                                                                                    |
-| -------------------------- | ------------------------------------------------------------------------------------------ |
-| `src/`, `dist/`            | The `claudjar` CLI (TypeScript source; `dist/claudjar.js` is the built bundle, gitignored) |
-| `bin/claudjar`             | Repo-local launcher for the CLI (`bin/claudjar install`, `init`, …)                        |
-| `CLAUDE.md`                | Guide for working **in this repo** — how to author rule files                              |
-| `claude/CLAUDE.md`         | Global, cross-project instructions (loaded every session)                                  |
-| `claude/settings.json`     | Global Claude Code settings (registers the SessionStart + SessionEnd hooks)                |
-| `bin/claude/session-start` | SessionStart hook launcher → `dist/claudjar.js session-start` (linked to `~/.claude/bin/`) |
-| `bin/claude/session-end`   | SessionEnd hook launcher → `dist/claudjar.js session-end` (linked to `~/.claude/bin/`)     |
-| `claude/rules/*.md`        | Global rule library (`lang-php.md`, `fw-laravel.md`, …)                                    |
-| `claude/skills/*/`         | Global skills (e.g. `add-skill/` — how to author a skill)                                  |
-| `claude/references/*.md`   | Shared reference docs read by more than one skill (`backlog.md`)                           |
+| Path                       | Purpose                                                                                        |
+| -------------------------- | ---------------------------------------------------------------------------------------------- |
+| `src/`, `dist/`            | The `claudjar` CLI (TypeScript source; `dist/claudjar.js` is the built bundle, gitignored)     |
+| `bin/claudjar`             | Repo-local launcher for the CLI (`bin/claudjar install`, `init`, …)                            |
+| `CLAUDE.md`                | Guide for working **in this repo** — how to author rule files                                  |
+| `claude/CLAUDE.md`         | Global, cross-project instructions (loaded every session)                                      |
+| `claude/settings.json`     | Global Claude Code settings (registers the SessionStart hook and the statusline)               |
+| `bin/claude/session-start` | SessionStart hook launcher → `dist/claudjar.js api session-start` (linked to `~/.claude/bin/`) |
+| `bin/claude/statusline`    | statusLine launcher → `dist/claudjar.js api statusline` (linked to `~/.claude/bin/`)           |
+| `claude/rules/*.md`        | Global rule library (`lang-php.md`, `fw-laravel.md`, …)                                        |
+| `claude/skills/*/`         | Global skills (`claudjar/` — drive the CLI; `add-skill/` — how to author a skill)              |
+| `claude/references/*.md`   | Shared reference docs read by more than one skill (`backlog.md`)                               |
 
 Language-/framework-specific guidance goes in `claude/rules/*.md`. Projects opt in to
 specific rules via their own `.claude/.jarrin.yml` — see **Rule loading** below. The
@@ -127,9 +127,10 @@ ignores it — it is skill-consumed, read by the `staged-planning` and `todo` sk
 skills implement (config resolution, labels, milestones, retrieval).
 
 A committed **`project:`** block gives each worktree a runtime stack (see **The claudjar
-CLI** below): the SessionStart hook runs its `start` on a new shell and shows the
-worktree's `PROJECT_PORT`; a companion **SessionEnd** hook (`bin/claude/session-end`)
-runs its `exit` when the shell exits. The main checkout is never affected.
+CLI** below), brought up and down by hand with `claudjar start` / `claudjar stop`. No
+session hook starts or stops it: SessionStart only surfaces the worktree's assigned
+`PROJECT_PORT` in context, and the statusline shows whether anything is listening on it.
+The main checkout is never affected.
 
 The hook reads the session `cwd` from its stdin JSON, resolves the three tiers (global →
 local → imports, each rule included once), renders the `commands` table, appends
@@ -149,18 +150,19 @@ repo's directory; override it with `JARRIN_GROUP_ROOT` and the global library wi
 One typed entrypoint (`@stricli/core` + `@clack/prompts`, strict TypeScript) backs the
 subcommands:
 
-| Command                        | What it does                                                                                                     |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `claudjar init`                | Set up (new repo) or update `.claude/.jarrin.yml`, preserving comments + `backlog:`                              |
-| `claudjar info`                | Print the merged, resolved config for this repo: rules (✓/✗), commands, project stack, backlog, worktree, skills |
-| `claudjar worktree create <n>` | Add a git worktree and bootstrap it from the `worktree:` config (branch, copy, port, setup)                      |
-| `claudjar worktree merge <n>`  | Merge a worktree branch into the current branch, remove the worktree (claude resolves conflicts)                 |
-| `claudjar worktree list`       | List this repo's git worktrees                                                                                   |
-| `claudjar goto <n>`            | Switch to a worktree by starting `claude` there; `main` goes back to the original checkout                       |
-| `claudjar start` / `stop`      | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout               |
-| `claudjar install`             | Machine setup: symlink config into `~/.claude`, enable hooks, check prerequisites                                |
-| `claudjar session-start`       | The SessionStart hook itself (reads the hook JSON on stdin) — not run by hand                                    |
-| `claudjar session-end`         | The SessionEnd hook itself (reads the hook JSON on stdin) — not run by hand                                      |
+| Command                        | What it does                                                                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `claudjar init`                | Set up (new repo) or update `.claude/.jarrin.yml`, preserving comments + `backlog:`                                |
+| `claudjar info`                | Print the merged, resolved config for this repo: rules (✓/✗), commands, project stack, backlog, worktree, skills   |
+| `claudjar worktree create <n>` | Add a git worktree and bootstrap it from the `worktree:` config (branch, copy, port, setup)                        |
+| `claudjar worktree merge <n>`  | Merge a worktree branch into the current branch, keeping it (`--remove` to clean up; claude resolves conflicts)    |
+| `claudjar worktree remove <n>` | Remove a worktree: stop its stack, delete the directory, safely delete the branch (`--no-teardown` skips the stop) |
+| `claudjar worktree list`       | List this repo's git worktrees                                                                                     |
+| `claudjar goto <n>`            | Switch to a worktree by starting `claude` there; `main` goes back to the original checkout                         |
+| `claudjar start` / `stop`      | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout                 |
+| `claudjar install`             | Machine setup: symlink config into `~/.claude`, enable hooks, check prerequisites                                  |
+| `claudjar help --full`         | Print every command's help as one Markdown document (`--include-internal` adds the `api` commands)                 |
+| `claudjar api …`               | **Internal.** The hook entrypoints Claude Code invokes (`session-start`, `statusline`) — never run by hand         |
 
 `worktree create` reads the `worktree:` block from `.claude/.jarrin.local.yml` (a gitignored,
 per-machine override merged over the committed `.jarrin.yml` — **only `worktree:` overrides**).
@@ -171,6 +173,17 @@ assigned `PROJECT_PORT`** (one past the highest already handed to a sibling work
 name scopes forge todos/plans to the worktree (`worktree/<name>` label; see
 `claude/references/backlog.md` §9). New worktrees default to the grouped sibling
 `<parent>/<repo>-worktrees/<name>`; set `worktree.dir` to change that.
+
+**Creating from inside a worktree** branches from where you stand, and keeps the folder flat.
+Run `claudjar worktree create x` in worktree `dev` and you get branch **`dev-x`** — cut from
+`dev`'s HEAD, not main's — in `<repo>-worktrees/dev-x`, a **sibling** of `dev` rather than a
+directory nested inside it. The prefix is the current worktree's stamped `name`, so lineage
+stays readable however deep the chain goes (`dev` → `dev-x` → `dev-x-y`) while the worktrees
+folder stays one level. An already-prefixed name is not prefixed twice, so `create x` and
+`create dev-x` from `dev` both mean `dev-x`. Gitignored `copy:` files come from the current
+worktree too, so the new tree's `.env` matches the code its branch was cut from. Only the base
+directory is resolved against the main checkout — that is what keeps the folder flat. From the
+main checkout there is no prefix and nothing changes.
 
 The optional **`project:`** block in the committed `.jarrin.yml` gives each worktree a runtime
 stack that lives only as long as a Claude shell is open in it:
@@ -183,17 +196,24 @@ project:
     exit: docker compose down
 ```
 
-The **SessionStart** hook runs `start` on a genuinely new shell (never on `/clear`, `resume`, or
-`compact`) and surfaces the worktree's port in context on both `startup` and `clear`; the
-**SessionEnd** hook runs `exit` when the shell exits (skipping `reason: clear`, so a `/clear`
-never kills the stack). Both commands run with the worktree's port as **`PROJECT_PORT`**. The
-whole feature is gated on a stamped `worktree.name`, so the main checkout is never affected.
-`claudjar start` / `claudjar stop` drive the same start/exit by hand.
+The stack is driven **by hand**: `claudjar start` and `claudjar stop` run `start` / `exit` with
+the worktree's port as **`PROJECT_PORT`**. Sessions never start or stop it — the **SessionStart**
+hook only surfaces the assigned port in context (on `startup` and `clear`), and the statusline
+shows a green `●` when something is actually listening on that port, a dim `○` when it is not.
+
+Teardown is automatic only where a worktree is being retired: **`worktree remove`** and
+**`worktree merge --remove`** run `exit` before deleting the directory, since the compose file
+lives inside it. The whole feature is gated on a stamped `worktree.name`, so the main checkout is
+never affected.
 
 `worktree merge <name>` is the other half: run from the target worktree (e.g. `main`), it runs
-`git merge --no-edit <name>` to pull the worktree's branch in, then removes the worktree and
-deletes the branch (`--keep` merges only, leaving both in place). A **clean** merge tears down
-and reports; on a **conflict** it keeps the worktree and branch and hands off to an interactive
+`git merge --no-edit <name>` to pull the worktree's branch in and then **stops** — the worktree
+and branch are kept, because merging work up is not the same as being finished with the worktree.
+Add `--remove` to clean up in the same step (`--no-teardown` leaves the stack running); if the
+stack's `exit` fails it stops there and keeps the worktree, so containers never outlive the
+directory that can stop them. `worktree remove <name>` does that cleanup on its own, deleting the
+branch with `git branch -d` so unmerged work is reported rather than discarded. On a
+**conflict** merge keeps the worktree and branch and hands off to an interactive
 `claude` session in the target, seeded with a prompt that names both sides and the conflicted
 files so Claude Code can resolve them in place. `--no-claude` skips the launch and just prints
 the conflicted paths for a manual resolution.

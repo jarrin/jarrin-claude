@@ -8,4 +8,4 @@
 set -eu
 self="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
 repo="$(CDPATH= cd -- "$(dirname -- "$self")/../.." && pwd)"
-exec node "$repo/dist/claudjar.js" statusline "$@"
+exec node "$repo/dist/claudjar.js" api statusline "$@"

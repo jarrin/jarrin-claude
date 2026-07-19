@@ -96,27 +96,39 @@ alternative of pointing settings at `jarrin session-start` directly).
 
 `buildApplication({ name: "jarrin", version, description, routeMap })` over:
 
+Built by `buildRoutes(hideInternal)` in `src/routes.ts` — a factory, not a
+constant, so the same tree can be rendered with internals hidden (the real CLI)
+or visible (`help --full --include-internal`):
+
 ```ts
 buildRouteMap({
   routes: {
     init: initCommand, // setup/update .claude/.jarrin.yml
     info: infoCommand, // print the merged, resolved config
     install: installCommand, // machine setup (symlinks, hooks, checks)
-    worktree: worktreeRoutes, // create/merge/list git worktrees
+    worktree: worktreeRoutes, // create/merge/remove/list git worktrees
+    goto: gotoCommand, // switch worktrees by launching claude there
     start: startCommand, // bring this worktree's project: stack up
     stop: stopCommand, // tear this worktree's project: stack down
-    "session-start": sessionStartCommand, // the SessionStart hook (stdin JSON in)
-    "session-end": sessionEndCommand, // the SessionEnd hook (stdin JSON in)
+    help: helpCommand, // --full: every command's help in one document
+    api: apiRoutes, // INTERNAL: session-start, statusline (stdin JSON in)
   },
-  docs: { brief: "Manage Jarrin's Claude Code config" },
+  docs: { brief: "…", hideRoute: { api: hideInternal } },
 });
 ```
 
+> **The `api` split.** Everything Claude Code invokes rather than a person lives
+> under `claudjar api`, hidden from the default help via `hideRoute`. Hidden is not
+> disabled: `claudjar api --help`, `--helpAll`, and `help --full --include-internal`
+> all still reach it, and the launchers in `bin/claude/` call it as
+> `api session-start` / `api statusline`.
+
 > The `project:` stack lifecycle: `worktree create` assigns each worktree an
-> incrementing `PROJECT_PORT`; the SessionStart hook runs `project.commands.start`
-> on a new shell (and shows the port on startup/`clear`), the SessionEnd hook runs
-> `project.commands.exit` on exit (skipping `reason: clear`). `start`/`stop` drive
-> the same by hand. The main checkout is never affected.
+> incrementing `PROJECT_PORT`, and `claudjar start` / `claudjar stop` are the only
+> way it goes up and down. No session hook touches it — SessionStart merely shows
+> the assigned port on `startup`/`clear`. The automatic teardowns are
+> `worktree remove` and `worktree merge --remove`, which run `project.commands.exit`
+> before deleting the directory. The main checkout is never affected.
 
 `src/cli.ts` is the only file that calls `run(app, process.argv.slice(2), ctx)`.
 `ctx` is `buildContext()` for real runs; tests pass a fake context.

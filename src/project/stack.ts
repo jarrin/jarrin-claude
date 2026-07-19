@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 
+import { loadEffectiveConfig } from "../config/load.js";
 import type { JarrinConfig } from "../config/schema.js";
 
 /** The environment variable the start/exit commands read for their bound port. */
@@ -68,32 +70,54 @@ export function runStackCommand(
   return result.status ?? 1;
 }
 
-/**
- * SessionStart `source` on which the stack's `start` runs: ONLY a genuinely new
- * shell — never `/clear`, `resume`, or `compact` — so the stack's lifetime tracks
- * the shell.
- */
-export function isStartSource(source: string): boolean {
-  return source === "startup";
-}
-
-/** SessionStart `source` on which the running port is surfaced in context. */
+/** SessionStart `source` on which the assigned port is surfaced in context. */
 export function showsPort(source: string): boolean {
   return source === "startup" || source === "clear";
 }
 
 /**
- * SessionEnd `reason` on which the stack's `exit` runs. Everything but `clear`:
- * a `/clear` fires SessionEnd→SessionStart and must NOT tear the stack down.
+ * The outcome of a stack teardown: what ran, where, and how it exited. `null`
+ * from {@link stopStackAt} means nothing ran at all.
  */
-export function isExitReason(reason: string): boolean {
-  return reason !== "clear";
+export interface StackTeardown {
+  readonly name: string;
+  readonly port: number;
+  readonly command: string;
+  readonly status: number;
+}
+
+/**
+ * Tear down the project stack of the worktree rooted at `worktreeRoot`, reading
+ * that worktree's OWN merged config — its stamped `worktree.name` / `worktree.port`
+ * live in its gitignored `.jarrin.local.yml`, so the teardown always uses the port
+ * that worktree was actually assigned, not the caller's.
+ *
+ * Returns `null` when there is nothing to do (no stamped worktree identity, no
+ * usable port, or no `exit` command configured) — deleting a worktree that never
+ * ran a stack is not an error.
+ */
+export function stopStackAt(
+  worktreeRoot: string,
+  proc: NodeJS.Process,
+): StackTeardown | null {
+  const cfg = loadEffectiveConfig(join(worktreeRoot, ".claude")).merged;
+  const stack = resolveStack(cfg);
+  if (!stack.active || !stack.exit) return null;
+  const status = runStackCommand(stack.exit, stack.port, worktreeRoot, proc);
+  return {
+    name: stack.name,
+    port: stack.port,
+    command: stack.exit,
+    status,
+  };
 }
 
 /** One-line status injected into a session's context on startup / clear. */
 export function stackStatusText(name: string, port: number): string {
   return (
     `## Project stack\n\n` +
-    `Worktree \`${name}\` runs its project stack on ${PORT_ENV}=**${String(port)}**.`
+    `Worktree \`${name}\` is assigned ${PORT_ENV}=**${String(port)}**. The stack ` +
+    `is started and stopped by hand — \`claudjar start\` / \`claudjar stop\` — and ` +
+    `is torn down automatically when the worktree is merged away.`
   );
 }

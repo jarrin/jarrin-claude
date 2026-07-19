@@ -5,6 +5,7 @@ import { buildCommand } from "@stricli/core";
 import { loadEffectiveConfig } from "../config/load.js";
 import type { LocalContext } from "../context.js";
 import { currentBranch, toplevel } from "../git.js";
+import { probePort } from "../project/liveness.js";
 import { effectivePort } from "../project/stack.js";
 
 /**
@@ -24,6 +25,7 @@ const RESET = "\x1b[0m";
 const DIM = "\x1b[2m";
 const CYAN = "\x1b[36m";
 const YELLOW = "\x1b[33m";
+const GREEN = "\x1b[32m";
 const BOLD = "\x1b[1m";
 
 /** ` · ` in dim, the segment separator. */
@@ -40,14 +42,28 @@ export interface StatuslineData {
   readonly worktreeName: string;
   /** Effective PROJECT_PORT; 0 when unset. */
   readonly port: number;
+  /**
+   * Is the stack actually listening on {@link port}? `null` when no probe was
+   * possible (no port assigned), which renders the name with no port at all.
+   */
+  readonly up: boolean | null;
 }
+
+/** Filled dot = stack listening; hollow dot = port assigned but nothing there. */
+const UP_MARK = "●";
+const DOWN_MARK = "○";
 
 /**
  * Format the statusline string from already-resolved facts. Always shows
- * `model · dir · branch`; appends a `⑂ name :port` segment when a stamped worktree
+ * `model · dir · branch`; appends a `⑂ name ●port` segment when a stamped worktree
  * identity is present — i.e. inside a `claudjar worktree create` worktree. In the
  * main checkout, and in any repo without a `.jarrin.local.yml` stamp, the worktree
  * segment is absent, so the line stays useful everywhere the global settings apply.
+ *
+ * The dot reports liveness, not configuration: since nothing starts the stack
+ * automatically any more, a green `●` is the only honest signal that `claudjar
+ * start` has actually been run in this worktree. A dim `○` means the port is
+ * assigned but unserved.
  */
 export function formatStatusline(data: StatuslineData): string {
   const parts: string[] = [`${DIM}${data.modelName}${RESET}`, data.dirName];
@@ -56,24 +72,42 @@ export function formatStatusline(data: StatuslineData): string {
   let line = parts.join(SEP);
 
   if (data.worktreeName) {
-    const portLabel =
-      data.port > 0 ? ` ${DIM}:${RESET}${YELLOW}${String(data.port)}` : "";
+    let portLabel = "";
+    if (data.port > 0) {
+      const port = String(data.port);
+      portLabel =
+        data.up === true
+          ? ` ${GREEN}${UP_MARK}${YELLOW}${port}${RESET}`
+          : ` ${DIM}${DOWN_MARK}${port}${RESET}`;
+    }
     line += `  ${BOLD}${YELLOW}⑂ ${data.worktreeName}${RESET}${portLabel}${RESET}`;
   }
 
   return line;
 }
 
-/** Gather the statusline facts for a working directory, then format them. */
-export function renderStatusline(dir: string, modelName: string): string {
+/**
+ * Gather the statusline facts for a working directory, then format them. Async
+ * because the liveness dot needs a TCP probe; the probe is skipped entirely
+ * outside a stamped worktree, so the common case costs nothing.
+ */
+export async function renderStatusline(
+  dir: string,
+  modelName: string,
+): Promise<string> {
   const root = toplevel(dir) ?? dir;
   const cfg = loadEffectiveConfig(join(root, ".claude")).merged;
+  const worktreeName = cfg.worktree.name;
+  const port = effectivePort(cfg);
+  const up = worktreeName && port > 0 ? await probePort(port) : null;
+
   return formatStatusline({
     modelName,
     dirName: basename(root),
     branch: currentBranch(root),
-    worktreeName: cfg.worktree.name,
-    port: effectivePort(cfg),
+    worktreeName,
+    port,
+    up,
   });
 }
 
@@ -104,7 +138,7 @@ async function runStatusline(this: LocalContext): Promise<void> {
   const payload = await readPayload(proc);
   const dir = payload.workspace?.current_dir ?? payload.cwd ?? proc.cwd();
   const modelName = payload.model?.display_name?.trim() || "claude";
-  proc.stdout.write(renderStatusline(dir, modelName) + "\n");
+  proc.stdout.write((await renderStatusline(dir, modelName)) + "\n");
 }
 
 export const statuslineCommand = buildCommand({
@@ -112,6 +146,13 @@ export const statuslineCommand = buildCommand({
   parameters: { flags: {} },
   docs: {
     brief:
-      "statusLine hook: render model · dir · branch, plus worktree name+port (reads stdin JSON)",
+      "[internal] statusLine: render model · dir · branch, plus worktree name+port (reads stdin JSON)",
+    fullDescription:
+      "INTERNAL — invoked by Claude Code through ~/.claude/bin/statusline on every " +
+      "render; not for manual use.\n\n" +
+      "Reads the statusLine payload on stdin and writes one line to stdout. Inside a " +
+      "stamped worktree it appends the worktree name and probes its PROJECT_PORT, " +
+      "showing a green ● when the project stack is listening and a dim ○ when it is " +
+      "not — the only signal that `claudjar start` has actually been run.",
   },
 });

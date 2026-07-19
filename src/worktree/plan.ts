@@ -24,20 +24,30 @@ export interface WorktreePlan {
 const ALWAYS_COPY = [join(".claude", LOCAL_FILE)];
 
 /**
- * Compute the worktree path, branch, copy list and setup commands from the
- * merged {@link WorktreeConfig}. Pure — no filesystem or git access.
+ * Compute the worktree name, path, copy list and setup commands. Pure — no
+ * filesystem or git access.
+ *
+ * `mainRoot` is always the **main** checkout's root, never the worktree the
+ * command runs in: the base dir is anchored there so the worktree folder stays
+ * flat no matter how deep the chain of creations goes.
  *
  * Default location (`cfg.dir` unset) is the grouped sibling
  * `<parent>/<repo>-worktrees/<name>`. A relative `cfg.dir` resolves against the
- * repo root (so `../` yields a bare sibling); an absolute `cfg.dir` is used as-is.
+ * main root (so `../` yields a bare sibling); an absolute `cfg.dir` is used as-is.
+ *
+ * `parent` is the stamped identity of the worktree the command runs in ("" in
+ * the main checkout). It prefixes the new name — creating `x` from `dev` yields
+ * `dev-x` — so a flat folder still records the lineage. See
+ * {@link derivedWorktreeName}.
  */
 export function planWorktree(opts: {
   name: string;
-  repoRoot: string;
+  parent?: string;
+  mainRoot: string;
   cfg: WorktreeConfig;
 }): WorktreePlan {
-  const name = opts.name.trim();
-  const baseDir = resolveBaseDir(opts.cfg.dir, opts.repoRoot);
+  const name = derivedWorktreeName(opts.parent ?? "", opts.name);
+  const baseDir = resolveBaseDir(opts.cfg.dir, opts.mainRoot);
   return {
     branch: name,
     baseDir,
@@ -47,10 +57,26 @@ export function planWorktree(opts: {
   };
 }
 
-function resolveBaseDir(dir: string, repoRoot: string): string {
-  if (dir) return isAbsolute(dir) ? dir : resolve(repoRoot, dir);
+/**
+ * The name a new worktree gets: `<parent>-<name>` when created from inside a
+ * worktree, plain `<name>` from the main checkout. Used for both the branch and
+ * the directory basename — several call sites (`goto`'s basename fallback,
+ * `worktreePathForBranch`) assume the two match.
+ *
+ * Already-prefixed input is left alone, so `create dev-x` and `create x` from
+ * `dev` both land on `dev-x` — re-running after a failed create is idempotent.
+ */
+export function derivedWorktreeName(parent: string, name: string): string {
+  const raw = name.trim();
+  const from = parent.trim();
+  if (!from) return raw;
+  return raw === from || raw.startsWith(`${from}-`) ? raw : `${from}-${raw}`;
+}
+
+function resolveBaseDir(dir: string, mainRoot: string): string {
+  if (dir) return isAbsolute(dir) ? dir : resolve(mainRoot, dir);
   // Grouped-sibling default: <parent>/<repo>-worktrees.
-  return join(dirname(repoRoot), `${basename(repoRoot)}-worktrees`);
+  return join(dirname(mainRoot), `${basename(mainRoot)}-worktrees`);
 }
 
 /**

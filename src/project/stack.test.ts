@@ -4,8 +4,6 @@ import { emptyConfig } from "../config/schema.js";
 import type { JarrinConfig } from "../config/schema.js";
 import {
   effectivePort,
-  isExitReason,
-  isStartSource,
   PORT_ENV,
   resolveStack,
   runStackCommand,
@@ -71,26 +69,12 @@ describe("resolveStack", () => {
   });
 });
 
-describe("source / reason predicates", () => {
-  it("runs start ONLY on a new shell", () => {
-    expect(isStartSource("startup")).toBe(true);
-    for (const s of ["clear", "resume", "compact", ""]) {
-      expect(isStartSource(s)).toBe(false);
-    }
-  });
-
+describe("showsPort", () => {
   it("shows the port on startup and clear only", () => {
     expect(showsPort("startup")).toBe(true);
     expect(showsPort("clear")).toBe(true);
     expect(showsPort("resume")).toBe(false);
     expect(showsPort("compact")).toBe(false);
-  });
-
-  it("runs exit on every reason except clear", () => {
-    expect(isExitReason("clear")).toBe(false);
-    for (const r of ["logout", "prompt_input_exit", "other", ""]) {
-      expect(isExitReason(r)).toBe(true);
-    }
   });
 });
 
@@ -129,6 +113,14 @@ describe("stackStatusText", () => {
     const text = stackStatusText("feature-x", 8001);
     expect(text).toContain("feature-x");
     expect(text).toContain("PROJECT_PORT=**8001**");
+  });
+
+  it("says the stack is driven by hand, not by the session", () => {
+    // Guards the wording against a regression to the old autostart behaviour:
+    // the session must never imply it started anything.
+    const text = stackStatusText("feature-x", 8001);
+    expect(text).toContain("claudjar start");
+    expect(text).toContain("claudjar stop");
   });
 });
 
