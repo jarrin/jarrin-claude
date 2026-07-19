@@ -13,13 +13,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, join } from "node:path";
 
 import { buildCommand } from "@stricli/core";
 
 import type { LocalContext } from "../context.js";
 import { loadPrompts, resolveInteractive } from "../interaction.js";
+import { BINARY_REL_PATH, BUILD_BINARY_COMMAND } from "../release/binary.js";
+import { findRepoRoot } from "../selfpath.js";
 
 interface InstallFlags {
   readonly withGitleaks: boolean;
@@ -45,7 +46,16 @@ async function runInstall(
   const info = (msg: string): void => void proc.stdout.write(`  ${msg}\n`);
   const warn = (msg: string): void => void proc.stderr.write(`  ! ${msg}\n`);
 
-  const repoDir = findRepoRoot(fileURLToPath(import.meta.url));
+  const repoDir = findRepoRoot(proc);
+  if (!repoDir) {
+    proc.stderr.write(
+      "claudjar install: could not locate the jarrin-claude checkout from " +
+        `${proc.execPath}.\n  Run install from inside the repo, or set ` +
+        "JARRIN_REPO=/path/to/jarrin-claude.\n",
+    );
+    proc.exitCode = 1;
+    return;
+  }
   const claudeHome = proc.env.CLAUDE_HOME ?? join(homedir(), ".claude");
   const localBin = join(homedir(), ".local", "bin");
   const gitleaksBinDir = proc.env.GITLEAKS_BIN_DIR ?? localBin;
@@ -79,7 +89,6 @@ async function runInstall(
       src: join(repoDir, "claude", "settings.json"),
       dest: join(claudeHome, "settings.json"),
     },
-    { src: join(repoDir, "bin", "claude"), dest: join(claudeHome, "bin") },
     { src: join(repoDir, "claude", "rules"), dest: join(claudeHome, "rules") },
     {
       src: join(repoDir, "claude", "skills"),
@@ -95,16 +104,36 @@ async function runInstall(
   for (const spec of links) {
     await link(spec, { info, warn, confirm });
   }
+  retireLauncherDir(join(claudeHome, "bin"), repoDir, { info });
   out("\n");
 
-  // Expose the `claudjar` command on PATH by symlinking the committed bundle
-  // into a bin dir (default ~/.local/bin, overridable via CLAUDJAR_BIN_DIR).
+  // Expose `claudjar` on PATH by symlinking the standalone binary into a bin dir
+  // (default ~/.local/bin, overridable via CLAUDJAR_BIN_DIR). That symlink is
+  // also what claude/settings.json points its hooks at, so a missing binary
+  // breaks the statusline and SessionStart everywhere — hence the offer to build
+  // it now rather than a warning the user might scroll past.
   out(`Exposing the claudjar command in ${claudjarBinDir}:\n`);
-  const bundle = join(repoDir, "dist", "claudjar.js");
-  if (existsSync(bundle)) {
+  const binary = join(repoDir, BINARY_REL_PATH);
+  if (!existsSync(binary)) {
+    warn(`binary not built at ${binary}.`);
+    const build = await confirm(`build it now (${BUILD_BINARY_COMMAND})?`);
+    if (build) {
+      info(`$ ${BUILD_BINARY_COMMAND}`);
+      const res = spawnSync(BUILD_BINARY_COMMAND, {
+        cwd: repoDir,
+        shell: true,
+        stdio: "inherit",
+      });
+      if (res.status !== 0) {
+        warn(`build failed (exit ${String(res.status ?? "?")}).`);
+      }
+    }
+  }
+
+  if (existsSync(binary)) {
     mkdirSync(claudjarBinDir, { recursive: true });
     await link(
-      { src: bundle, dest: join(claudjarBinDir, "claudjar") },
+      { src: binary, dest: join(claudjarBinDir, "claudjar") },
       { info, warn, confirm },
     );
     if (!onPath(proc, claudjarBinDir)) {
@@ -113,7 +142,14 @@ async function runInstall(
       );
     }
   } else {
-    warn(`bundle not found at ${bundle} — run 'pnpm run build' first.`);
+    warn(
+      `skipped the PATH link — build with '${BUILD_BINARY_COMMAND}' and re-run ` +
+        `'claudjar install'.`,
+    );
+    warn(
+      "until then the statusline and SessionStart hook in settings.json have " +
+        "nothing to call.",
+    );
   }
   out("\n");
 
@@ -209,6 +245,25 @@ async function link(spec: LinkSpec, r: Reporter): Promise<void> {
   r.info(`linked ${dest} -> ${src}`);
 }
 
+/**
+ * Remove the `~/.claude/bin` symlink left by earlier installs.
+ *
+ * That directory held shell launchers which settings.json used to call. Both the
+ * hooks and the statusline now invoke the binary on PATH directly, so the link
+ * points at a directory this repo no longer ships. Only a symlink into *this*
+ * checkout is removed — anything else is somebody's own file and is left alone.
+ */
+function retireLauncherDir(
+  dest: string,
+  repoDir: string,
+  r: Pick<Reporter, "info">,
+): void {
+  const target = lsymlink(dest);
+  if (target === null || !target.startsWith(repoDir)) return;
+  rmSync(dest);
+  r.info(`removed ${dest} (launchers retired; settings.json calls claudjar)`);
+}
+
 /** Return a symlink's target, or null if `path` is not a symlink. */
 function lsymlink(path: string): string | null {
   try {
@@ -280,23 +335,6 @@ async function installGitleaks(
   } finally {
     if (tmp) rmSync(tmp, { recursive: true, force: true });
   }
-}
-
-function findRepoRoot(fromFile: string): string {
-  let dir = dirname(fromFile);
-  for (let i = 0; i < 8; i++) {
-    if (
-      existsSync(join(dir, "claude")) &&
-      existsSync(join(dir, "bin", "claude"))
-    ) {
-      return dir;
-    }
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  // Fall back to two levels up from the bundle (dist/claudjar.js → repo root).
-  return resolve(dirname(fromFile), "..");
 }
 
 function hasBinary(name: string): boolean {

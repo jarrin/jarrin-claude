@@ -22,6 +22,7 @@ import {
   toplevel,
   worktreeListPorcelain,
 } from "../git.js";
+import { runHooks, worktreeHookEnv } from "../hooks/run.js";
 import { conflictPrompt, worktreePathForBranch } from "../worktree/merge.js";
 import { removeWorktree } from "../worktree/remove.js";
 import {
@@ -33,6 +34,7 @@ import { stampWorktree } from "../worktree/stamp.js";
 
 interface CreateFlags {
   readonly setup: boolean;
+  readonly hooks: boolean;
 }
 
 /**
@@ -166,6 +168,30 @@ function runWorktreeCreate(
     );
   }
 
+  // 6. Fire the committed create hooks in the new worktree. These run AFTER
+  //    setup: setup is the machine-local bootstrap (deps for this machine),
+  //    hooks are shared project policy that assumes a bootstrapped tree.
+  const createHooks = flags.hooks ? cfg.hooks.worktree.create : [];
+  if (createHooks.length > 0) {
+    out(`Running hooks.worktree.create (${String(createHooks.length)})…\n`);
+    const outcome = runHooks(
+      createHooks,
+      {
+        cwd: plan.path,
+        env: worktreeHookEnv({ name: branch, path: plan.path, port }),
+      },
+      proc,
+      out,
+    );
+    if (!outcome.ok && outcome.failed) {
+      return fail(
+        `create hook failed (exit ${String(outcome.failed.status)}): ` +
+          `${outcome.failed.command}\n` +
+          `The worktree exists at ${plan.path}; fix and re-run the hook by hand.`,
+      );
+    }
+  }
+
   out(`\nDone. cd ${relative(proc.cwd(), plan.path) || plan.path}\n`);
 }
 
@@ -197,6 +223,7 @@ interface MergeFlags {
   readonly remove: boolean;
   readonly teardown: boolean;
   readonly claude: boolean;
+  readonly hooks: boolean;
 }
 
 /**
@@ -316,16 +343,20 @@ function runWorktreeMerge(
       branch,
       wtPath: wtPath ?? "",
       teardown: flags.teardown && wtPath !== null,
+      hooks: flags.hooks,
     },
     proc,
     out,
   );
   if (!result.ok) return fail(`merged, but ${result.error}`);
+  if (result.hookError)
+    return fail(`merged and removed, but ${result.hookError}`);
   out(`\nDone.\n`);
 }
 
 interface RemoveFlags {
   readonly teardown: boolean;
+  readonly hooks: boolean;
 }
 
 /**
@@ -374,11 +405,18 @@ function runWorktreeRemove(
 
   out(`Removing worktree ${wtPath} (branch ${branch})…\n`);
   const result = removeWorktree(
-    { gitRoot: mainRoot, branch, wtPath, teardown: flags.teardown },
+    {
+      gitRoot: mainRoot,
+      branch,
+      wtPath,
+      teardown: flags.teardown,
+      hooks: flags.hooks,
+    },
     proc,
     out,
   );
   if (!result.ok) return fail(result.error);
+  if (result.hookError) return fail(`removed, but ${result.hookError}`);
   out(`\nDone.\n`);
 }
 
@@ -414,10 +452,26 @@ const worktreeCreateCommand = buildCommand({
         brief: "Run the configured setup commands (use --no-setup to skip)",
         default: true,
       },
+      hooks: {
+        kind: "boolean",
+        brief: "Run hooks.worktree.create afterwards (use --no-hooks to skip)",
+        default: true,
+      },
     },
   },
   docs: {
     brief: "Add a git worktree and bootstrap it from the worktree: config",
+    fullDescription:
+      "Creates the branch, copies the `worktree.copy:` gitignored files across, " +
+      "assigns the next PROJECT_PORT, stamps the worktree's identity into its " +
+      "own .jarrin.local.yml, then bootstraps it.\n\n" +
+      "Bootstrapping has two stages. `worktree.setup:` runs first — the " +
+      "machine-specific recipe from the gitignored local config (install deps for " +
+      "THIS machine). `hooks.worktree.create:` runs second — committed, shared " +
+      "project policy every clone applies, with WORKTREE_NAME, WORKTREE_PATH, and " +
+      "PROJECT_PORT in the environment. Either stage stops at its first failing " +
+      "command, leaving the worktree in place to fix by hand.\n\n" +
+      "The stack is not started; run `claudjar start` in the new worktree.",
   },
 });
 
@@ -451,6 +505,12 @@ const worktreeMergeCommand = buildCommand({
         kind: "boolean",
         brief:
           "On conflict, launch claude to resolve (use --no-claude to skip)",
+        default: true,
+      },
+      hooks: {
+        kind: "boolean",
+        brief:
+          "With --remove, run hooks.worktree.remove (use --no-hooks to skip)",
         default: true,
       },
     },
@@ -492,6 +552,11 @@ const worktreeRemoveCommand = buildCommand({
           "Stop the worktree's project stack first (use --no-teardown to skip)",
         default: true,
       },
+      hooks: {
+        kind: "boolean",
+        brief: "Run hooks.worktree.remove afterwards (use --no-hooks to skip)",
+        default: true,
+      },
     },
   },
   docs: {
@@ -504,6 +569,10 @@ const worktreeRemoveCommand = buildCommand({
       "removes the directory, then deletes the branch with `git branch -d`. That " +
       "safe delete succeeds only when the branch is fully merged, so unmerged work " +
       "is never discarded silently — the branch survives and is reported.\n\n" +
+      "Finally it runs `hooks.worktree.remove:` from THIS checkout (the removed " +
+      "directory is gone), with the retired worktree's WORKTREE_NAME, " +
+      "WORKTREE_PATH, and PROJECT_PORT in the environment. A failing hook is " +
+      "reported and exits non-zero, but the removal already happened.\n\n" +
       "Run it from another worktree; removing the one you are standing in is " +
       "refused. --no-teardown removes the worktree while leaving the stack running.",
   },

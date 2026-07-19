@@ -34,10 +34,15 @@ is the shared contract behind the `backlog:` block (below), implemented by both
 ## How rules are selected (per project)
 
 Rules are **not** auto-loaded by path globbing. Each project opts in explicitly, and a
-`SessionStart` hook (`bin/claude/session-start` — a launcher for the `claudjar` Node
-bundle, symlinked to `~/.claude/bin/`; needs Node on PATH) injects the selected rules at
-the start of every session. The `claudjar init` command scaffolds and updates a repo's
-`.jarrin.yml`; see the README's **The claudjar CLI** section.
+`SessionStart` hook injects the selected rules at the start of every session. The hook is
+registered in `claude/settings.json` as `$HOME/.local/bin/claudjar api session-start` —
+the standalone binary directly, with no launcher script and no Node needed on PATH. The
+`claudjar init` command scaffolds and updates a repo's `.jarrin.yml`; see the README's
+**The claudjar CLI** section.
+
+A `.jarrin.yml` that is not valid YAML parses to _nothing selected_, which is
+indistinguishable from a repo that opted out — so the hook warns on stderr when the file
+fails to parse, rather than starting a session that silently lost all its rules.
 
 - **`<project>/.claude/.jarrin.yml`** (required to activate) selects rules from three
   tiers and, optionally, declares a command quick-reference. All keys are optional; an
@@ -126,9 +131,9 @@ the start of every session. The `claudjar init` command scaffolds and updates a 
   and `todo` skills, which parse it themselves. A Vitest test pins the invariant: a nested
   `backlog:` block must never corrupt `rules` / `local` / `imports` / `commands`.
 
-- A **`project:`** block in `.jarrin.yml` (committed, shared like the rule tiers) declares a
-  **per-worktree runtime stack** — a service stack (e.g. `docker compose`) bound to a port
-  unique to each worktree:
+- A **`project:`** block in `.jarrin.yml` (committed, shared like the rule tiers) covers two
+  things: a **per-worktree runtime stack** — a service stack (e.g. `docker compose`) bound to
+  a port unique to each worktree — and, under `dist:`, the **release surface**:
 
   ```yaml
   project:
@@ -136,6 +141,13 @@ the start of every session. The `claudjar init` command scaffolds and updates a 
     commands:
       start: docker compose up -d # run by `claudjar start`
       exit: docker compose down # run by `claudjar stop` and `worktree remove`
+      build: pnpm run build # run by `claudjar release`, after the version bump
+    dist:
+      version: 0.1.4 # SOURCE OF TRUTH for the released version; release bumps it
+      sync: # other files carrying the same version, rewritten in step
+        - package.json
+        - .env # add/update APP_VERSION
+        - src/worker/pyproject.toml
   ```
 
   Both `start` and `exit` run with the worktree's assigned port in the environment as
@@ -167,6 +179,56 @@ the start of every session. The `claudjar init` command scaffolds and updates a 
   assignment) falling back to `project.port`. Because the assigned port lives in the
   gitignored local file, the SessionStart hook reads `.jarrin.local.yml` too (via the merged
   config), not the committed base alone.
+
+- **`claudjar release`** cuts a version from `project.dist`. It refuses unless you are on
+  `main` (`--branch` overrides) with a clean tree, and refuses to reuse an existing tag —
+  a release commits and tags whatever is in the tree, so releasing from a feature branch or
+  on top of uncommitted work produces a tag nobody can reproduce. Without `--bump` it
+  increments the patch segment; `--bump major|minor|patch` picks another. An unset
+  `project.dist.version` is treated as `0.0.0`, so a first release lands on `0.0.1`.
+
+  The **ordering is the design**: the version is written (to `.jarrin.yml` and every `sync:`
+  file) _before_ `commands.build` runs, so the artifact carries the number it will be tagged
+  with; the commit happens _after_, so a broken build never produces a release commit. A
+  failed build restores every file the command rewrote, leaving the tree exactly as found.
+  Then it commits the whole tree as `Release v<version>` and creates an annotated tag.
+  **Nothing is pushed** — the push line is printed for you to run.
+
+  `sync:` handlers dispatch on filename (`src/release/sync.ts`) and rewrite **in place**,
+  preserving formatting: `*.json` (top-level `"version"`), `.env*` (`APP_VERSION`, appended
+  when absent), `*.toml` (`[project]` / `[tool.poetry]` / `[package]`), `*.yml`/`*.yaml`
+  (top-level `version:`). Scoping matters — the JSON handler tracks brace depth and the TOML
+  handler tracks the current table, so a pinned dependency's version is never mistaken for
+  the project's own. A listed path that is missing, or whose type no handler claims, aborts
+  the release; a file with no version field is warned about and skipped. Adding a format
+  means one handler and one test, and nothing else in the flow changes.
+
+- A **`hooks:`** block in `.jarrin.yml` (committed, shared) runs shell commands at claudjar
+  lifecycle points, in order, stopping at the first failure:
+
+  ```yaml
+  hooks:
+    worktree:
+      create: # run IN the new worktree, after worktree.setup
+        - pnpm install
+      remove: # run FROM this checkout, after the worktree is deleted
+        - docker system prune -f
+  ```
+
+  Both receive `WORKTREE_NAME`, `WORKTREE_PATH`, and `PROJECT_PORT` in the environment.
+  `--no-hooks` skips them on `worktree create` / `remove` / `merge --remove`.
+
+  `hooks.worktree.create` is **not** a duplicate of `worktree.setup`: `setup` is the
+  machine-specific recipe in the gitignored local file (bootstrap for _this_ machine),
+  while a hook is committed project policy every clone applies. Both fire on create — setup
+  first, then hooks, which may therefore assume a bootstrapped tree.
+
+  `remove` hooks necessarily run **after** the directory is gone, so they execute from the
+  checkout that ordered the removal and `WORKTREE_PATH` names a path that no longer exists
+  (cleaning up by path is the common case). The worktree's port is captured from its stamped
+  local config _before_ deletion, since afterwards there is nothing left to read. A failing
+  remove hook is reported and exits non-zero, but the removal already happened and is not
+  undone.
 
 - A **`worktree:`** block configures `claudjar worktree create <name>` — how a new git
   worktree for this repo is placed and bootstrapped. Its recipe (`dir`/`copy`/`setup`) is
@@ -238,14 +300,41 @@ config files present, rules with on-disk presence, the command table, the `proje
 backlog methods,
 worktree config, backup, and available skills.
 
+### The standalone binary
+
+`pnpm run build` produces two artifacts: `dist/claudjar.cjs` (the bundle) and
+`dist/build/claudjar` (a **standalone executable**, ~118 MB, built by
+`scripts/build-binary.mjs`). `claudjar install` symlinks the executable to
+`~/.local/bin/claudjar`, and `claude/settings.json` calls that path for both the statusline
+and the SessionStart hook. There are no launcher scripts any more — the retired
+`bin/claude/` shims and the `~/.claude/bin` symlink are removed by `install` when it finds
+them.
+
+Two consequences shape the build:
+
+- **The bundle is CommonJS, not ESM.** Node's SEA loader runs an embedded main through the
+  CommonJS loader; an ESM entry dies with "Cannot use import statement outside a module".
+  That is why `src/cli.ts` uses `void run(...)` instead of top-level await (inexpressible in
+  CJS) and why repo-root discovery goes through `src/selfpath.ts` instead of
+  `import.meta.url` (unavailable in CJS). The source stays plain ESM so `tsx src/cli.ts`
+  still works in dev.
+- **`claudjar --version` is baked at build time** from `project.dist.version` via tsup's
+  `define`, so the binary can never disagree with the config `release` bumps. Running from
+  source reports `0.0.0-dev`, which is the honest answer for an unbuilt tree.
+
+Because a missing binary breaks the statusline and the hook in _every_ repo,
+`claudjar install` offers to build it rather than only warning, and `pnpm run ensurepath`
+(`scripts/ensurepath.mjs`) checks for a build first, offers to make one, then delegates to
+`install`. It stays a plain node script because it must work when nothing is built yet.
+
 ### The public / internal command split
 
 The route tree is built by `buildRoutes(hideInternal)` in `src/routes.ts` — a factory, not a
 constant, so the same tree renders two ways. Everything Claude Code invokes rather than a
 person lives under **`claudjar api`** (`session-start`, `statusline`), marked with stricli's
 `hideRoute` so it stays out of the default help. Hidden is not disabled: `claudjar api --help`,
-`--helpAll`, and `help --full --include-internal` all reach it, and the `bin/claude/` launchers
-call it as `api session-start` / `api statusline`. Each internal command's brief starts with
+`--helpAll`, and `help --full --include-internal` all reach it, and `claude/settings.json`
+calls it as `claudjar api session-start` / `claudjar api statusline`. Each internal command's brief starts with
 `[internal]` and its `fullDescription` says why not to run it by hand.
 
 **`claudjar help --full`** renders every command's help into one Markdown document via stricli's

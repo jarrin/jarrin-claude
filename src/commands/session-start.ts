@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { buildCommand } from "@stricli/core";
 
 import { loadEffectiveConfig } from "../config/load.js";
+import { configParseError } from "../config/read.js";
 import type { LocalContext } from "../context.js";
 import { resolveStack, showsPort, stackStatusText } from "../project/stack.js";
 import {
@@ -57,6 +58,18 @@ async function runSessionStart(this: LocalContext): Promise<void> {
   // (merged verbatim), but the per-worktree stack lifecycle needs the local file's
   // stamped `worktree.name`/`worktree.port` to know this worktree's PROJECT_PORT.
   const cfg = loadEffectiveConfig(claudeDir).merged;
+
+  // A malformed config parses to "nothing selected", which is indistinguishable
+  // from a repo that deliberately selected nothing — so say it out loud instead
+  // of starting a session that quietly lost all its rules. Non-fatal: the
+  // session still starts, it just starts informed.
+  const parseError = configParseError(readFileSync(jarrinYml, "utf8"));
+  if (parseError) {
+    err(
+      `${TAG} WARNING: ${jarrinYml} is not valid YAML (${parseError}).\n` +
+        `${TAG} No rules, commands, or project config were loaded from it.\n`,
+    );
+  }
 
   // Back up the repo before a new session (or /clear). A failed backup is fatal.
   if (cfg.backup && BACKUP_SOURCES.has(source)) {
@@ -172,7 +185,7 @@ export const sessionStartCommand = buildCommand({
     brief:
       "[internal] SessionStart hook: inject the project's selected rules (reads stdin JSON)",
     fullDescription:
-      "INTERNAL — invoked by Claude Code through ~/.claude/bin/session-start; not " +
+      "INTERNAL — invoked by Claude Code as `claudjar api session-start`; not " +
       "for manual use.\n\n" +
       "Reads the SessionStart hook payload on stdin, resolves the repo's rule " +
       "selection from .claude/.jarrin.yml (+ .jarrin.local.yml), and writes the " +

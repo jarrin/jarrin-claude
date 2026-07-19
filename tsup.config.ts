@@ -1,12 +1,50 @@
-import { defineConfig } from "tsup";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
-// Single self-contained bundle. The hook and installer are invoked by absolute
-// path (through symlinks into ~/.claude/bin), so a one-file bundle sidesteps
-// node_modules resolution relative to the real file. `dist/` is committed so a
-// fresh clone can run `node dist/claudjar.js install` with zero prior install.
+import { defineConfig } from "tsup";
+import { parse } from "yaml";
+
+/**
+ * Read this repo's own released version from `project.dist.version` in
+ * `.claude/.jarrin.yml` — the same source of truth `claudjar release` writes.
+ * Baking it in at build time is what keeps `claudjar --version` honest without
+ * keeping a second copy of the number in the source.
+ */
+function releasedVersion(): string {
+  try {
+    // Resolved from the working directory, not from this file: tsup loads its
+    // config through esbuild as CommonJS, where `import.meta.dirname` is
+    // undefined. The build always runs from the repo root (`pnpm run build`).
+    const text = readFileSync(
+      join(process.cwd(), ".claude", ".jarrin.yml"),
+      "utf8",
+    );
+    const doc: unknown = parse(text);
+    const project = pick(doc, "project");
+    const dist = pick(project, "dist");
+    const version = pick(dist, "version");
+    if (version !== undefined && version !== null)
+      return String(version).trim();
+  } catch {
+    /* fall through to the dev placeholder */
+  }
+  return "0.0.0-dev";
+}
+
+function pick(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== "object") return undefined;
+  return (value as Record<string, unknown>)[key];
+}
+
+// Single self-contained CommonJS bundle. CJS is not a stylistic preference:
+// Node's SEA loader runs an embedded main through the CommonJS loader, so the
+// ESM bundle this used to emit fails outright inside the binary ("Cannot use
+// import statement outside a module"). Every dependency is inlined because a SEA
+// blob carries the script alone — there is no node_modules beside it at runtime.
 export default defineConfig({
   entry: { claudjar: "src/cli.ts" },
-  format: ["esm"],
+  format: ["cjs"],
+  outExtension: () => ({ js: ".cjs" }),
   target: "node20",
   platform: "node",
   bundle: true,
@@ -16,13 +54,8 @@ export default defineConfig({
   minify: false,
   sourcemap: false,
   dts: false,
-  // Shebang + a real `require` for the ESM bundle: some CJS deps (yaml) call
-  // require() internally, which an ESM output cannot provide on its own.
-  banner: {
-    js: [
-      "#!/usr/bin/env node",
-      "import { createRequire as __createRequire } from 'node:module';",
-      "const require = __createRequire(import.meta.url);",
-    ].join("\n"),
+  define: {
+    __CLAUDJAR_VERSION__: JSON.stringify(releasedVersion()),
   },
+  banner: { js: "#!/usr/bin/env node" },
 });

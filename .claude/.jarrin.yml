@@ -8,19 +8,42 @@ rules:
   - lang-ts
 
 # Dev-command quick reference.
+#
+# Every `desc:` is quoted on purpose. A plain YAML scalar containing ": " starts
+# a nested mapping, and because the loader degrades a malformed file to an empty
+# config rather than crashing a session, that mistake silently drops EVERY rule
+# and command in this file. Quoting makes the failure impossible instead of
+# merely detectable. (`cmd:` values are quoted where they need it too.)
 commands:
-  - cmd: pnpm check
-    desc: full gate — lint + typecheck + Vitest + build + fresh dist
-  - cmd: pnpm test
-    desc: run the Vitest suite (session-start, config, interaction)
-  - cmd: bin/claudjar install
-    desc: (re)create the ~/.claude symlinks; idempotent
-  - cmd: pnpm run ensurepath
-    desc: build and install the `claudjar` command globally on PATH
-  - cmd: claudjar info
-    desc: show this repo's resolved rules, commands, backlog, worktree, and skills
-  - cmd: claudjar worktree create <name>
-    desc: add a git worktree and bootstrap it from the worktree: config
+  - cmd: "pnpm check"
+    desc: "full gate — lint + typecheck + Vitest + build + fresh dist"
+  - cmd: "pnpm test"
+    desc: "run the Vitest suite (session-start, config, interaction)"
+  - cmd: "pnpm run ensurepath"
+    desc: "build the binary (if needed) and install `claudjar` onto PATH"
+  - cmd: "claudjar install"
+    desc: "(re)create the ~/.claude symlinks and the PATH link; idempotent"
+  - cmd: "claudjar release"
+    desc: "bump project.dist.version, sync, build, commit, tag (never pushes)"
+  - cmd: "claudjar info"
+    desc: "show this repo's resolved rules, commands, backlog, worktree, and skills"
+  - cmd: "claudjar worktree create <name>"
+    desc: "add a git worktree and bootstrap it from the worktree: config"
+
+# Release surface. `project.dist.version` is this repo's source of truth for its
+# version: `claudjar release` bumps it, mirrors it into every `sync:` file, runs
+# `commands.build`, then commits and tags. tsup also reads it at build time to
+# bake `claudjar --version`, so the binary can never disagree with this number.
+#
+# No `port:` / `start:` / `exit:` here — this repo ships a CLI, not a service, so
+# it has no per-worktree stack to bring up.
+project:
+  commands:
+    build: pnpm run build
+  dist:
+    version: 0.1.0
+    sync:
+      - package.json
 
 # Backlog routing. Skill-consumed: the session-start hook uses a real YAML parser
 # now, but deliberately ignores this block — it is owned by the staged-planning

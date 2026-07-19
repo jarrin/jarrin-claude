@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -56,6 +63,12 @@ function addWorktree(branch: string): string {
   return path;
 }
 
+/** Write a `.claude/.jarrin.yml` into a checkout. */
+function writeConfig(root: string, yaml: string): void {
+  mkdirSync(join(root, ".claude"), { recursive: true });
+  writeFileSync(join(root, ".claude", ".jarrin.yml"), yaml, "utf8");
+}
+
 /** Paths currently registered as worktrees. */
 function worktreeCount(): number {
   return git(repo, "worktree", "list").trim().split("\n").length;
@@ -66,11 +79,17 @@ describe("removeWorktree", () => {
     const path = addWorktree("feat");
     try {
       const result = removeWorktree(
-        { gitRoot: repo, branch: "feat", wtPath: path, teardown: false },
+        {
+          gitRoot: repo,
+          branch: "feat",
+          wtPath: path,
+          teardown: false,
+          hooks: false,
+        },
         process,
         collect,
       );
-      expect(result).toEqual({ ok: true, branchKept: false });
+      expect(result).toEqual({ ok: true, branchKept: false, hookError: null });
       expect(worktreeCount()).toBe(1);
       expect(git(repo, "branch", "--list", "feat").trim()).toBe("");
     } finally {
@@ -85,16 +104,109 @@ describe("removeWorktree", () => {
     git(path, "commit", "-qm", "wip");
 
     const result = removeWorktree(
-      { gitRoot: repo, branch: "wip", wtPath: path, teardown: false },
+      {
+        gitRoot: repo,
+        branch: "wip",
+        wtPath: path,
+        teardown: false,
+        hooks: false,
+      },
       process,
       collect,
     );
 
     // The worktree goes; the branch survives because `git branch -d` refuses.
-    expect(result).toEqual({ ok: true, branchKept: true });
+    expect(result).toEqual({ ok: true, branchKept: true, hookError: null });
     expect(worktreeCount()).toBe(1);
     expect(git(repo, "branch", "--list", "wip")).toContain("wip");
     expect(out.join("")).toContain("kept branch wip");
+  });
+
+  it("runs hooks.worktree.remove from the main root, with the identity in env", () => {
+    const path = addWorktree("feat");
+    const marker = join(repo, "hook-ran.txt");
+    // The hook writes what it was told about the worktree that just went away.
+    writeConfig(
+      repo,
+      [
+        "hooks:",
+        "  worktree:",
+        "    remove:",
+        '      - printf "%s %s %s" "$WORKTREE_NAME" "$WORKTREE_PATH" "$PROJECT_PORT" > hook-ran.txt',
+        "",
+      ].join("\n"),
+    );
+
+    const result = removeWorktree(
+      {
+        gitRoot: repo,
+        branch: "feat",
+        wtPath: path,
+        teardown: false,
+        hooks: true,
+      },
+      process,
+      collect,
+    );
+
+    expect(result).toEqual({ ok: true, branchKept: false, hookError: null });
+    // Written relative to the hook's cwd, which must be the surviving main root.
+    expect(readFileSync(marker, "utf8")).toBe(`feat ${path} 0`);
+  });
+
+  it("reports a failing remove hook without undoing the removal", () => {
+    const path = addWorktree("feat");
+    writeConfig(
+      repo,
+      ["hooks:", "  worktree:", "    remove:", "      - exit 3", ""].join("\n"),
+    );
+
+    const result = removeWorktree(
+      {
+        gitRoot: repo,
+        branch: "feat",
+        wtPath: path,
+        teardown: false,
+        hooks: true,
+      },
+      process,
+      collect,
+    );
+
+    // The worktree is gone regardless — the hook ran after the fact.
+    expect(worktreeCount()).toBe(1);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.hookError).toContain("exit 3");
+    }
+  });
+
+  it("skips the hooks entirely when asked", () => {
+    const path = addWorktree("feat");
+    writeConfig(
+      repo,
+      [
+        "hooks:",
+        "  worktree:",
+        "    remove:",
+        "      - touch should-not-exist.txt",
+        "",
+      ].join("\n"),
+    );
+
+    removeWorktree(
+      {
+        gitRoot: repo,
+        branch: "feat",
+        wtPath: path,
+        teardown: false,
+        hooks: false,
+      },
+      process,
+      collect,
+    );
+
+    expect(existsSync(join(repo, "should-not-exist.txt"))).toBe(false);
   });
 
   it("reports a failure when the worktree cannot be removed", () => {
@@ -104,6 +216,7 @@ describe("removeWorktree", () => {
         branch: "feat",
         wtPath: join(repo, "nope"),
         teardown: false,
+        hooks: false,
       },
       process,
       collect,

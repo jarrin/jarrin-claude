@@ -1,6 +1,33 @@
-import { Document, parseDocument, YAMLSeq } from "yaml";
+import { Document, parseDocument, YAMLMap, YAMLSeq } from "yaml";
 
 import type { JarrinConfig } from "./schema.js";
+
+/**
+ * Set `project.dist.version` in a `.jarrin.yml` document, preserving every other
+ * key, its comments, and the surrounding block structure. This is how
+ * `claudjar release` writes the bumped version back to the source of truth —
+ * the same comment-preserving approach {@link serializeConfig} takes for the
+ * tiers, and `stampWorktree` takes for a worktree's identity.
+ *
+ * Missing `project:` / `project.dist:` blocks are created as needed, so a repo
+ * can be released without hand-authoring the block first.
+ */
+export function stampDistVersion(existing: string, version: string): string {
+  const doc = parseDocument(existing.trim() ? existing : "");
+  const project = ensureMap(doc.get("project"), (m) => doc.set("project", m));
+  const dist = ensureMap(project.get("dist"), (m) => project.set("dist", m));
+  // Emitted unquoted; a three-segment version is not valid YAML number syntax,
+  // so it round-trips as a string (and the reader String()s it regardless).
+  dist.set("version", version);
+  return doc.toString();
+}
+
+function ensureMap(current: unknown, attach: (map: YAMLMap) => void): YAMLMap {
+  if (current instanceof YAMLMap) return current;
+  const map = new YAMLMap();
+  attach(map);
+  return map;
+}
 
 /**
  * Serialise a {@link JarrinConfig} to `.jarrin.yml` text.

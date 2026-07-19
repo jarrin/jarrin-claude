@@ -1,16 +1,23 @@
 #!/usr/bin/env sh
-# Repo-local launcher for the claudjar CLI (`bin/claudjar install`, `init`, …).
-# dist/ is a build artifact and is NOT committed, so a fresh clone must build the
-# bundle once before this works; the guard below says so rather than letting node
-# fail with a bare MODULE_NOT_FOUND. For everyday use, `pnpm run ensurepath`
-# installs `claudjar` globally on PATH instead.
+# Repo-local launcher for the claudjar CLI, for use before the standalone binary
+# is on PATH (a fresh clone, or a checkout you do not want to install from).
+#
+# Prefers the standalone binary at dist/build/claudjar and falls back to running
+# the CJS bundle under node. Neither is committed — `dist/` is a build artifact —
+# so the guard below explains how to produce one rather than letting node fail
+# with a bare MODULE_NOT_FOUND. For everyday use run `pnpm run ensurepath` once,
+# which builds and links `claudjar` into ~/.local/bin.
 set -eu
 self="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
 repo="$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)"
-bundle="$repo/dist/claudjar.js"
-if [ ! -f "$bundle" ]; then
-  echo "claudjar: bundle not built ($bundle)." >&2
-  echo "  Run: cd $repo && pnpm install && pnpm build" >&2
-  exit 1
+binary="$repo/dist/build/claudjar"
+bundle="$repo/dist/claudjar.cjs"
+if [ -x "$binary" ]; then
+  exec "$binary" "$@"
 fi
-exec node "$bundle" "$@"
+if [ -f "$bundle" ]; then
+  exec node "$bundle" "$@"
+fi
+echo "claudjar: not built ($binary)." >&2
+echo "  Run: cd $repo && pnpm install && pnpm run build" >&2
+exit 1

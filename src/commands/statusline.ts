@@ -131,7 +131,7 @@ async function readPayload(proc: NodeJS.Process): Promise<StatusPayload> {
 /**
  * statusLine command. Reads the Claude Code `Status` JSON payload from stdin and
  * writes the single-line statusline to stdout. Registered in
- * `claude/settings.json` under `statusLine`, launched via `~/.claude/bin/statusline`.
+ * `claude/settings.json` under `statusLine`, launched via `claudjar api statusline` on PATH.
  */
 async function runStatusline(this: LocalContext): Promise<void> {
   const proc = this.process;
@@ -148,7 +148,7 @@ export const statuslineCommand = buildCommand({
     brief:
       "[internal] statusLine: render model · dir · branch, plus worktree name+port (reads stdin JSON)",
     fullDescription:
-      "INTERNAL — invoked by Claude Code through ~/.claude/bin/statusline on every " +
+      "INTERNAL — invoked by Claude Code as `claudjar api statusline` on every " +
       "render; not for manual use.\n\n" +
       "Reads the statusLine payload on stdin and writes one line to stdout. Inside a " +
       "stamped worktree it appends the worktree name and probes its PROJECT_PORT, " +

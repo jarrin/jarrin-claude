@@ -21,17 +21,61 @@ export interface CommandRow {
 }
 
 /**
+ * The `project.dist:` block — the release surface. `version` is the **source of
+ * truth** for the project's released version: `claudjar release` reads it, bumps
+ * it, and writes it back. `sync` lists the other files that carry the same
+ * version and must be rewritten in step (package.json, pyproject.toml, .env, …);
+ * each path is repo-relative and dispatched by filename — see `src/release/sync.ts`.
+ */
+export interface DistConfig {
+  /** Current released version, `major.minor.patch`; "" when never released. */
+  version: string;
+  /** Repo-relative files whose version is rewritten on release. */
+  sync: string[];
+}
+
+/**
  * The `project:` block (committed to `.jarrin.yml`, shared like the rule tiers).
  * Declares the per-worktree runtime stack: a starting `port` that worktrees
- * increment from, and the `start`/`exit` commands the session lifecycle hooks run
+ * increment from, and the `start`/`exit` commands `claudjar start` / `stop` run
  * to bring the stack up and down. The assigned port is exposed to those commands
  * as the `PROJECT_PORT` environment variable.
+ *
+ * `commands.build` is not part of the stack lifecycle — it is the build
+ * `claudjar release` runs after bumping the version, so the artifact it tags
+ * carries the new number.
  */
 export interface ProjectConfig {
   /** Starting port; worktrees increment from here. 0 = unset. */
   port: number;
   /** Lifecycle commands run with PROJECT_PORT in the environment. */
-  commands: { start: string; exit: string };
+  commands: { start: string; exit: string; build: string };
+  /** Release surface: current version + the files that mirror it. */
+  dist: DistConfig;
+}
+
+/**
+ * The `hooks:` block (committed to `.jarrin.yml`). Shell commands run at
+ * claudjar lifecycle points, in declaration order, stopping on the first failure.
+ *
+ * These are distinct from `worktree.setup`: `setup` is the machine-specific
+ * bootstrap recipe that lives in the gitignored local file (install deps for
+ * *this* machine), while `hooks.worktree.create` is committed, shared project
+ * policy that every clone runs. Both fire on create — setup first, then hooks.
+ *
+ * `hooks.worktree.remove` runs *after* the worktree directory is gone, so it is
+ * executed from the main checkout; the retired worktree's identity is passed in
+ * the environment (`WORKTREE_NAME`, `WORKTREE_PATH`, `PROJECT_PORT`).
+ */
+export interface WorktreeHooks {
+  /** Run in the new worktree after `worktree create` finishes its setup. */
+  create: string[];
+  /** Run from the main checkout after `worktree remove` deletes the directory. */
+  remove: string[];
+}
+
+export interface HooksConfig {
+  readonly worktree: WorktreeHooks;
 }
 
 /**
@@ -66,14 +110,24 @@ export interface JarrinConfig {
   readonly commands: CommandRow[];
   /** Shell command run before a new session / clear (hook-consumed scalar) */
   backup: string;
-  /** Per-worktree stack lifecycle (committed, shared; hook-consumed) */
+  /** Per-worktree stack lifecycle + release surface (committed, shared) */
   project: ProjectConfig;
   /** Worktree recipe + identity (CLI-consumed; identity also hook-consumed) */
   worktree: WorktreeConfig;
+  /** Lifecycle hook commands (committed, shared; CLI-consumed) */
+  hooks: HooksConfig;
 }
 
 export function emptyProjectConfig(): ProjectConfig {
-  return { port: 0, commands: { start: "", exit: "" } };
+  return {
+    port: 0,
+    commands: { start: "", exit: "", build: "" },
+    dist: { version: "", sync: [] },
+  };
+}
+
+export function emptyHooksConfig(): HooksConfig {
+  return { worktree: { create: [], remove: [] } };
 }
 
 export function emptyWorktreeConfig(): WorktreeConfig {
@@ -89,5 +143,6 @@ export function emptyConfig(): JarrinConfig {
     backup: "",
     project: emptyProjectConfig(),
     worktree: emptyWorktreeConfig(),
+    hooks: emptyHooksConfig(),
   };
 }

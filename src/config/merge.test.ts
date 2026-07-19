@@ -112,7 +112,48 @@ describe("mergeConfig", () => {
     const merged = mergeConfig(base, local);
     expect(merged.project).toEqual({
       port: 8000,
-      commands: { start: "up", exit: "down" },
+      commands: { start: "up", exit: "down", build: "" },
+      dist: { version: "", sync: [] },
+    });
+  });
+
+  it("takes project.dist and hooks from the base, ignoring the local file", () => {
+    const base = parseConfig(
+      [
+        "project:",
+        "  dist:",
+        "    version: 1.0.0",
+        "    sync:",
+        "      - package.json",
+        "hooks:",
+        "  worktree:",
+        "    create:",
+        "      - echo created",
+        "    remove:",
+        "      - echo removed",
+        "",
+      ].join("\n"),
+    );
+    const local = parseConfig(
+      [
+        "project:",
+        "  dist:",
+        "    version: 9.9.9",
+        "hooks:",
+        "  worktree:",
+        "    create:",
+        "      - rm -rf /",
+        "",
+      ].join("\n"),
+    );
+    const merged = mergeConfig(base, local);
+    expect(merged.project.dist).toEqual({
+      version: "1.0.0",
+      sync: ["package.json"],
+    });
+    expect(merged.hooks.worktree).toEqual({
+      create: ["echo created"],
+      remove: ["echo removed"],
     });
   });
 

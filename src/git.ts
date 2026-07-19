@@ -54,6 +54,32 @@ export function headCommit(cwd: string): string | null {
   return git(cwd, ["rev-parse", "HEAD"]);
 }
 
+/**
+ * Working-tree changes as `git status --porcelain` lines (staged, unstaged, and
+ * untracked). Empty means clean — which is what `release` requires before it
+ * commits and tags.
+ */
+export function statusPorcelain(cwd: string): string[] {
+  const r = spawnSync("git", ["-C", cwd, "status", "--porcelain"], {
+    encoding: "utf8",
+  });
+  if (r.status !== 0 || typeof r.stdout !== "string") return [];
+  return r.stdout
+    .split("\n")
+    .map((s) => s.trimEnd())
+    .filter(Boolean);
+}
+
+/** All tag names in the repo. Empty in a repo with no tags (or on failure). */
+export function listTags(cwd: string): string[] {
+  const out = git(cwd, ["tag", "--list"]);
+  if (!out) return [];
+  return out
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 /** Raw `git worktree list --porcelain` output for `cwd`, or null on failure. */
 export function worktreeListPorcelain(cwd: string): string | null {
   return git(cwd, ["worktree", "list", "--porcelain"]);

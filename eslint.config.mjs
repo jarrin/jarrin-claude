@@ -17,8 +17,20 @@ export default tseslint.config(
   },
   {
     // Config/build files run under Node without the app's tsconfig type info.
-    files: ["*.config.ts", "eslint.config.mjs"],
+    // `scripts/*.mjs` are plain build helpers, deliberately outside the app's
+    // tsconfig `include` — type-aware rules have no project to resolve them
+    // against, so they are linted for correctness only.
+    files: ["*.config.ts", "eslint.config.mjs", "scripts/**/*.mjs"],
     ...tseslint.configs.disableTypeChecked,
+  },
+  {
+    // The build helpers are Node programs, not app code: without the app's
+    // tsconfig there are no ambient `@types/node` globals, so declare the two
+    // they use rather than pulling in a globals package for it.
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: { process: "readonly", console: "readonly" },
+    },
   },
   prettier,
 );

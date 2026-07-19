@@ -8,18 +8,17 @@ they are not in the working tree.
 
 ## Layout
 
-| Path                       | Purpose                                                                                        |
-| -------------------------- | ---------------------------------------------------------------------------------------------- |
-| `src/`, `dist/`            | The `claudjar` CLI (TypeScript source; `dist/claudjar.js` is the built bundle, gitignored)     |
-| `bin/claudjar`             | Repo-local launcher for the CLI (`bin/claudjar install`, `init`, …)                            |
-| `CLAUDE.md`                | Guide for working **in this repo** — how to author rule files                                  |
-| `claude/CLAUDE.md`         | Global, cross-project instructions (loaded every session)                                      |
-| `claude/settings.json`     | Global Claude Code settings (registers the SessionStart hook and the statusline)               |
-| `bin/claude/session-start` | SessionStart hook launcher → `dist/claudjar.js api session-start` (linked to `~/.claude/bin/`) |
-| `bin/claude/statusline`    | statusLine launcher → `dist/claudjar.js api statusline` (linked to `~/.claude/bin/`)           |
-| `claude/rules/*.md`        | Global rule library (`lang-php.md`, `fw-laravel.md`, …)                                        |
-| `claude/skills/*/`         | Global skills (`claudjar/` — drive the CLI; `add-skill/` — how to author a skill)              |
-| `claude/references/*.md`   | Shared reference docs read by more than one skill (`backlog.md`)                               |
+| Path                     | Purpose                                                                                                                       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `src/`, `dist/`          | The `claudjar` CLI (TypeScript source; `dist/claudjar.cjs` bundle + `dist/build/claudjar` standalone binary, both gitignored) |
+| `scripts/`               | Build helpers (`build-binary.mjs` — the standalone executable; `ensurepath.mjs`)                                              |
+| `bin/claudjar`           | Repo-local launcher for the CLI (`bin/claudjar install`, `init`, …)                                                           |
+| `CLAUDE.md`              | Guide for working **in this repo** — how to author rule files                                                                 |
+| `claude/CLAUDE.md`       | Global, cross-project instructions (loaded every session)                                                                     |
+| `claude/settings.json`   | Global Claude Code settings (points the SessionStart hook and statusline at `~/.local/bin/claudjar api …`)                    |
+| `claude/rules/*.md`      | Global rule library (`lang-php.md`, `fw-laravel.md`, …)                                                                       |
+| `claude/skills/*/`       | Global skills (`claudjar/` — drive the CLI; `add-skill/` — how to author a skill)                                             |
+| `claude/references/*.md` | Shared reference docs read by more than one skill (`backlog.md`)                                                              |
 
 Language-/framework-specific guidance goes in `claude/rules/*.md`. Projects opt in to
 specific rules via their own `.claude/.jarrin.yml` — see **Rule loading** below. The
@@ -34,22 +33,25 @@ git clone <remote> ~/projects/jarrin-claude
 
 `claudjar install` is idempotent — it symlinks the config into `~/.claude` (backing up
 any real file already there), **puts the `claudjar` command on your PATH** (a symlink to
-the bundle in `~/.local/bin`, override with `CLAUDJAR_BIN_DIR`; it warns if that dir isn't
-on PATH), enables the secret-scanning git hook, and checks prerequisites (`node`,
+the standalone binary in `~/.local/bin`, override with `CLAUDJAR_BIN_DIR`; it warns if that
+dir isn't on PATH, and offers to build the binary when it is missing), enables the
+secret-scanning git hook, and checks prerequisites (`node`,
 `gitleaks`). Re-run it any time; set `CLAUDE_HOME` to target a non-default config dir,
 `--with-gitleaks` to auto-download gitleaks, `--yes` to overwrite without prompting.
 
-`dist/` is a **gitignored build artifact**, so a fresh clone must build the bundle once
-before `bin/claudjar` or the session hooks can run:
+`dist/` is a **gitignored build artifact**, so a fresh clone must build once before
+`bin/claudjar`, the `claudjar` command, or the session hooks can run:
 
 ```bash
-pnpm install && pnpm build
+pnpm install && pnpm run ensurepath
 ```
 
-The launchers check for the bundle and print exactly that instruction when it is missing —
-`bin/claudjar` exits non-zero, while the two session hooks warn and exit 0 so a missing
-bundle degrades a session (no injected rules) instead of blocking every session on the
-machine.
+`ensurepath` checks for a build, offers to make one, then runs `claudjar install` to link
+everything. `pnpm run build` alone produces both artifacts: `dist/claudjar.cjs` (the
+bundle) and `dist/build/claudjar` (a ~118 MB standalone executable with the Node runtime
+embedded — it needs nothing on PATH). `install` symlinks that executable to
+`~/.local/bin/claudjar`, which is what `claude/settings.json` calls for the statusline and
+the SessionStart hook.
 
 <details>
 <summary>What it does / manual equivalent</summary>
@@ -58,10 +60,11 @@ machine.
 mkdir -p ~/.claude
 ln -sfn ~/projects/jarrin-claude/claude/CLAUDE.md     ~/.claude/CLAUDE.md
 ln -sfn ~/projects/jarrin-claude/claude/settings.json ~/.claude/settings.json
-ln -sfn ~/projects/jarrin-claude/bin/claude           ~/.claude/bin
 ln -sfn ~/projects/jarrin-claude/claude/rules         ~/.claude/rules
 ln -sfn ~/projects/jarrin-claude/claude/skills        ~/.claude/skills
 ln -sfn ~/projects/jarrin-claude/claude/references    ~/.claude/references
+mkdir -p ~/.local/bin
+ln -sfn ~/projects/jarrin-claude/dist/build/claudjar  ~/.local/bin/claudjar
 cd ~/projects/jarrin-claude && git config core.hooksPath .githooks   # enable pre-commit hook
 ```
 
@@ -82,9 +85,10 @@ so it travels with the repo — but git never auto-enables hooks on clone, so ru
 
 ## Rule loading (per project)
 
-A `SessionStart` hook — `bin/claude/session-start` (a launcher for the Node bundle),
-registered in `claude/settings.json` and symlinked to `~/.claude/bin/` — loads a project's
-chosen rules into context at the start of every session. It needs **Node** on PATH.
+A `SessionStart` hook — `claudjar api session-start`, registered in `claude/settings.json`
+as `$HOME/.local/bin/claudjar` — loads a project's chosen rules into context at the start
+of every session. The standalone binary embeds its own Node runtime, so nothing else needs
+to be on PATH.
 
 A project opts in with two files in its own `.claude/` directory:
 
@@ -160,7 +164,8 @@ subcommands:
 | `claudjar worktree list`       | List this repo's git worktrees                                                                                     |
 | `claudjar goto <n>`            | Switch to a worktree by starting `claude` there; `main` goes back to the original checkout                         |
 | `claudjar start` / `stop`      | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout                 |
-| `claudjar install`             | Machine setup: symlink config into `~/.claude`, enable hooks, check prerequisites                                  |
+| `claudjar release`             | Cut a version: bump `project.dist.version`, mirror it into `sync:` files, build, commit, tag (never pushes)        |
+| `claudjar install`             | Machine setup: symlink config into `~/.claude`, link the binary onto PATH, enable hooks, check prerequisites       |
 | `claudjar help --full`         | Print every command's help as one Markdown document (`--include-internal` adds the `api` commands)                 |
 | `claudjar api …`               | **Internal.** The hook entrypoints Claude Code invokes (`session-start`, `statusline`) — never run by hand         |
 
@@ -186,7 +191,7 @@ directory is resolved against the main checkout — that is what keeps the folde
 main checkout there is no prefix and nothing changes.
 
 The optional **`project:`** block in the committed `.jarrin.yml` gives each worktree a runtime
-stack that lives only as long as a Claude shell is open in it:
+stack bound to its own port, and declares how the project is released:
 
 ```yaml
 project:
@@ -194,6 +199,13 @@ project:
   commands:
     start: docker compose up -d
     exit: docker compose down
+    build: pnpm run build # run by `claudjar release`
+  dist:
+    version: 0.1.4 # source of truth for the released version
+    sync: # files carrying the same version, rewritten on release
+      - package.json
+      - .env # add/update APP_VERSION
+      - src/worker/pyproject.toml
 ```
 
 The stack is driven **by hand**: `claudjar start` and `claudjar stop` run `start` / `exit` with
@@ -218,6 +230,57 @@ branch with `git branch -d` so unmerged work is reported rather than discarded. 
 files so Claude Code can resolve them in place. `--no-claude` skips the launch and just prints
 the conflicted paths for a manual resolution.
 
+The optional **`hooks:`** block adds committed, shared commands at worktree lifecycle points:
+
+```yaml
+hooks:
+  worktree:
+    create: # run IN the new worktree, after worktree.setup
+      - pnpm install
+    remove: # run FROM this checkout, after the worktree is deleted
+      - docker system prune -f
+```
+
+Both run in order, stop at the first failure, and get `WORKTREE_NAME`, `WORKTREE_PATH`, and
+`PROJECT_PORT` in the environment (`--no-hooks` skips them). These are not a duplicate of
+`worktree.setup`: `setup` is the machine-specific bootstrap in the gitignored local file, hooks
+are project policy every clone applies — so setup runs first and hooks may assume a
+bootstrapped tree. `remove` hooks necessarily run after the directory is gone, so they execute
+from the checkout that ordered the removal and `WORKTREE_PATH` names a path that no longer
+exists; the port is captured before deletion, while the worktree's stamped config still exists.
+
+### Releasing
+
+`claudjar release` cuts a version from `project.dist`:
+
+```bash
+claudjar release                 # 0.1.3 -> 0.1.4
+claudjar release --bump minor    # 0.1.3 -> 0.2.0
+claudjar release --dry-run       # show the plan, write nothing
+```
+
+It refuses unless you are on `main` (`--branch` overrides) with a clean working tree, and
+refuses to reuse an existing tag. Then it writes the new version to `.jarrin.yml` and every
+`sync:` file, runs `project.commands.build`, commits the tree as `Release v<version>`, and
+creates an annotated tag. **Nothing is pushed** — it prints `git push --follow-tags` for you.
+
+The order is deliberate: the version is on disk _before_ the build, so the artifact carries the
+number it will be tagged with; the commit happens _after_, so a broken build never produces a
+release commit. If the build fails, every rewritten file is restored and the tree is left
+exactly as it was found.
+
+Version fields are located by filename and rewritten in place, preserving formatting:
+
+| File              | What is rewritten                                        |
+| ----------------- | -------------------------------------------------------- |
+| `*.json`          | the top-level `"version"` string                         |
+| `.env`, `.env.*`  | `APP_VERSION=…` (appended when absent)                   |
+| `*.toml`          | `version` in `[project]` / `[tool.poetry]` / `[package]` |
+| `*.yml`, `*.yaml` | the top-level `version:` key                             |
+
+Scoping is the point: the JSON handler tracks brace depth and the TOML handler tracks the
+current table, so a pinned dependency's version is never mistaken for the project's own.
+
 `claudjar goto <name>` switches between worktrees. Because a process cannot change its parent
 shell's directory, switching means **starting a fresh `claude` session in the target** rather
 than cd-ing — so the new session picks up that worktree's stamped identity and `PROJECT_PORT`
@@ -240,10 +303,12 @@ bin/claudjar init --no-interaction --rule lang-ts --rule fw-nuxtjs \
 
 Running the CLI:
 
-- `claudjar <cmd>` — after `claudjar install` (which symlinks it into `~/.local/bin`).
-- `bin/claudjar <cmd>` — repo-local launcher (works on a fresh clone; the bundle is committed).
-- `pnpm claudjar <cmd>` — via the package script (after `pnpm run build`).
-- `pnpm run ensurepath` — alternative: build + `pnpm link --global` (for a pnpm-global bin dir).
+- `claudjar <cmd>` — the standalone binary, after `claudjar install` symlinks it into
+  `~/.local/bin`.
+- `pnpm run ensurepath` — build (if needed) and install, in one step. Start here on a fresh
+  clone.
+- `bin/claudjar <cmd>` — repo-local launcher; prefers the binary, falls back to the bundle.
+- `pnpm claudjar <cmd>` — the bundle via the package script (after `pnpm run build`).
 - `pnpm dev <cmd>` — run from TypeScript source with `tsx` (development).
 
 Development gates (`lang-ts` rules): `pnpm run check` = ESLint + Prettier + `tsc --noEmit` +

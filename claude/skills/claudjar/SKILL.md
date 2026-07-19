@@ -50,6 +50,7 @@ table.
 | To delete a worktree without merging     | `claudjar worktree remove <name>`           |
 | To see the repo's worktrees              | `claudjar worktree list`                    |
 | To start / stop the project's services   | `claudjar start` / `claudjar stop`          |
+| To cut / tag a release                   | `claudjar release [--bump major\|minor]`    |
 | To see this repo's resolved config       | `claudjar info`                             |
 | To activate a repo / change its rules    | `claudjar init`                             |
 | To set up this machine                   | `claudjar install`                          |
@@ -82,11 +83,18 @@ starts a fresh `claude` in the target worktree. That is deliberate: launching is
 makes the target's SessionStart hook run, giving the new session its stamped identity
 and port.
 
+**`release` refuses more than it does.** It runs only on `main` with a clean tree, and
+never pushes. If it refuses, relay the reason — do not work around it by tagging or
+committing by hand. The version lives in `project.dist.version`; never hand-edit a version
+in `package.json`, `pyproject.toml`, or `.env` in a repo that has a `sync:` list, because
+`release` owns those and will overwrite them.
+
 ## Do not run these
 
 `claudjar api …` (`session-start`, `statusline`) is the internal surface Claude Code
-invokes through `~/.claude/bin/`. Those read a JSON payload on stdin and write a format
-their caller parses. Running them by hand does nothing useful.
+invokes itself, registered in `claude/settings.json` as `$HOME/.local/bin/claudjar api …`.
+Those read a JSON payload on stdin and write a format their caller parses. Running them by
+hand does nothing useful.
 
 ## Editing the config
 

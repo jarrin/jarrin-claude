@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { emptyProjectConfig, emptyWorktreeConfig } from "../config/schema.js";
+import {
+  emptyHooksConfig,
+  emptyProjectConfig,
+  emptyWorktreeConfig,
+} from "../config/schema.js";
 import type { InfoReport } from "./report.js";
 import { backlogMethods, formatReport } from "./report.js";
 
@@ -54,7 +58,18 @@ describe("formatReport", () => {
     hasJarrinMd: true,
     project: {
       port: 8000,
-      commands: { start: "docker compose up -d", exit: "docker compose down" },
+      commands: {
+        start: "docker compose up -d",
+        exit: "docker compose down",
+        build: "",
+      },
+      dist: { version: "1.4.0", sync: ["package.json"] },
+    },
+    hooks: {
+      worktree: {
+        create: ["pnpm install"],
+        remove: ["docker system prune -f"],
+      },
     },
     worktree: {
       ...emptyWorktreeConfig(),
@@ -82,6 +97,12 @@ describe("formatReport", () => {
     expect(out).toContain("start: docker compose up -d");
     expect(out).toContain("exit:  docker compose down");
     expect(out).toContain("port:  8001");
+    // Release surface and lifecycle hooks.
+    expect(out).toContain("Release (project.dist):");
+    expect(out).toContain("version: 1.4.0");
+    expect(out).toContain("sync:    package.json");
+    expect(out).toContain("worktree create: pnpm install");
+    expect(out).toContain("worktree remove: docker system prune -f");
     expect(out.endsWith("\n")).toBe(true);
   });
 
@@ -92,9 +113,12 @@ describe("formatReport", () => {
       commands: [],
       backup: "",
       project: emptyProjectConfig(),
+      hooks: emptyHooksConfig(),
       worktree: emptyWorktreeConfig(),
       skills: [],
     });
+    expect(out).toContain("(unset — first release starts at 0.0.1)");
+    expect(out).toContain("worktree create: (none)");
     expect(out).toContain("(none selected)");
     expect(out).toContain("(main worktree)");
     expect(out).toContain("Backup: (none)");

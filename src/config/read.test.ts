@@ -122,14 +122,48 @@ describe("parseConfig", () => {
     );
     expect(cfg.project).toEqual({
       port: 8000,
-      commands: { start: "docker compose up -d", exit: "docker compose down" },
+      commands: {
+        start: "docker compose up -d",
+        exit: "docker compose down",
+        build: "",
+      },
+      dist: { version: "", sync: [] },
     });
+  });
+
+  it("parses the project.dist release surface", () => {
+    const cfg = parseConfig(
+      [
+        "project:",
+        "  commands:",
+        "    build: pnpm build",
+        "  dist:",
+        "    version: 1.2.3",
+        "    sync:",
+        "      - package.json",
+        "      - src/worker/pyproject.toml",
+        "",
+      ].join("\n"),
+    );
+    expect(cfg.project.commands.build).toBe("pnpm build");
+    expect(cfg.project.dist).toEqual({
+      version: "1.2.3",
+      sync: ["package.json", "src/worker/pyproject.toml"],
+    });
+  });
+
+  it("normalises a version YAML parsed as a number to a string", () => {
+    // `version: 1.2` is a valid YAML float; three-segment versions are not.
+    expect(
+      parseConfig("project:\n  dist:\n    version: 1.2\n").project.dist.version,
+    ).toBe("1.2");
   });
 
   it("defaults the project block, and coerces a non-integer port to 0", () => {
     expect(parseConfig("rules:\n  - lang-ts\n").project).toEqual({
       port: 0,
-      commands: { start: "", exit: "" },
+      commands: { start: "", exit: "", build: "" },
+      dist: { version: "", sync: [] },
     });
     expect(parseConfig("project:\n  port: not-a-number\n").project.port).toBe(
       0,

@@ -1,6 +1,9 @@
 import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 
-import { PORT_ENV, stopStackAt } from "../project/stack.js";
+import { loadEffectiveConfig } from "../config/load.js";
+import { runHooks, worktreeHookEnv } from "../hooks/run.js";
+import { effectivePort, PORT_ENV, stopStackAt } from "../project/stack.js";
 
 /** What {@link removeWorktree} was asked to do. */
 export interface RemoveRequest {
@@ -12,6 +15,8 @@ export interface RemoveRequest {
   readonly wtPath: string;
   /** Run the project stack's `exit` before removing the directory. */
   readonly teardown: boolean;
+  /** Run `hooks.worktree.remove` after the directory is gone. */
+  readonly hooks: boolean;
 }
 
 /** How far {@link removeWorktree} got, and why it stopped. */
@@ -21,6 +26,12 @@ export type RemoveResult =
       readonly ok: true;
       /** Set when the branch survived a safe delete (i.e. it was unmerged). */
       readonly branchKept: boolean;
+      /**
+       * Set when a `hooks.worktree.remove` command failed. The removal itself
+       * still succeeded — it happened before the hooks ran and cannot be undone —
+       * so this is reported separately rather than as an `ok: false` failure.
+       */
+      readonly hookError: string | null;
     };
 
 /**
@@ -43,6 +54,13 @@ export function removeWorktree(
   out: (msg: string) => void,
 ): RemoveResult {
   const { gitRoot, branch, wtPath, teardown } = req;
+
+  // Capture the worktree's identity while its directory (and its stamped local
+  // config) still exists — the remove hooks run after it is gone and would have
+  // nothing left to read.
+  const port = wtPath
+    ? effectivePort(loadEffectiveConfig(join(wtPath, ".claude")).merged)
+    : 0;
 
   if (teardown) {
     const torn = stopStackAt(wtPath, proc);
@@ -84,13 +102,61 @@ export function removeWorktree(
     stdio: ["inherit", "inherit", "pipe"],
     encoding: "utf8",
   });
-  if (del.status !== 0) {
+  const branchKept = del.status !== 0;
+  if (branchKept) {
     out(
       `  kept branch ${branch} (not fully merged — delete with ` +
         `'git branch -D ${branch}' if you meant to discard it)\n`,
     );
-    return { ok: true, branchKept: true };
+  } else {
+    out(`  deleted branch ${branch}\n`);
   }
-  out(`  deleted branch ${branch}\n`);
-  return { ok: true, branchKept: false };
+
+  const hookError = req.hooks
+    ? runRemoveHooks({ gitRoot, branch, wtPath, port }, proc, out)
+    : null;
+  return { ok: true, branchKept, hookError };
+}
+
+/**
+ * Run `hooks.worktree.remove` from `gitRoot` — the worktree's own directory no
+ * longer exists, so the hooks execute in the checkout that ordered the removal
+ * and receive the retired worktree's identity through the environment.
+ *
+ * The config is read from `gitRoot` for the same reason: `hooks:` is committed,
+ * shared config, so any checkout of the repo carries the same block.
+ */
+function runRemoveHooks(
+  identity: {
+    gitRoot: string;
+    branch: string;
+    wtPath: string;
+    port: number;
+  },
+  proc: NodeJS.Process,
+  out: (msg: string) => void,
+): string | null {
+  const cfg = loadEffectiveConfig(join(identity.gitRoot, ".claude")).merged;
+  const hooks = cfg.hooks.worktree.remove;
+  if (hooks.length === 0) return null;
+
+  out(`  running hooks.worktree.remove (${String(hooks.length)})…\n`);
+  const outcome = runHooks(
+    hooks,
+    {
+      cwd: identity.gitRoot,
+      env: worktreeHookEnv({
+        name: identity.branch,
+        path: identity.wtPath,
+        port: identity.port,
+      }),
+    },
+    proc,
+    out,
+  );
+  if (outcome.ok || !outcome.failed) return null;
+  return (
+    `remove hook failed (exit ${String(outcome.failed.status)}): ` +
+    `${outcome.failed.command}`
+  );
 }

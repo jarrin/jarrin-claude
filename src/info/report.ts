@@ -2,6 +2,7 @@ import { parse } from "yaml";
 
 import type {
   CommandRow,
+  HooksConfig,
   ProjectConfig,
   WorktreeConfig,
 } from "../config/schema.js";
@@ -29,6 +30,7 @@ export interface InfoReport {
   readonly backup: string;
   readonly hasJarrinMd: boolean;
   readonly project: ProjectConfig;
+  readonly hooks: HooksConfig;
   readonly worktree: WorktreeConfig;
   readonly backlog: BacklogMethods;
   readonly skills: readonly string[];
@@ -122,6 +124,21 @@ export function formatReport(r: InfoReport): string {
   lines.push(`  exit:  ${r.project.commands.exit || "(none)"}`);
   lines.push("");
 
+  lines.push("Release (project.dist):");
+  lines.push(
+    `  version: ${r.project.dist.version || "(unset — first release starts at 0.0.1)"}`,
+  );
+  lines.push(`  build:   ${r.project.commands.build || "(none)"}`);
+  lines.push(
+    `  sync:    ${r.project.dist.sync.length ? r.project.dist.sync.join(", ") : "(none)"}`,
+  );
+  lines.push("");
+
+  lines.push("Hooks:");
+  lines.push(`  worktree create: ${describeHook(r.hooks.worktree.create)}`);
+  lines.push(`  worktree remove: ${describeHook(r.hooks.worktree.remove)}`);
+  lines.push("");
+
   lines.push("Worktree:");
   lines.push(`  name:  ${r.worktree.name || "(main worktree)"}`);
   lines.push(
@@ -149,4 +166,8 @@ export function formatReport(r: InfoReport): string {
 
 function mark(present: boolean): string {
   return present ? CHECK : CROSS;
+}
+
+function describeHook(commands: readonly string[]): string {
+  return commands.length ? commands.join(" && ") : "(none)";
 }

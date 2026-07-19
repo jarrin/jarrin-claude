@@ -57,13 +57,18 @@ FLAGS
 
 ```
 USAGE
-  claudjar worktree create [--setup] <name>
+  claudjar worktree create [--setup] [--hooks] <name>
   claudjar worktree create --help
 
-Add a git worktree and bootstrap it from the worktree: config
+Creates the branch, copies the `worktree.copy:` gitignored files across, assigns the next PROJECT_PORT, stamps the worktree's identity into its own .jarrin.local.yml, then bootstraps it.
+
+Bootstrapping has two stages. `worktree.setup:` runs first — the machine-specific recipe from the gitignored local config (install deps for THIS machine). `hooks.worktree.create:` runs second — committed, shared project policy every clone applies, with WORKTREE_NAME, WORKTREE_PATH, and PROJECT_PORT in the environment. Either stage stops at its first failing command, leaving the worktree in place to fix by hand.
+
+The stack is not started; run `claudjar start` in the new worktree.
 
 FLAGS
-     [--setup/--no-setup]  Run the configured setup commands (use --no-setup to skip) [default = true]
+     [--setup/--no-setup]  Run the configured setup commands (use --no-setup to skip)    [default = true]
+     [--hooks/--no-hooks]  Run hooks.worktree.create afterwards (use --no-hooks to skip) [default = true]
   -h  --help               Print help information and exit
 
 ARGUMENTS
@@ -74,7 +79,7 @@ ARGUMENTS
 
 ```
 USAGE
-  claudjar worktree merge [--remove] [--teardown] [--claude] <name>
+  claudjar worktree merge [--remove] [--teardown] [--claude] [--hooks] <name>
   claudjar worktree merge --help
 
 Run from the worktree you want to merge INTO (e.g. main), naming the branch to pull in.
@@ -87,6 +92,7 @@ FLAGS
      [--remove]                  After a clean merge, also remove the worktree and delete the branch     [default = false]
      [--teardown/--no-teardown]  With --remove, stop the project stack first (use --no-teardown to skip) [default = true]
      [--claude/--no-claude]      On conflict, launch claude to resolve (use --no-claude to skip)         [default = true]
+     [--hooks/--no-hooks]        With --remove, run hooks.worktree.remove (use --no-hooks to skip)       [default = true]
   -h  --help                     Print help information and exit
 
 ARGUMENTS
@@ -97,17 +103,20 @@ ARGUMENTS
 
 ```
 USAGE
-  claudjar worktree remove [--teardown] <name>
+  claudjar worktree remove [--teardown] [--hooks] <name>
   claudjar worktree remove --help
 
 The counterpart to `worktree create`, and the cleanup half of `worktree merge --remove`.
 
 Stops the worktree's project stack (with its own assigned PROJECT_PORT), removes the directory, then deletes the branch with `git branch -d`. That safe delete succeeds only when the branch is fully merged, so unmerged work is never discarded silently — the branch survives and is reported.
 
+Finally it runs `hooks.worktree.remove:` from THIS checkout (the removed directory is gone), with the retired worktree's WORKTREE_NAME, WORKTREE_PATH, and PROJECT_PORT in the environment. A failing hook is reported and exits non-zero, but the removal already happened.
+
 Run it from another worktree; removing the one you are standing in is refused. --no-teardown removes the worktree while leaving the stack running.
 
 FLAGS
      [--teardown/--no-teardown]  Stop the worktree's project stack first (use --no-teardown to skip) [default = true]
+     [--hooks/--no-hooks]        Run hooks.worktree.remove afterwards (use --no-hooks to skip)       [default = true]
   -h  --help                     Print help information and exit
 
 ARGUMENTS
@@ -167,6 +176,34 @@ Tear down this worktree's project stack (project.commands.exit, PROJECT_PORT set
 
 FLAGS
   -h --help  Print help information and exit
+```
+
+### claudjar release
+
+```
+USAGE
+  claudjar release [--bump value] [--branch value] [--build] [--tag] [--dry-run] [--yes] [--interaction]
+  claudjar release --help
+
+Bumps `project.dist.version` in .claude/.jarrin.yml — the source of truth for this project's version — mirrors the new number into every file listed under `project.dist.sync`, runs `project.commands.build`, then commits the tree and creates an annotated tag v<version>.
+
+Refuses to run unless you are on the release branch (`main` by default, see --branch) with a clean working tree, and refuses to reuse an existing tag. Without --bump it increments the patch segment (0.1.3 -> 0.1.4).
+
+Ordering is deliberate: the version is written before the build so the artifact carries it, and the commit happens after, so a failed build rolls every edit back and leaves the tree untouched.
+
+Sync handlers are chosen by filename — *.json (top-level "version"), .env* (APP_VERSION), *.toml ([project] / [tool.poetry]), and *.yml/*.yaml (top-level version). Files are rewritten in place; formatting is preserved.
+
+Nothing is pushed: the commit and tag stay local and the push command is printed for you to run.
+
+FLAGS
+     [--bump]                          Which segment to increment: major, minor, or patch         [default = patch]
+     [--branch]                        Branch releases are allowed from                           [default = main]
+     [--build/--no-build]              Run project.commands.build (use --no-build to skip)        [default = true]
+     [--tag/--no-tag]                  Create the v<version> tag (use --no-tag to skip)           [default = true]
+     [--dry-run]                       Show the plan without writing, building, or tagging        [default = false]
+     [--yes]                           Skip the confirmation prompt                               [default = false]
+     [--interaction/--no-interaction]  Confirm before releasing (use --no-interaction to disable) [default = true]
+  -h  --help                           Print help information and exit
 ```
 
 ### claudjar help

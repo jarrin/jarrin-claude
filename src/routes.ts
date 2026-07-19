@@ -8,10 +8,21 @@ import { helpCommand } from "./commands/help.js";
 import { infoCommand } from "./commands/info.js";
 import { initCommand } from "./commands/init.js";
 import { installCommand } from "./commands/install.js";
+import { releaseCommand } from "./commands/release.js";
 import { startCommand, stopCommand } from "./commands/start.js";
 import { worktreeRoutes } from "./commands/worktree.js";
 
-export const VERSION = "0.1.0";
+/**
+ * Replaced at bundle time by tsup's `define`, from `project.dist.version` in
+ * this repo's `.claude/.jarrin.yml` — the number `claudjar release` bumps. It is
+ * genuinely absent when running from source (`tsx src/cli.ts`), which the
+ * `typeof` guard handles: referencing an undeclared identifier directly would
+ * throw a ReferenceError, but `typeof` on one is defined to yield "undefined".
+ */
+declare const __CLAUDJAR_VERSION__: string | undefined;
+
+export const VERSION =
+  typeof __CLAUDJAR_VERSION__ === "string" ? __CLAUDJAR_VERSION__ : "0.0.0-dev";
 
 /**
  * Build the CLI's route tree. `hideInternal` controls only whether the `api`
@@ -32,6 +43,7 @@ export function buildRoutes(hideInternal: boolean) {
       goto: gotoCommand,
       start: startCommand,
       stop: stopCommand,
+      release: releaseCommand,
       help: helpCommand,
       api: apiRoutes,
     },

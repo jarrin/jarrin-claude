@@ -6,11 +6,11 @@ import { emptyConfig } from "./schema.js";
  * `.jarrin.yml` (`base`) into the effective config the CLI acts on.
  *
  * **Only `worktree:` is overridable.** Every other key — the rule tiers, the
- * command table, `backup`, the `project:` stack block — is taken from `base`
- * verbatim; declaring them in the local file has no effect (deliberately: they are
- * committed, shared config). The local file exists to carry machine-specific
- * worktree settings out of git. If a future key needs a per-machine override,
- * widen this function explicitly.
+ * command table, `backup`, the `project:` block (stack + release surface), and
+ * `hooks:` — is taken from `base` verbatim; declaring them in the local file has
+ * no effect (deliberately: they are committed, shared config). The local file
+ * exists to carry machine-specific worktree settings out of git. If a future key
+ * needs a per-machine override, widen this function explicitly.
  *
  * Within `worktree:`, local wins: `dir`/`name` when non-empty, `port` when
  * non-zero (a worktree's stamped assignment overrides the base's 0), `copy` as an
@@ -30,6 +30,16 @@ export function mergeConfig(
   merged.project = {
     port: base.project.port,
     commands: { ...base.project.commands },
+    dist: {
+      version: base.project.dist.version,
+      sync: [...base.project.dist.sync],
+    },
+  };
+  merged.hooks = {
+    worktree: {
+      create: [...base.hooks.worktree.create],
+      remove: [...base.hooks.worktree.remove],
+    },
   };
   merged.worktree = mergeWorktree(base.worktree, local.worktree);
   return merged;

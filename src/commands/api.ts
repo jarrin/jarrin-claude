@@ -5,10 +5,11 @@ import { statuslineCommand } from "./statusline.js";
 
 /**
  * The warning prefix carried by every `api` subcommand's brief. These commands
- * are the machine-facing half of claudjar: Claude Code invokes them through the
- * launchers in `bin/claude/`, passing a JSON payload on stdin and consuming
- * stdout in a fixed format. Running one by hand does nothing useful (it reads a
- * TTY as an empty payload) and is never how a person drives this CLI.
+ * are the machine-facing half of claudjar: Claude Code invokes them directly
+ * (`~/.local/bin/claudjar api …`, registered in claude/settings.json), passing a
+ * JSON payload on stdin and consuming stdout in a fixed format. Running one by
+ * hand does nothing useful (it reads a TTY as an empty payload) and is never how
+ * a person drives this CLI.
  */
 export const INTERNAL_WARNING = "[internal]";
 
@@ -27,10 +28,11 @@ export const apiRoutes = buildRouteMap({
     brief: `${INTERNAL_WARNING} Hook entrypoints invoked by Claude Code — not for manual use`,
     fullDescription:
       "INTERNAL — do not run these by hand.\n\n" +
-      "These are the entrypoints Claude Code itself invokes, via the thin launchers " +
-      "in bin/claude/ (symlinked to ~/.claude/bin/ and registered in " +
-      "claude/settings.json). Each one reads a JSON payload on stdin and writes a " +
-      "format its caller parses — a hook contract, not a user interface.\n\n" +
+      "These are the entrypoints Claude Code itself invokes, through the standalone " +
+      "binary on PATH (~/.local/bin/claudjar, registered in claude/settings.json as " +
+      "`claudjar api statusline` and `claudjar api session-start`). Each one reads a " +
+      "JSON payload on stdin and writes a format its caller parses — a hook " +
+      "contract, not a user interface.\n\n" +
       "Run by hand they see an empty payload and fall back to defaults, which is " +
       "harmless but pointless. To drive claudjar as a person, use the top-level " +
       "commands: `claudjar --help`.",

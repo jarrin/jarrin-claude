@@ -5,7 +5,7 @@
   "tui": "fullscreen",
   "statusLine": {
     "type": "command",
-    "command": "$HOME/.claude/bin/statusline"
+    "command": "$HOME/.local/bin/claudjar api statusline"
   },
   "hooks": {
     "SessionStart": [
@@ -13,7 +13,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/bin/session-start"
+            "command": "$HOME/.local/bin/claudjar api session-start"
           }
         ]
       }

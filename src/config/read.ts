@@ -2,6 +2,7 @@ import { parse } from "yaml";
 
 import type {
   CommandRow,
+  HooksConfig,
   ImportRule,
   JarrinConfig,
   ProjectConfig,
@@ -9,6 +10,7 @@ import type {
 } from "./schema.js";
 import {
   emptyConfig,
+  emptyHooksConfig,
   emptyProjectConfig,
   emptyWorktreeConfig,
 } from "./schema.js";
@@ -52,7 +54,28 @@ export function parseConfig(text: string): JarrinConfig {
   cfg.backup = typeof map.backup === "string" ? map.backup.trim() : "";
   cfg.project = toProject(map.project);
   cfg.worktree = toWorktree(map.worktree);
+  cfg.hooks = toHooks(map.hooks);
   return cfg;
+}
+
+/**
+ * Report why a config file failed to parse, or null when it is valid YAML.
+ *
+ * {@link parseConfig} deliberately swallows parse errors so a broken file cannot
+ * crash a session — but silence has its own cost: a config with, say, an
+ * unquoted `desc:` containing a colon degrades to *nothing selected*, and looks
+ * identical to a repo that simply opted out. Callers that can afford to talk
+ * (the hook's stderr, `claudjar info`) use this to say so out loud.
+ */
+export function configParseError(text: string): string | null {
+  try {
+    parse(text);
+    return null;
+  } catch (e) {
+    return e instanceof Error
+      ? (e.message.split("\n")[0] ?? "invalid YAML")
+      : "invalid YAML";
+  }
 }
 
 function toProject(value: unknown): ProjectConfig {
@@ -68,8 +91,31 @@ function toProject(value: unknown): ProjectConfig {
     project.commands.start =
       typeof cmd.start === "string" ? cmd.start.trim() : "";
     project.commands.exit = typeof cmd.exit === "string" ? cmd.exit.trim() : "";
+    project.commands.build =
+      typeof cmd.build === "string" ? cmd.build.trim() : "";
+  }
+  const dist = rec.dist;
+  if (dist !== null && typeof dist === "object" && !Array.isArray(dist)) {
+    const d = dist as Record<string, unknown>;
+    project.dist.version = toVersionString(d.version);
+    project.dist.sync = toStringList(d.sync);
   }
   return project;
+}
+
+function toHooks(value: unknown): HooksConfig {
+  const hooks = emptyHooksConfig();
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return hooks;
+  }
+  const wt = (value as Record<string, unknown>).worktree;
+  if (wt === null || typeof wt !== "object" || Array.isArray(wt)) {
+    return hooks;
+  }
+  const rec = wt as Record<string, unknown>;
+  hooks.worktree.create = toStringList(rec.create);
+  hooks.worktree.remove = toStringList(rec.remove);
+  return hooks;
 }
 
 function toWorktree(value: unknown): WorktreeConfig {
@@ -85,6 +131,23 @@ function toWorktree(value: unknown): WorktreeConfig {
   wt.name = typeof rec.name === "string" ? rec.name.trim() : "";
   wt.port = toPort(rec.port);
   return wt;
+}
+
+/**
+ * Coerce a YAML scalar to a version string.
+ *
+ * Only scalars are accepted, because a version is one. The number case is not
+ * hypothetical: `version: 1.2` is valid YAML float syntax and arrives here as a
+ * number, while `1.2.3` (two dots) parses as a string. Anything structural —
+ * a map or list under `version:` — is a config error and yields "" rather than
+ * a stringified `[object Object]`.
+ */
+function toVersionString(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return "";
 }
 
 /** Coerce a YAML scalar to a non-negative integer port; anything else → 0. */
