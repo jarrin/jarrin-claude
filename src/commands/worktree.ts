@@ -175,6 +175,9 @@ function runWorktreeCreate(
   // 6. Fire the committed create hooks in the new worktree. These run AFTER
   //    setup: setup is the machine-local bootstrap (deps for this machine),
   //    hooks are shared project policy that assumes a bootstrapped tree.
+  //    They also get the SOURCE worktree — the one this command ran in, which
+  //    the branch was cut from — so a hook can carry state forward into the new
+  //    one (see `worktreeHookEnv`).
   const createHooks = flags.hooks ? cfg.hooks.worktree.create : [];
   if (createHooks.length > 0) {
     out(`Running hooks.worktree.create (${String(createHooks.length)})…\n`);
@@ -182,7 +185,14 @@ function runWorktreeCreate(
       createHooks,
       {
         cwd: plan.path,
-        env: worktreeHookEnv({ name: branch, path: plan.path, port }),
+        env: worktreeHookEnv(
+          { name: branch, path: plan.path, port },
+          {
+            name: cfg.worktree.name,
+            path: currentRoot,
+            port: cfg.worktree.port,
+          },
+        ),
       },
       proc,
       out,
@@ -527,7 +537,10 @@ const worktreeCreateCommand = buildCommand({
       "machine-specific recipe from the gitignored local config (install deps for " +
       "THIS machine). `hooks.worktree.create:` runs second — committed, shared " +
       "project policy every clone applies, with WORKTREE_NAME, WORKTREE_PATH, and " +
-      "PROJECT_PORT in the environment. Either stage stops at its first failing " +
+      "PROJECT_PORT in the environment, plus SOURCE_WORKTREE_NAME, " +
+      "SOURCE_WORKTREE_PATH, and SOURCE_PROJECT_PORT naming the worktree this " +
+      "command ran in — what a hook needs to carry state (a database, a cache) " +
+      "forward into the new tree. Either stage stops at its first failing " +
       "command, leaving the worktree in place to fix by hand.\n\n" +
       "The stack is not started; run `claudjar start` in the new worktree.",
   },

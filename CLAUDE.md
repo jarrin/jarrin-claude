@@ -271,6 +271,13 @@ fails to parse, rather than starting a session that silently lost all its rules.
   Both receive `WORKTREE_NAME`, `WORKTREE_PATH`, and `PROJECT_PORT` in the environment.
   `--no-hooks` skips them on `worktree create` / `remove` / `merge --remove`.
 
+  `create` hooks additionally get `SOURCE_WORKTREE_NAME`, `SOURCE_WORKTREE_PATH`, and
+  `SOURCE_PROJECT_PORT` — the worktree the command ran in, which the new branch was cut
+  from (the main checkout reports an empty name and port `0`). Creation is directional
+  (`main → dev → dev-x`), so a hook that carries state forward — a database, a cache, a
+  fixture set — needs to name where to carry it _from_, and the destination's own identity
+  cannot tell it.
+
   `hooks.worktree.create` is **not** a duplicate of `worktree.setup`: `setup` is the
   machine-specific recipe in the gitignored local file (bootstrap for _this_ machine),
   while a hook is committed project policy every clone applies. Both fire on create — setup

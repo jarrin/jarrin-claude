@@ -62,7 +62,7 @@ USAGE
 
 Creates the branch, copies the `worktree.copy:` gitignored files across, assigns the next PROJECT_PORT, stamps the worktree's identity into its own .jarrin.local.yml, then bootstraps it.
 
-Bootstrapping has two stages. `worktree.setup:` runs first — the machine-specific recipe from the gitignored local config (install deps for THIS machine). `hooks.worktree.create:` runs second — committed, shared project policy every clone applies, with WORKTREE_NAME, WORKTREE_PATH, and PROJECT_PORT in the environment. Either stage stops at its first failing command, leaving the worktree in place to fix by hand.
+Bootstrapping has two stages. `worktree.setup:` runs first — the machine-specific recipe from the gitignored local config (install deps for THIS machine). `hooks.worktree.create:` runs second — committed, shared project policy every clone applies, with WORKTREE_NAME, WORKTREE_PATH, and PROJECT_PORT in the environment, plus SOURCE_WORKTREE_NAME, SOURCE_WORKTREE_PATH, and SOURCE_PROJECT_PORT naming the worktree this command ran in — what a hook needs to carry state (a database, a cache) forward into the new tree. Either stage stops at its first failing command, leaving the worktree in place to fix by hand.
 
 The stack is not started; run `claudjar start` in the new worktree.
 

@@ -74,7 +74,11 @@ export interface ProjectConfig {
  * the environment (`WORKTREE_NAME`, `WORKTREE_PATH`, `PROJECT_PORT`).
  */
 export interface WorktreeHooks {
-  /** Run in the new worktree after `worktree create` finishes its setup. */
+  /**
+   * Run in the new worktree after `worktree create` finishes its setup. Gets
+   * the new worktree's identity *and* the source worktree's (`SOURCE_*`) — see
+   * `worktreeHookEnv` — so it can carry state forward from where it was cut.
+   */
   create: string[];
   /** Run from the main checkout after `worktree remove` deletes the directory. */
   remove: string[];

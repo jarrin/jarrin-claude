@@ -245,7 +245,10 @@ hooks:
 ```
 
 Both run in order, stop at the first failure, and get `WORKTREE_NAME`, `WORKTREE_PATH`, and
-`PROJECT_PORT` in the environment (`--no-hooks` skips them). These are not a duplicate of
+`PROJECT_PORT` in the environment (`--no-hooks` skips them). `create` hooks also get
+`SOURCE_WORKTREE_NAME`, `SOURCE_WORKTREE_PATH`, and `SOURCE_PROJECT_PORT` naming the worktree
+the command ran in (empty name / port `0` = the main checkout) — what a hook needs to carry
+state forward into the new tree, since creation is directional. These are not a duplicate of
 `worktree.setup`: `setup` is the machine-specific bootstrap in the gitignored local file, hooks
 are project policy every clone applies — so setup runs first and hooks may assume a
 bootstrapped tree. `remove` hooks necessarily run after the directory is gone, so they execute

@@ -62,20 +62,41 @@ export function runHooks(
   return { ok: true, ran, failed: null };
 }
 
+/** A worktree's identity, as a hook sees it. */
+export interface WorktreeIdentity {
+  readonly name: string;
+  readonly path: string;
+  readonly port: number;
+}
+
 /**
  * The environment every worktree hook receives: which worktree it concerns,
  * where it lived, and the port it was assigned. `remove` hooks run after the
  * directory is gone, so `WORKTREE_PATH` there names a path that no longer
  * exists — deliberately, since cleaning up by path is the common case.
+ *
+ * `source` is the worktree the command ran in — the one the new branch was cut
+ * from — and is passed on **create** only, as `SOURCE_*`. Creation is
+ * directional (main → dev → dev-x), so a hook that carries state forward (a
+ * database, a cache, a fixture set) needs to name where to carry it *from*, and
+ * the destination's own identity cannot tell it. The main checkout is the source
+ * with an empty `SOURCE_WORKTREE_NAME` and `SOURCE_PROJECT_PORT=0`, matching how
+ * an unstamped `worktree:` block reads everywhere else.
  */
-export function worktreeHookEnv(identity: {
-  name: string;
-  path: string;
-  port: number;
-}): Record<string, string> {
+export function worktreeHookEnv(
+  identity: WorktreeIdentity,
+  source?: WorktreeIdentity,
+): Record<string, string> {
   return {
     WORKTREE_NAME: identity.name,
     WORKTREE_PATH: identity.path,
     PROJECT_PORT: String(identity.port),
+    ...(source
+      ? {
+          SOURCE_WORKTREE_NAME: source.name,
+          SOURCE_WORKTREE_PATH: source.path,
+          SOURCE_PROJECT_PORT: String(source.port),
+        }
+      : {}),
   };
 }
