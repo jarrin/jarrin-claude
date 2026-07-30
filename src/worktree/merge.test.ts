@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  conflictPrompt,
-  parseWorktreeList,
-  worktreePathForBranch,
-} from "./merge.js";
+import { parseWorktreeList, worktreePathForBranch } from "./merge.js";
 
 const PORCELAIN = [
   "worktree /home/j/Projects/app",
@@ -45,27 +41,5 @@ describe("worktreePathForBranch", () => {
 
   it("returns null when no worktree has the branch", () => {
     expect(worktreePathForBranch(PORCELAIN, "nope")).toBeNull();
-  });
-});
-
-describe("conflictPrompt", () => {
-  it("names both branches and lists the conflicted files", () => {
-    const p = conflictPrompt({
-      branch: "feature/x",
-      targetBranch: "main",
-      files: ["src/a.ts", "src/b.ts"],
-    });
-    expect(p).toContain("branch 'feature/x'");
-    expect(p).toContain("'git merge feature/x' was run while");
-    expect(p).toContain("'main' was checked out");
-    expect(p).toContain("  - src/a.ts");
-    expect(p).toContain("  - src/b.ts");
-    expect(p).toContain("Do NOT run 'git merge --abort'");
-    expect(p).toContain("git commit --no-edit");
-  });
-
-  it("falls back to a git status hint when no files are given", () => {
-    const p = conflictPrompt({ branch: "x", targetBranch: "main", files: [] });
-    expect(p).toContain("run `git status`");
   });
 });

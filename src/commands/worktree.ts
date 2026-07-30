@@ -27,7 +27,7 @@ import {
   worktreeListPorcelain,
 } from "../git.js";
 import { runHooks, worktreeHookEnv } from "../hooks/run.js";
-import { conflictPrompt, worktreePathForBranch } from "../worktree/merge.js";
+import { worktreePathForBranch } from "../worktree/merge.js";
 import { removeWorktree } from "../worktree/remove.js";
 import {
   nextPort,
@@ -286,7 +286,6 @@ function assignedPorts(repoRoot: string): number[] {
 interface MergeFlags {
   readonly remove: boolean;
   readonly teardown: boolean;
-  readonly claude: boolean;
   readonly hooks: boolean;
 }
 
@@ -300,8 +299,8 @@ interface MergeFlags {
  * same step, which tears the worktree's project stack down first (`--no-teardown`
  * to skip that) — the same path `worktree remove` takes.
  *
- * On a conflict it keeps everything regardless and hands off to an interactive
- * `claude` session seeded with a resolution prompt (unless `--no-claude`).
+ * On a conflict it keeps everything regardless, prints the conflicted paths,
+ * and exits 1 — the caller resolves and commits in place.
  */
 function runWorktreeMerge(
   this: LocalContext,
@@ -357,31 +356,14 @@ function runWorktreeMerge(
       `worktree merge: conflict in ${String(files.length)} file(s); ` +
         `worktree and branch kept.\n`,
     );
-    if (!flags.claude) {
-      out(
-        `\nConflicted files:\n${files.map((f) => `  - ${f}`).join("\n")}\n` +
-          `\nResolve the conflicts and commit. (--no-claude: not launching claude.)\n`,
-      );
-      proc.exitCode = 1;
-      return;
-    }
-    const prompt = conflictPrompt({
-      branch,
-      targetBranch: onBranch ?? "HEAD",
-      files,
-    });
-    out(`\nLaunching claude to resolve the conflict…\n`);
-    const claude = spawnSync("claude", [prompt], {
-      cwd: target,
-      stdio: "inherit",
-    });
-    if (claude.error) {
-      proc.stderr.write(
-        `worktree merge: could not launch 'claude' (${claude.error.message}).\n`,
-      );
-      out(`\nResolve manually with this prompt:\n\n${prompt}\n`);
-      proc.exitCode = 1;
-    }
+    // No interactive hand-off: launching a nested `claude` from inside a session that is
+    // already driving the merge stacks two agents on one repository. The caller — human or
+    // agent — resolves in place and commits; the conflicted paths are the whole briefing.
+    out(
+      `\nConflicted files:\n${files.map((f) => `  - ${f}`).join("\n")}\n` +
+        `\nResolve the conflicts and commit.\n`,
+    );
+    proc.exitCode = 1;
     return;
   }
 
@@ -572,12 +554,6 @@ const worktreeMergeCommand = buildCommand({
           "With --remove, stop the project stack first (use --no-teardown to skip)",
         default: true,
       },
-      claude: {
-        kind: "boolean",
-        brief:
-          "On conflict, launch claude to resolve (use --no-claude to skip)",
-        default: true,
-      },
       hooks: {
         kind: "boolean",
         brief:
@@ -588,8 +564,7 @@ const worktreeMergeCommand = buildCommand({
   },
   docs: {
     brief:
-      "Merge a worktree branch into the current branch, keeping the worktree " +
-      "(claude resolves conflicts)",
+      "Merge a worktree branch into the current branch, keeping the worktree",
     fullDescription:
       "Run from the worktree you want to merge INTO (e.g. main), naming the " +
       "branch to pull in.\n\n" +
@@ -597,9 +572,9 @@ const worktreeMergeCommand = buildCommand({
       "same as being finished with the worktree. Add --remove to clean up in the " +
       "same step: that stops the worktree's project stack, removes the directory, " +
       "and safely deletes the branch (--no-teardown leaves the stack running).\n\n" +
-      "On a conflict nothing is removed: the worktree and branch stay put and an " +
-      "interactive claude session opens in the target, seeded with both sides and " +
-      "the conflicted paths. --no-claude prints the paths instead.",
+      "On a conflict nothing is removed: the worktree and branch stay put, the " +
+      "conflicted paths are printed, and the merge is left for the caller to " +
+      "resolve and commit.",
   },
 });
 

@@ -79,19 +79,18 @@ ARGUMENTS
 
 ```
 USAGE
-  claudjar worktree merge [--remove] [--teardown] [--claude] [--hooks] <name>
+  claudjar worktree merge [--remove] [--teardown] [--hooks] <name>
   claudjar worktree merge --help
 
 Run from the worktree you want to merge INTO (e.g. main), naming the branch to pull in.
 
 The worktree and branch are KEPT by default — merging work up is not the same as being finished with the worktree. Add --remove to clean up in the same step: that stops the worktree's project stack, removes the directory, and safely deletes the branch (--no-teardown leaves the stack running).
 
-On a conflict nothing is removed: the worktree and branch stay put and an interactive claude session opens in the target, seeded with both sides and the conflicted paths. --no-claude prints the paths instead.
+On a conflict nothing is removed: the worktree and branch stay put, the conflicted paths are printed, and the merge is left for the caller to resolve and commit.
 
 FLAGS
      [--remove]                  After a clean merge, also remove the worktree and delete the branch     [default = false]
      [--teardown/--no-teardown]  With --remove, stop the project stack first (use --no-teardown to skip) [default = true]
-     [--claude/--no-claude]      On conflict, launch claude to resolve (use --no-claude to skip)         [default = true]
      [--hooks/--no-hooks]        With --remove, run hooks.worktree.remove (use --no-hooks to skip)       [default = true]
   -h  --help                     Print help information and exit
 
