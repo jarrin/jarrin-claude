@@ -16,13 +16,18 @@ they are not in the working tree.
 | `CLAUDE.md`              | Guide for working **in this repo** — how to author rule files                                                                 |
 | `claude/CLAUDE.md`       | Global, cross-project instructions (loaded every session)                                                                     |
 | `claude/settings.json`   | Global Claude Code settings (points the SessionStart hook and statusline at `~/.local/bin/claudjar api …`)                    |
-| `claude/rules/*.md`      | Global rule library (`lang-php.md`, `fw-laravel.md`, …)                                                                       |
+| `claude/rules/*.md`      | Global rule library (`lang-php.md`, `fw-laravel.md`, …) → `~/.claude/rule-library/`                                           |
 | `claude/skills/*/`       | Global skills (`claudjar/` — drive the CLI; `add-skill/` — how to author a skill)                                             |
 | `claude/references/*.md` | Shared reference docs read by more than one skill (`backlog.md`)                                                              |
 
 Language-/framework-specific guidance goes in `claude/rules/*.md`. Projects opt in to
 specific rules via their own `.claude/.jarrin.yml` — see **Rule loading** below. The
 `claudjar` CLI scaffolds that file for a repo — see **The claudjar CLI** below.
+
+`settings.json` pins `"model": "opus"`, the **standard** context variant — not `opus[1m]`.
+The 1M-context variant is served differently and is the wrong thing to pay for by default
+when almost no session approaches 200k tokens. Switch per session with `/model` on the rare
+occasion a genuinely large window is needed, rather than making every session carry it.
 
 ## Install on a new machine
 
@@ -60,7 +65,7 @@ the SessionStart hook.
 mkdir -p ~/.claude
 ln -sfn ~/projects/jarrin-claude/claude/CLAUDE.md     ~/.claude/CLAUDE.md
 ln -sfn ~/projects/jarrin-claude/claude/settings.json ~/.claude/settings.json
-ln -sfn ~/projects/jarrin-claude/claude/rules         ~/.claude/rules
+ln -sfn ~/projects/jarrin-claude/claude/rules         ~/.claude/rule-library
 ln -sfn ~/projects/jarrin-claude/claude/skills        ~/.claude/skills
 ln -sfn ~/projects/jarrin-claude/claude/references    ~/.claude/references
 mkdir -p ~/.local/bin
@@ -68,7 +73,11 @@ ln -sfn ~/projects/jarrin-claude/dist/build/claudjar  ~/.local/bin/claudjar
 cd ~/projects/jarrin-claude && git config core.hooksPath .githooks   # enable pre-commit hook
 ```
 
-Or, with GNU stow: `stow -d ~/projects/jarrin-claude -t ~/.claude claude`
+GNU stow is **not** an equivalent here: `stow -d ~/projects/jarrin-claude -t ~/.claude claude`
+would link the library to `~/.claude/rules`, and Claude Code auto-loads every `.md` in that
+directory as always-on global instructions — every rule in every session, with each repo's
+`rules:` selection deciding nothing. The library has to land somewhere Claude does not read
+on its own (`rule-library`), which is why `install` renames it and stow cannot.
 </details>
 
 ## Secret scanning (gitleaks)
@@ -90,6 +99,13 @@ as `$HOME/.local/bin/claudjar` — loads a project's chosen rules into context a
 of every session. The standalone binary embeds its own Node runtime, so nothing else needs
 to be on PATH.
 
+The hook does not inject the rules themselves: it renders them to
+`<repo>/.claude/.jarrin-rules.md` (generated, gitignored) and injects a ~260-byte pointer,
+while a one-line `@.claude/.jarrin-rules.md` import in the repo's `CLAUDE.md` loads the file
+as project memory. Claude Code truncates a hook payload past ~25 KB — silently, to a ~2 KB
+preview — and a repo with a few rules and a page of project instructions is already over it.
+`claudjar init` writes the import and the `.gitignore` entry.
+
 A project opts in with two files in its own `.claude/` directory:
 
 | File                        | Required | Behaviour                                                                                                                         |
@@ -100,7 +116,7 @@ A project opts in with two files in its own `.claude/` directory:
 `.jarrin.yml` selects rules from three tiers and can declare a command table:
 
 ```yaml
-rules: # a. global slugs → ~/.claude/rules/<slug>.md
+rules: # a. global slugs → ~/.claude/rule-library/<slug>.md
   - lang-php
   - fw-laravel
 local: # b. in-repo rule files (paths from the repo root)
@@ -164,9 +180,10 @@ subcommands:
 | `claudjar worktree list`        | List this repo's git worktrees                                                                                     |
 | `claudjar goto <n>`             | Switch to a worktree by starting `claude` there; `main` goes back to the original checkout                         |
 | `claudjar start` / `stop`       | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout                 |
-| `claudjar caddy up` / `down`    | Start / stop the machine-wide caddy on host port 80 (one container serves every registered project)                |
+| `claudjar caddy up` / `down`    | Start / stop the machine-wide caddy on host ports 80 + 443 (one container serves every registered project)         |
 | `claudjar caddy join` / `leave` | Register / deregister this checkout's `<slug>.localhost` route (worktrees register themselves on create)           |
 | `claudjar caddy status`         | Show the caddy container state and every registered route                                                          |
+| `claudjar caddy trust`          | Anchor the caddy's internal CA in this host's trust store, so `https://<slug>.localhost` verifies (sudo, once)     |
 | `claudjar release`              | Cut a version: bump `project.dist.version`, mirror it into `sync:` files, build, commit, tag (never pushes)        |
 | `claudjar install`              | Machine setup: symlink config into `~/.claude`, link the binary onto PATH, enable hooks, check prerequisites       |
 | `claudjar help --full`          | Print every command's help as one Markdown document (`--include-internal` adds the `api` commands)                 |
@@ -271,20 +288,29 @@ The scheme is `<service>.<worktree>.<slug>.localhost`, both leading segments opt
 `prdl.localhost`, `studio.prdl.localhost`, `studio.dev.prdl.localhost`. A worktree's segment is
 its stamped `worktree.name` (or `worktree.slug`, to shorten a long branch name in a URL).
 
-**claudjar owns one side only.** It runs a single `claudjar-caddy` container on host port 80,
-attached to a shared `claudjar` docker network, and generates that container's config. Your
-project brings its **own** caddy: in its own compose file, on its own network, joining `claudjar`
-as an external second network, listening on container port **8000**. claudjar proxies the whole
-domain there and stops — routing `studio.` to a service is your project's config, which claudjar
-never reads or writes. The original `Host` header is preserved, so the project's caddy sees the
-full name.
+**claudjar owns one side only.** It runs a single `claudjar-caddy` container on host ports 80
+(http) and 443 (https), attached to a shared `claudjar` docker network, and generates that
+container's config. Your project brings its **own** caddy: in its own compose file, on its own
+network, joining `claudjar` as an external second network, listening on container port **8000**.
+claudjar proxies the whole domain there and stops — routing `studio.` to a service is your
+project's config, which claudjar never reads or writes. The original `Host` header is preserved,
+so the project's caddy sees the full name.
+
+TLS terminates at claudjar's caddy: every site is also served on `https://` with a certificate
+from Caddy's internal CA, while the project side keeps speaking plain HTTP on 8000 — no project
+change needed. There is deliberately no HTTP→HTTPS redirect, so `http://` tooling keeps working.
+Run `claudjar caddy trust` once per machine (sudo) to anchor the CA's root + intermediate in the
+host trust store; after that curl and NSS-linked browsers (Chrome/Chromium) verify the chain. The
+CA lives in the `claudjar-caddy-data` volume, so it survives container recreation and the trust
+step never needs repeating.
 
 Since the two sides never negotiate, the upstream name is a **convention**: `caddy-<slug>`, or
 `caddy-<slug>-<worktree>` for a worktree. Name your caddy container that, or give it that network
 alias. A project that isn't up yet just 502s — the two halves start independently.
 
 ```sh
-claudjar caddy up      # once per machine: network + container on :80
+claudjar caddy up      # once per machine: network + container on :80/:443
+claudjar caddy trust   # once per machine: anchor the internal CA (sudo)
 claudjar caddy join    # once per project: register <slug>.localhost
 claudjar caddy status  # container state + every registered route
 ```
@@ -339,7 +365,7 @@ Resolution runs against `git worktree list`, from the main worktree, so it works
 the main checkout and from inside any worktree — including hopping straight from one worktree to
 another. An unknown name fails with the list of names that would have worked.
 
-`init` is interactive by default (a clack checklist of rules from `~/.claude/rules`, plus
+`init` is interactive by default (a clack checklist of rules from `~/.claude/rule-library`, plus
 prompts for local rules, imports, commands, and a backup command). It auto-detects a
 non-interactive environment (no TTY, `CI`, or `JARRIN_NO_INTERACTION`) and can be forced
 with `--no-interaction`, in which case it is driven entirely by flags:

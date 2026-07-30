@@ -108,21 +108,28 @@ describe("sortEntries", () => {
 });
 
 describe("renderCaddyfile", () => {
-  it("disables auto_https, since only host port 80 is published", () => {
-    // Caddy treats .localhost as internal and would otherwise issue certs for it.
-    expect(renderCaddyfile([])).toContain("auto_https off");
+  it("disables redirects but NOT cert automation", () => {
+    // Regression, found live: `auto_https off` leaves the https:// blocks
+    // without leaf certificates — `tls internal` only names the issuer, and
+    // automation (which `off` kills) is what drives issuance. Every handshake
+    // then fails with a tlsv1 internal-error alert. `disable_redirects` keeps
+    // issuance while letting the http:// blocks keep serving plain HTTP.
+    const out = renderCaddyfile([]);
+    expect(out).toContain("auto_https disable_redirects");
+    expect(out).not.toContain("auto_https off");
   });
 
-  it("schemes every site address, which is what actually binds port 80", () => {
+  it("schemes every site address, which is what actually picks the port", () => {
     // Regression: a bare `prdl.localhost {` binds Caddy's HTTPS port (443) even
     // with auto_https off — the directive governs certificates, not the default
-    // port. claudjar publishes host port 80 only, so an unschemed site listens
-    // where nothing is mapped and every request is refused. Caught live.
+    // port. Only the scheme picks the port, so every address carries one:
+    // http:// lands on 80, https:// on 443, and nothing listens anywhere else.
+    // Caught live.
     const out = renderCaddyfile([entry("prdl", "")]);
     for (const line of out.split("\n")) {
       if (!line.endsWith(" {") || line.startsWith("{")) continue;
       for (const address of line.slice(0, -2).split(", ")) {
-        expect(address.startsWith("http://")).toBe(true);
+        expect(address).toMatch(/^https?:\/\//);
       }
     }
   });
@@ -137,6 +144,26 @@ describe("renderCaddyfile", () => {
     expect(out).toContain(
       `\treverse_proxy caddy-prdl:${String(PROJECT_CADDY_PORT)}`,
     );
+  });
+
+  it("serves every entry over https too, with an internal cert", () => {
+    // A separate block, because a `tls` directive is illegal in a site block
+    // that also carries an http:// address. `tls internal` is explicit config,
+    // so it survives `auto_https off` (which governs automation and redirects).
+    const out = renderCaddyfile([entry("prdl", "")]);
+    expect(out).toContain("https://prdl.localhost, https://*.prdl.localhost {");
+    expect(out).toContain("\ttls internal");
+  });
+
+  it("never redirects http to https — both schemes serve the proxy", () => {
+    // Existing tooling speaks http://; TLS is additive, not a migration. Each
+    // scheme's block carries its own reverse_proxy, and nothing emits `redir`.
+    const out = renderCaddyfile([entry("prdl", "")]);
+    const proxies = out
+      .split("\n")
+      .filter((line) => line.includes("reverse_proxy"));
+    expect(proxies).toHaveLength(2);
+    expect(out).not.toMatch(/^\s*redir\b/m);
   });
 
   it("routes a worktree to its own upstream", () => {

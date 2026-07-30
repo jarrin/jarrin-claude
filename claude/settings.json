@@ -1,12 +1,4 @@
 {
-  "model": "opus[1m]",
-  "skipDangerousModePermissionPrompt": true,
-  "theme": "dark",
-  "tui": "fullscreen",
-  "statusLine": {
-    "type": "command",
-    "command": "$HOME/.local/bin/claudjar api statusline"
-  },
   "hooks": {
     "SessionStart": [
       {
@@ -18,5 +10,13 @@
         ]
       }
     ]
-  }
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "$HOME/.local/bin/claudjar api statusline"
+  },
+  "tui": "fullscreen",
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "dark",
+  "model": "claude-fable-5[1m]"
 }

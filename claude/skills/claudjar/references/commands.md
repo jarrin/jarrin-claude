@@ -184,9 +184,9 @@ USAGE
   claudjar caddy up
   claudjar caddy up --help
 
-Create the 'claudjar' docker network if missing, regenerate the Caddyfile from the registry, and run the 'claudjar-caddy' container publishing host port 80.
+Create the 'claudjar' docker network if missing, regenerate the Caddyfile from the registry, and run the 'claudjar-caddy' container publishing host ports 80 (http) and 443 (https, Caddy-internal certificates — trust them once with 'claudjar caddy trust').
 
-Machine-wide, not per-repo: one container serves every registered project. Running it when it is already up reloads the config instead.
+Machine-wide, not per-repo: one container serves every registered project. Running it when it is already up reloads the config instead — unless the running container predates a published port, in which case it is recreated (port mappings are fixed at creation).
 
 FLAGS
   -h --help  Print help information and exit
@@ -243,6 +243,21 @@ USAGE
   claudjar caddy leave --help
 
 Remove this checkout's route from the registry, regenerate the Caddyfile, and reload. Works even after `caddy.enabled` has been turned off, so a repo can always retire its own route.
+
+FLAGS
+  -h --help  Print help information and exit
+```
+
+### claudjar caddy trust
+
+```
+USAGE
+  claudjar caddy trust
+  claudjar caddy trust --help
+
+Every registered site is also served on https:// with certificates signed by the caddy's own internal CA. This command reads that CA's root and intermediate certificates out of the running container and anchors them in the host trust store (update-ca-trust on Arch-family hosts, update-ca-certificates on Debian-family), so curl and NSS-linked browsers verify the chain.
+
+Once per machine: the CA lives in the claudjar-caddy-data volume and survives container recreation. The root is the durable anchor — Caddy rotates the intermediate and serves it in the TLS chain anyway. Requires sudo for the two privileged steps (copying the anchors, rebuilding the store).
 
 FLAGS
   -h --help  Print help information and exit

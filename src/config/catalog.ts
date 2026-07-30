@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /**
  * Discover the available global rule slugs by listing `*.md` files in the rules
- * library (default `~/.claude/rules`, overridable via `JARRIN_RULES_DIR`). Used
+ * library (default `~/.claude/rule-library`, overridable via `JARRIN_RULES_DIR`). Used
  * by `init` to offer a checklist rather than making the user recall slugs.
  * Returns an empty list if the directory is missing.
  */

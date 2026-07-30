@@ -53,6 +53,7 @@ table.
 | A `<slug>.localhost` domain for the repo | `claudjar caddy join` (once per project)    |
 | To start / stop the machine-wide proxy   | `claudjar caddy up` / `claudjar caddy down` |
 | To see what is routed where              | `claudjar caddy status`                     |
+| `https://…localhost` trusted on this host | `claudjar caddy trust` (sudo, once per machine) |
 | To cut / tag a release                   | `claudjar release [--bump major\|minor]`    |
 | To see this repo's resolved config       | `claudjar info`                             |
 | To activate a repo / change its rules    | `claudjar init`                             |
@@ -86,14 +87,23 @@ starts a fresh `claude` in the target worktree. That is deliberate: launching is
 makes the target's SessionStart hook run, giving the new session its stamped identity
 and port.
 
-**caddy is half a system, on purpose.** claudjar runs one proxy container on host port 80
-and generates only its own config. The project supplies its **own** caddy — its compose
-file, its network membership (`claudjar`, as an external network), listening on container
-port **8000**, answering to `caddy-<slug>` (or `caddy-<slug>-<worktree>`). Never write a
-project's compose file or Caddyfile from this skill and never claim a domain works before
-the project side exists: until it does, the domain resolves and 502s. If the user asks why
-their `.localhost` 502s, check `claudjar caddy status` first, then their container's name
-and network — not claudjar's config.
+**caddy is half a system, on purpose.** claudjar runs one proxy container on host ports 80
+(http) and 443 (https) and generates only its own config. The project supplies its **own**
+caddy — its compose file, its network membership (`claudjar`, as an external network),
+listening on container port **8000**, answering to `caddy-<slug>` (or
+`caddy-<slug>-<worktree>`). Never write a project's compose file or Caddyfile from this
+skill and never claim a domain works before the project side exists: until it does, the
+domain resolves and 502s. If the user asks why their `.localhost` 502s, check
+`claudjar caddy status` first, then their container's name and network — not claudjar's
+config.
+
+**https is claudjar's, trust is one command.** TLS terminates at claudjar's proxy with
+certificates from Caddy's internal CA; the project side keeps speaking plain HTTP on 8000
+and both schemes are served with no redirect. If `https://<slug>.localhost` shows a
+certificate warning, run `claudjar caddy trust` (sudo) — it anchors the CA's root +
+intermediate in the host trust store, once per machine. Do not hand-import certificates or
+add per-project TLS config; the CA survives container recreation in the
+`claudjar-caddy-data` volume.
 
 **`release` refuses more than it does.** It runs only on `main` with a clean tree, and
 never pushes. If it refuses, relay the reason — do not work around it by tagging or

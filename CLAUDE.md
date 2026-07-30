@@ -12,7 +12,10 @@ routine changes. Push only when explicitly asked.
 
 ## Where rules live
 
-- Global rule library: `claude/rules/*.md`, symlinked to `~/.claude/rules/`.
+- Global rule library: `claude/rules/*.md`, symlinked to `~/.claude/rule-library/`.
+  **Never** to `~/.claude/rules/` — Claude Code auto-loads every `.md` in _that_
+  directory as always-on global instructions, so the whole library would land in every
+  session and a repo's `rules:` selection would decide nothing.
 - One file per language or framework, named by slug: `lang-php.md`, `lang-ts.md`,
   `fw-laravel.md`, `fw-nuxtjs.md`, … (referenced without the `.md`).
 - All content in **English**, imperative and terse — rules load into a live context
@@ -34,11 +37,29 @@ is the shared contract behind the `backlog:` block (below), implemented by both
 ## How rules are selected (per project)
 
 Rules are **not** auto-loaded by path globbing. Each project opts in explicitly, and a
-`SessionStart` hook injects the selected rules at the start of every session. The hook is
+`SessionStart` hook assembles the selected rules at the start of every session. The hook is
 registered in `claude/settings.json` as `$HOME/.local/bin/claudjar api session-start` —
 the standalone binary directly, with no launcher script and no Node needed on PATH. The
 `claudjar init` command scaffolds and updates a repo's `.jarrin.yml`; see the README's
 **The claudjar CLI** section.
+
+### Rules are delivered as memory, not as hook output
+
+The hook does **not** inject the rules. It writes them to `<repo>/.claude/.jarrin-rules.md`
+(generated, gitignored) and injects a ~260-byte pointer; a one-line `@` import in the repo's
+`CLAUDE.md` is what actually loads them, as project memory.
+
+That indirection is not decoration. Claude Code caps a hook's `additionalContext`: past
+roughly 25 KB it spills the payload to a transcript file and shows the model a ~2 KB
+preview. Four rule files plus a page of `.jarrin-claude.md` clears that easily, and the
+truncation is **silent** — the session starts having quietly dropped most of what it
+selected. Project memory has no such cap. Keep the pointer small; it is the one part that
+can still hit the ceiling.
+
+`claudjar init` writes both halves (the `CLAUDE.md` import and the `.gitignore` entry) and
+is idempotent. A repo missing the import still works — the pointer tells the session to read
+the file — but it costs a tool call and depends on the model obeying, so the hook warns on
+stderr when it is absent.
 
 A `.jarrin.yml` that is not valid YAML parses to _nothing selected_, which is
 indistinguishable from a repo that opted out — so the hook warns on stderr when the file
@@ -49,7 +70,7 @@ fails to parse, rather than starting a session that silently lost all its rules.
   empty file injects nothing (not an error):
 
   ```yaml
-  # Tier a — global rule slugs → ~/.claude/rules/<slug>.md
+  # Tier a — global rule slugs → ~/.claude/rule-library/<slug>.md
   rules:
     - lang-php
     - fw-laravel
@@ -220,13 +241,23 @@ fails to parse, rather than starting a session that silently lost all its rules.
   too long to want in a URL.
 
   **claudjar owns exactly one side of this.** It runs a single `claudjar-caddy` container
-  on host port 80, attached to a shared `claudjar` docker network, and generates only that
-  container's config. Each project supplies its **own** caddy — in its own compose file, on
-  its own network, joining `claudjar` as an external second network, listening on container
-  port **8000**. claudjar proxies the whole domain to that container and stops; routing
-  `studio.` to a service happens inside the project, in config claudjar never reads or
-  writes. That is the entire reason `caddy:` has one key: there is nothing else claudjar is
-  entitled to know.
+  on host ports 80 (http) and 443 (https, Caddy-internal certificates), attached to a
+  shared `claudjar` docker network, and generates only that container's config. Each
+  project supplies its **own** caddy — in its own compose file, on its own network, joining
+  `claudjar` as an external second network, listening on container port **8000**. claudjar
+  proxies the whole domain to that container and stops; routing `studio.` to a service
+  happens inside the project, in config claudjar never reads or writes. That is the entire
+  reason `caddy:` has one key: there is nothing else claudjar is entitled to know.
+
+  TLS terminates at claudjar's caddy — the project side keeps speaking plain HTTP on 8000
+  and needs no change to be reachable over https. Both schemes are served side by side with
+  **no HTTP→HTTPS redirect**, so existing `http://` tooling keeps working. The certificates
+  come from Caddy's internal CA, whose state lives in the `claudjar-caddy-data` volume and
+  survives container recreation; `claudjar caddy trust` anchors its root + intermediate in
+  the host trust store (`update-ca-trust` on Arch-family, `update-ca-certificates` on
+  Debian-family — sudo, once per machine), after which curl and NSS-linked browsers verify
+  the chain. The root is the durable anchor: Caddy rotates the intermediate and serves it
+  in the TLS chain, so the trust-store copy of it going stale costs nothing.
 
   Because the two sides never negotiate, the upstream is a **convention**: `caddy-<slug>`
   for a main checkout, `caddy-<slug>-<worktree>` for a worktree. A project whose caddy
@@ -243,18 +274,28 @@ fails to parse, rather than starting a session that silently lost all its rules.
   after. A reload when nothing is running is a no-op, not a failure, so `join` works before
   `caddy up` was ever run and the routes are picked up later.
 
-  Two details in `src/caddy/` are load-bearing and were both found by testing live, not by
+  Three details in `src/caddy/` are load-bearing and were all found by testing live, not by
   reading docs:
 
-  - Site addresses are **`http://`-prefixed**. A bare `prdl.localhost {` binds Caddy's
-    HTTPS port (443) even under `auto_https off` — that directive governs certificates, not
-    the default port. claudjar publishes host port 80 alone, so an unschemed site listens
-    where nothing is mapped and every request is refused.
+  - Site addresses are **scheme-prefixed, both of them**. A bare `prdl.localhost {` binds
+    Caddy's HTTPS port (443) whatever `auto_https` says — the option governs certificate
+    automation and redirects, not the default port. Only the scheme picks the port, so the
+    `http://` block lands on 80 and the `https://` block on 443, and nothing listens where
+    no host port is mapped.
+  - The global option is **`auto_https disable_redirects`, never `off`**. Under `off` Caddy
+    still provisions its internal CA but adds no site names to certificate automation —
+    `tls internal` only names the issuer, automation is what drives issuance — so no leaf
+    certificates exist and every handshake dies with a `tlsv1 internal error` alert.
+    `disable_redirects` keeps issuance while the `http://` blocks keep serving plain HTTP.
   - The container runs with **`--dns-search .`**. Without it, an upstream that is merely not
     running does not fail: Docker's embedded DNS falls through to the host resolver, which
     appends the machine's search domain and can resolve `caddy-<slug>` to a real **external**
     host — quietly proxying a local request off the machine. Cleared, the single label either
     hits a container on the network or 502s.
+
+  One operational consequence: port mappings are fixed at container creation, so `caddy up`
+  recreates the running container (instead of reloading) when it does not yet publish both
+  ports — the CA and registry both live outside it, so recreation loses nothing.
 
 - A **`hooks:`** block in `.jarrin.yml` (committed, shared) runs shell commands at claudjar
   lifecycle points, in order, stopping at the first failure:

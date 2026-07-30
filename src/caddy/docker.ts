@@ -5,6 +5,7 @@ import {
   CADDY_HOST_PORT,
   CADDY_IMAGE,
   CADDY_NETWORK,
+  CADDY_TLS_PORT,
 } from "./route.js";
 
 /**
@@ -55,6 +56,12 @@ export function containerState(): ContainerState {
   return res.stdout.trim() === "true" ? "running" : "stopped";
 }
 
+/** Whether the container currently publishes `port` on the host. */
+function publishesPort(port: number): boolean {
+  const res = docker(["port", CADDY_CONTAINER, String(port)]);
+  return res.status === 0 && res.stdout.trim() !== "";
+}
+
 /**
  * Bring the container up against `caddyfile`, mounted read-only so a container
  * restart can never rewrite the file claudjar generates.
@@ -65,10 +72,17 @@ export function containerState(): ContainerState {
  */
 export function caddyUp(caddyfile: string): DockerResult {
   const state = containerState();
-  // Already up: a reload is the honest meaning of `up` here. reloadCaddy() only
-  // returns null when nothing is running, which this branch has ruled out.
+  // Already up AND publishing both ports: a reload is the honest meaning of
+  // `up` here. reloadCaddy() only returns null when nothing is running, which
+  // this branch has ruled out. Port mappings are fixed at creation, so a
+  // container from a claudjar that published only 80 can never serve HTTPS by
+  // reloading — it is recreated instead (the CA and registry both live outside
+  // it, so nothing is lost).
   if (state === "running") {
-    return reloadCaddy() ?? { status: 0, stdout: "", stderr: "" };
+    if (publishesPort(CADDY_HOST_PORT) && publishesPort(CADDY_TLS_PORT)) {
+      return reloadCaddy() ?? { status: 0, stdout: "", stderr: "" };
+    }
+    docker(["rm", "-f", CADDY_CONTAINER]);
   }
   if (state === "stopped") docker(["rm", "-f", CADDY_CONTAINER]);
 
@@ -92,11 +106,33 @@ export function caddyUp(caddyfile: string): DockerResult {
     "unless-stopped",
     "-p",
     `${String(CADDY_HOST_PORT)}:80`,
+    "-p",
+    `${String(CADDY_TLS_PORT)}:443`,
     "-v",
     `${caddyfile}:/etc/caddy/Caddyfile:ro`,
     "-v",
     "claudjar-caddy-data:/data",
     CADDY_IMAGE,
+  ]);
+}
+
+/** The certificates of Caddy's internal CA, as it names them. */
+export type PkiCert = "root" | "intermediate";
+
+/**
+ * Read one of the internal CA's certificates out of the running container.
+ *
+ * Caddy provisions the local authority at config load, the moment any site
+ * says `tls internal` — so with at least one route registered these exist as
+ * soon as the container is up, before any HTTPS request was ever served. They
+ * live in the `claudjar-caddy-data` volume and survive recreation.
+ */
+export function readPkiCert(name: PkiCert): DockerResult {
+  return docker([
+    "exec",
+    CADDY_CONTAINER,
+    "cat",
+    `/data/caddy/pki/authorities/local/${name}.crt`,
   ]);
 }
 

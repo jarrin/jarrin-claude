@@ -10,7 +10,17 @@ import type { CommandContext } from "@stricli/core";
  */
 export interface LocalContext extends CommandContext {
   readonly process: NodeJS.Process;
-  /** Global rule library — `~/.claude/rules` unless `JARRIN_RULES_DIR` is set. */
+  /**
+   * Global rule library — `~/.claude/rule-library` unless `JARRIN_RULES_DIR`
+   * is set.
+   *
+   * Deliberately NOT `~/.claude/rules`: Claude Code auto-loads every `.md` in
+   * that directory as always-on global instructions, which would put the whole
+   * library in every session and make a repo's `rules:` selection meaningless.
+   * The library is a catalog to pick FROM, so it has to sit outside the paths
+   * Claude reads on its own; the SessionStart hook injects only what a repo
+   * selected.
+   */
   readonly rulesDir: string;
   /** Skills library — `~/.claude/skills` unless `JARRIN_SKILLS_DIR` is set. */
   readonly skillsDir: string;
@@ -26,7 +36,7 @@ export interface LocalContext extends CommandContext {
 
 export function buildContext(proc: NodeJS.Process): LocalContext {
   const rulesDir =
-    proc.env.JARRIN_RULES_DIR ?? join(homedir(), ".claude", "rules");
+    proc.env.JARRIN_RULES_DIR ?? join(homedir(), ".claude", "rule-library");
   const skillsDir =
     proc.env.JARRIN_SKILLS_DIR ?? join(homedir(), ".claude", "skills");
   const caddyDir =

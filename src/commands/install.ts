@@ -89,7 +89,12 @@ async function runInstall(
       src: join(repoDir, "claude", "settings.json"),
       dest: join(claudeHome, "settings.json"),
     },
-    { src: join(repoDir, "claude", "rules"), dest: join(claudeHome, "rules") },
+    // → `rule-library`, not `rules`: Claude Code auto-loads `~/.claude/rules/*.md`
+    // into every session regardless of what a repo selected. See context.ts.
+    {
+      src: join(repoDir, "claude", "rules"),
+      dest: join(claudeHome, "rule-library"),
+    },
     {
       src: join(repoDir, "claude", "skills"),
       dest: join(claudeHome, "skills"),

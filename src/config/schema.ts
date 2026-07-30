@@ -133,7 +133,7 @@ export interface WorktreeConfig {
 }
 
 export interface JarrinConfig {
-  /** Tier a — global rule slugs → ~/.claude/rules/<slug>.md */
+  /** Tier a — global rule slugs → ~/.claude/rule-library/<slug>.md */
   readonly rules: string[];
   /** Tier b — project-local rule files (paths from the repo root) */
   readonly local: string[];

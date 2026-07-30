@@ -11,6 +11,11 @@ import { parseConfig } from "../config/read.js";
 import type { CommandRow, ImportRule, JarrinConfig } from "../config/schema.js";
 import { emptyConfig } from "../config/schema.js";
 import { serializeConfig } from "../config/write.js";
+import {
+  wireProjectMemory,
+  MEMORY_IMPORT,
+  MEMORY_REL,
+} from "../session-start/memory.js";
 import type { LocalContext } from "../context.js";
 import { AbortError, loadPrompts, resolveInteractive } from "../interaction.js";
 
@@ -86,6 +91,10 @@ async function runInit(this: LocalContext, flags: InitFlags): Promise<void> {
     writeFileSync(jarrinMd, jarrinMdTemplate(cwd), "utf8");
   }
 
+  // The rules themselves are delivered as project memory, not as hook output —
+  // see session-start/memory.ts for why. Wiring it is part of activating a repo.
+  const wired = wireProjectMemory(cwd);
+
   const verb = exists ? "Updated" : "Created";
   const rel = jarrinYml.startsWith(cwd)
     ? jarrinYml.slice(cwd.length + 1)
@@ -93,6 +102,12 @@ async function runInit(this: LocalContext, flags: InitFlags): Promise<void> {
   proc.stdout.write(`${verb} ${rel}\n`);
   if (scaffoldMd && isFile(jarrinMd)) {
     proc.stdout.write(`Scaffolded ${basename(jarrinMd)}\n`);
+  }
+  if (wired.importAdded) {
+    proc.stdout.write(`Added ${MEMORY_IMPORT} to CLAUDE.md\n`);
+  }
+  if (wired.gitignoreAdded) {
+    proc.stdout.write(`Ignored ${MEMORY_REL}\n`);
   }
 
   // Keep the machine-wide caddy in step with the file we just wrote. Re-parsed

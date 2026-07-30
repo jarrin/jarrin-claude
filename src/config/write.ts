@@ -89,12 +89,14 @@ function renderTemplate(cfg: JarrinConfig): string {
   ];
 
   if (cfg.rules.length > 0) {
-    lines.push("# Tier a — global rule slugs → ~/.claude/rules/<slug>.md");
+    lines.push(
+      "# Tier a — global rule slugs → ~/.claude/rule-library/<slug>.md",
+    );
     lines.push("rules:");
     for (const r of cfg.rules) lines.push(`  - ${r}`);
   } else {
     lines.push(
-      "# rules:            # global rule slugs → ~/.claude/rules/<slug>.md",
+      "# rules:            # global rule slugs → ~/.claude/rule-library/<slug>.md",
     );
     lines.push("#   - lang-ts");
   }

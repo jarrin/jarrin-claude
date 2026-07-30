@@ -9,7 +9,14 @@ import { configParseError } from "../config/read.js";
 import type { LocalContext } from "../context.js";
 import { resolveStack, showsPort, stackStatusText } from "../project/stack.js";
 import {
-  composeAdditionalContext,
+  hasMemoryImport,
+  writeRulesDocument,
+  MEMORY_IMPORT,
+  MEMORY_REL,
+} from "../session-start/memory.js";
+import {
+  composePointer,
+  composeRulesDocument,
   renderCommands,
   resolveRules,
 } from "../session-start/resolve.js";
@@ -111,16 +118,51 @@ async function runSessionStart(this: LocalContext): Promise<void> {
       ? stackStatusText(stack.name, stack.port)
       : undefined;
 
-  const additionalContext = composeAdditionalContext({
-    stackStatus,
+  // The bulk goes to a file loaded as project memory, not into the hook's
+  // additionalContext, which Claude Code truncates past ~25 KB. See memory.ts.
+  const document = composeRulesDocument({
     commandsTable:
       cfg.commands.length > 0 ? renderCommands(cfg.commands) : undefined,
     ruleBlocks,
     extraMd: extraMd || undefined,
   });
 
+  if (document !== null) {
+    try {
+      writeRulesDocument(cwd, document);
+    } catch (error) {
+      // A read-only or otherwise unwritable checkout must not block the session:
+      // fall back to injecting the document directly. That is the pre-memory
+      // behaviour, truncation risk and all, which still beats no rules at all.
+      err(
+        `${TAG} WARNING: could not write ${MEMORY_REL} ` +
+          `(${error instanceof Error ? error.message : String(error)}); ` +
+          "injecting rules directly, which Claude Code may truncate.\n",
+      );
+      emit(proc, [document, stackStatus].filter(Boolean).join("\n\n"));
+      return;
+    }
+    if (!hasMemoryImport(cwd)) {
+      err(
+        `${TAG} WARNING: CLAUDE.md does not import the rules document. Add ` +
+          `\`${MEMORY_IMPORT}\` to it (or run \`claudjar init\`) so the rules ` +
+          "load as project memory rather than costing a tool call.\n",
+      );
+    }
+  }
+
+  const additionalContext = composePointer({
+    rulesPath: document !== null ? MEMORY_REL : undefined,
+    stackStatus,
+  });
+
   if (additionalContext === null) return; // nothing selected — inject nothing
 
+  emit(proc, additionalContext);
+}
+
+/** Write the hook's contract to stdout. Nothing else may go there. */
+function emit(proc: NodeJS.Process, additionalContext: string): void {
   proc.stdout.write(
     JSON.stringify({
       hookSpecificOutput: {

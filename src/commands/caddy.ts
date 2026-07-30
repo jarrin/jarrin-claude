@@ -8,6 +8,7 @@ import {
   containerState,
   dockerAvailable,
   ensureNetwork,
+  readPkiCert,
 } from "../caddy/docker.js";
 import {
   caddyfilePath,
@@ -20,10 +21,17 @@ import {
   CADDY_CONTAINER,
   CADDY_HOST_PORT,
   CADDY_NETWORK,
+  CADDY_TLS_PORT,
   PROJECT_CADDY_PORT,
   sortEntries,
 } from "../caddy/route.js";
 import { deregisterTarget, registerTarget } from "../caddy/sync.js";
+import {
+  anchorName,
+  installAnchors,
+  looksLikeCert,
+  resolveTrustStore,
+} from "../caddy/trust.js";
 import { loadEffectiveConfig } from "../config/load.js";
 import type { LocalContext } from "../context.js";
 import { toplevel } from "../git.js";
@@ -88,7 +96,7 @@ function runCaddyJoin(this: LocalContext): void {
     `Registered ${target.entry.slug}${target.entry.worktree ? ` (${target.entry.worktree})` : ""}.\n`,
   );
   for (const host of target.hosts)
-    out(`  http://${host.replace("*.", "<service>.")}\n`);
+    out(`  http(s)://${host.replace("*.", "<service>.")}\n`);
   out(
     `  → ${target.entry.upstream}:${String(PROJECT_CADDY_PORT)} on network '${CADDY_NETWORK}'\n`,
   );
@@ -159,11 +167,16 @@ function runCaddyUp(this: LocalContext): void {
     return fail((res.stderr || res.stdout).trim() || "`docker run` failed.");
   }
   out(
-    `claudjar caddy is up on http://localhost:${String(CADDY_HOST_PORT)} ` +
-      `(${String(entries.length)} route(s)).\n`,
+    `claudjar caddy is up on :${String(CADDY_HOST_PORT)} (http) and ` +
+      `:${String(CADDY_TLS_PORT)} (https, Caddy-internal certs) — ` +
+      `${String(entries.length)} route(s).\n`,
   );
   if (entries.length === 0) {
     out(`No projects registered yet — run 'claudjar caddy join' in a repo.\n`);
+  } else {
+    out(
+      `If https is not trusted on this machine yet, run 'claudjar caddy trust' once.\n`,
+    );
   }
 }
 
@@ -194,7 +207,9 @@ function runCaddyStatus(this: LocalContext): void {
   const mark = state === "running" ? "●" : "○";
   out(`${mark} ${CADDY_CONTAINER}: ${state}`);
   if (state === "running")
-    out(` (http://localhost:${String(CADDY_HOST_PORT)})`);
+    out(
+      ` (http :${String(CADDY_HOST_PORT)}, https :${String(CADDY_TLS_PORT)})`,
+    );
   out("\n");
   out(`  registry: ${join(this.caddyDir, "registry.yml")}\n\n`);
 
@@ -212,6 +227,58 @@ function runCaddyStatus(this: LocalContext): void {
       `  ${domain.padEnd(34)} → ${entry.upstream}:${String(PROJECT_CADDY_PORT)}\n`,
     );
   }
+}
+
+function runCaddyTrust(this: LocalContext): void {
+  const proc = this.process;
+  const out = (msg: string): void => void proc.stdout.write(msg);
+  const fail = (msg: string): void => {
+    proc.stderr.write(`caddy trust: ${msg}\n`);
+    proc.exitCode = 1;
+  };
+
+  if (!dockerAvailable()) return fail("docker is not available.");
+  if (containerState() !== "running") {
+    return fail(
+      "claudjar caddy is not running — start it with 'claudjar caddy up' " +
+        "first; the CA is created on start, once any route is registered.",
+    );
+  }
+
+  const certs = new Map<string, string>();
+  for (const name of ["root", "intermediate"] as const) {
+    const res = readPkiCert(name);
+    if (res.status !== 0 || !looksLikeCert(res.stdout)) {
+      return fail(
+        `could not read the internal CA's ${name} certificate from ` +
+          `'${CADDY_CONTAINER}'. The CA only exists once a route is ` +
+          "registered ('claudjar caddy join') and the container has started " +
+          "against it — 'claudjar caddy up' regenerates and reloads. " +
+          `(${(res.stderr || res.stdout).trim() || "empty output"})`,
+      );
+    }
+    certs.set(anchorName(name), res.stdout);
+  }
+
+  const store = resolveTrustStore();
+  if (!store) {
+    return fail(
+      "no known trust store on this host. Install the certs by hand:\n" +
+        `  docker exec ${CADDY_CONTAINER} cat /data/caddy/pki/authorities/local/root.crt\n` +
+        "and anchor that PEM wherever this OS trusts CAs from.",
+    );
+  }
+
+  out(`Anchoring Caddy's internal CA (needs sudo):\n`);
+  for (const name of certs.keys()) out(`  ${join(store.anchorsDir, name)}\n`);
+  const res = installAnchors(store, certs);
+  if (!res.ok) return fail(res.detail);
+  out(
+    `Ran ${store.update} — https://<slug>.localhost now verifies for curl ` +
+      "and NSS-linked browsers.\n" +
+      "The root is the durable anchor; Caddy rotates the intermediate and " +
+      "serves it in the TLS chain, so this never needs re-running for it.\n",
+  );
 }
 
 /** Report a reload outcome without turning a stopped caddy into a failure. */
@@ -261,13 +328,19 @@ const caddyUpCommand = buildCommand({
   func: runCaddyUp,
   parameters: { flags: {} },
   docs: {
-    brief: `Start the machine-wide caddy on host port ${String(CADDY_HOST_PORT)}`,
+    brief:
+      "Start the machine-wide caddy on host ports " +
+      `${String(CADDY_HOST_PORT)} (http) and ${String(CADDY_TLS_PORT)} (https)`,
     fullDescription:
       `Create the '${CADDY_NETWORK}' docker network if missing, regenerate the ` +
       `Caddyfile from the registry, and run the '${CADDY_CONTAINER}' container ` +
-      `publishing host port ${String(CADDY_HOST_PORT)}.\n\n` +
+      `publishing host ports ${String(CADDY_HOST_PORT)} (http) and ` +
+      `${String(CADDY_TLS_PORT)} (https, Caddy-internal certificates — trust ` +
+      "them once with 'claudjar caddy trust').\n\n" +
       "Machine-wide, not per-repo: one container serves every registered project. " +
-      "Running it when it is already up reloads the config instead.",
+      "Running it when it is already up reloads the config instead — unless the " +
+      "running container predates a published port, in which case it is " +
+      "recreated (port mappings are fixed at creation).",
   },
 });
 
@@ -290,6 +363,26 @@ const caddyStatusCommand = buildCommand({
   },
 });
 
+const caddyTrustCommand = buildCommand({
+  func: runCaddyTrust,
+  parameters: { flags: {} },
+  docs: {
+    brief: "Anchor the caddy's internal CA in this host's trust store (sudo)",
+    fullDescription:
+      "Every registered site is also served on https:// with certificates " +
+      "signed by the caddy's own internal CA. This command reads that CA's " +
+      "root and intermediate certificates out of the running container and " +
+      "anchors them in the host trust store (update-ca-trust on Arch-family " +
+      "hosts, update-ca-certificates on Debian-family), so curl and " +
+      "NSS-linked browsers verify the chain.\n\n" +
+      "Once per machine: the CA lives in the claudjar-caddy-data volume and " +
+      "survives container recreation. The root is the durable anchor — Caddy " +
+      "rotates the intermediate and serves it in the TLS chain anyway. " +
+      "Requires sudo for the two privileged steps (copying the anchors, " +
+      "rebuilding the store).",
+  },
+});
+
 export const caddyRoutes = buildRouteMap({
   routes: {
     up: caddyUpCommand,
@@ -297,12 +390,15 @@ export const caddyRoutes = buildRouteMap({
     status: caddyStatusCommand,
     join: caddyJoinCommand,
     leave: caddyLeaveCommand,
+    trust: caddyTrustCommand,
   },
   docs: {
     brief: "Machine-wide reverse proxy putting projects on <slug>.localhost",
     fullDescription:
-      "claudjar runs one caddy on host port " +
-      `${String(CADDY_HOST_PORT)}, attached to the '${CADDY_NETWORK}' docker ` +
+      "claudjar runs one caddy on host ports " +
+      `${String(CADDY_HOST_PORT)} (http) and ${String(CADDY_TLS_PORT)} ` +
+      "(https, Caddy-internal certificates — anchor them once with " +
+      `'claudjar caddy trust'), attached to the '${CADDY_NETWORK}' docker ` +
       "network, and routes:\n\n" +
       "  <service>.<worktree>.<slug>.localhost\n\n" +
       "to each registered project's OWN caddy container on port " +

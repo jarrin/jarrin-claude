@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import { emptyConfig } from "../config/schema.js";
 import {
-  composeAdditionalContext,
+  composePointer,
+  composeRulesDocument,
   dedup,
   renderCommands,
   resolveRules,
@@ -52,32 +53,50 @@ describe("renderCommands", () => {
   });
 });
 
-describe("composeAdditionalContext", () => {
+describe("composeRulesDocument", () => {
   it("returns null when only the header would be present", () => {
-    expect(composeAdditionalContext({ ruleBlocks: [] })).toBeNull();
+    expect(composeRulesDocument({ ruleBlocks: [] })).toBeNull();
   });
 
-  it("joins stack status, commands, rules and extra md with the header", () => {
-    const out = composeAdditionalContext({
-      stackStatus: "STACK ON 8001",
+  it("joins commands, rules and extra md with the header", () => {
+    const out = composeRulesDocument({
       commandsTable: "## Commands",
       ruleBlocks: ["RULE A", "RULE B"],
       extraMd: "PROJECT MD",
     });
     expect(out).not.toBeNull();
     expect(out).toContain("# Jarrin project rules");
-    expect(out).toContain("STACK ON 8001");
+    expect(out).toContain("## Commands");
     expect(out).toContain("RULE A\n\n---\n\nRULE B");
     expect(out).toContain("PROJECT MD");
     expect(out?.endsWith("\n")).toBe(true);
   });
 
-  it("injects stack status even when no rules or commands are selected", () => {
-    const out = composeAdditionalContext({
-      stackStatus: "STACK ON 8001",
-      ruleBlocks: [],
-    });
+  it("excludes the per-session stack status, so the file is stable", () => {
+    const first = composeRulesDocument({ ruleBlocks: ["RULE A"] });
+    const second = composeRulesDocument({ ruleBlocks: ["RULE A"] });
+    expect(first).toBe(second);
+    expect(first).not.toContain("STACK");
+  });
+});
+
+describe("composePointer", () => {
+  it("returns null when there is nothing to point at", () => {
+    expect(composePointer({})).toBeNull();
+  });
+
+  it("names the rules document and stays far under the injection cap", () => {
+    const out = composePointer({ rulesPath: ".claude/.jarrin-rules.md" });
+    expect(out).toContain(".claude/.jarrin-rules.md");
+    // The whole point of the pointer: it must never approach the ~25 KB at
+    // which Claude Code truncates a hook's additionalContext.
+    expect(out?.length ?? 0).toBeLessThan(1024);
+  });
+
+  it("injects stack status even when no rules are selected", () => {
+    const out = composePointer({ stackStatus: "STACK ON 8001" });
     expect(out).not.toBeNull();
     expect(out).toContain("STACK ON 8001");
+    expect(out).not.toContain("jarrin-rules.md");
   });
 });
