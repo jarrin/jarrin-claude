@@ -26,6 +26,7 @@ const logKind = z.enum([
   "error",
   "result",
   "system",
+  "tail",
 ] as const satisfies readonly LogKind[]);
 
 const clipped = z.string().transform((s) => s.slice(0, MAX_TEXT));
@@ -47,6 +48,7 @@ const logDetail = z.discriminatedUnion("type", [
       .max(200),
     omitted: z.number().int(),
   }),
+  z.object({ type: z.literal("tail"), file: clipped, done: z.boolean() }),
 ]) satisfies z.ZodType<LogDetail>;
 
 const logLine = z.object({
@@ -67,6 +69,12 @@ const instanceInfo = z.object({
   id: z.string().min(1).max(64),
   host: z.string().min(1).max(128),
   repo: z.string().max(256),
+  // Rendered as link targets, so only a web URL is accepted.
+  forge: z
+    .string()
+    .max(256)
+    .regex(/^https?:\/\/[^\s]+$/)
+    .optional(),
   milestones: z.array(milestoneRef).max(32),
   pid: z.number().int(),
   startedAt: z.number(),

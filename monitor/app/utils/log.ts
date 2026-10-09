@@ -2,21 +2,57 @@ import type { LogDetail, LogLine } from "#shared/protocol";
 import { isProse, parseJson, type JsonValue } from "./json";
 import { fence } from "./markdown";
 
+/** A file a Bash call writes to, followed live while the command runs. */
+export interface LiveTail {
+  readonly file: string;
+  readonly text: string;
+  readonly done: boolean;
+}
+
 /** One row of the log: a line, plus — for a tool call — the result answering it. */
 export interface LogItem {
   readonly line: LogLine;
   readonly result?: LogLine;
+  readonly tail?: LiveTail;
 }
 
-/** Fold each tool result into the tool call it answers (paired by tool_use id). */
+/** How much of a tail is kept: the end of a long build log is what matters. */
+export const MAX_TAIL_CHARS = 256 * 1024;
+
+/**
+ * Fold each tool result into the tool call it answers (paired by tool_use id),
+ * and each `tail` line into the live output of the call that writes it.
+ */
 export function groupLines(lines: readonly LogLine[]): LogItem[] {
   const items: LogItem[] = [];
   const pending = new Map<string, number>();
+  const calls = new Map<string, number>();
   for (const line of lines) {
     const call = line.call;
     if (line.kind === "tool" && call) {
       pending.set(call, items.length);
+      calls.set(call, items.length);
       items.push({ line });
+      continue;
+    }
+    if (line.kind === "tail") {
+      const at = call ? calls.get(call) : undefined;
+      const item = at === undefined ? undefined : items[at];
+      if (at !== undefined && item && line.detail?.type === "tail") {
+        const text = (item.tail?.text ?? "") + line.text;
+        items[at] = {
+          ...item,
+          tail: {
+            file: line.detail.file,
+            text:
+              text.length > MAX_TAIL_CHARS
+                ? text.slice(text.length - MAX_TAIL_CHARS)
+                : text,
+            done: line.detail.done,
+          },
+        };
+      }
+      // A tail whose call scrolled out of the log has nothing to attach to.
       continue;
     }
     const at =
@@ -162,4 +198,22 @@ function hasProse(value: JsonValue): boolean {
   if (value !== null && typeof value === "object")
     return Object.values(value).some(hasProse);
   return false;
+}
+
+/**
+ * Terminal output as plain text: ANSI escapes dropped, and a line rewritten in
+ * place with `\r` (a progress bar) reduced to what it last showed.
+ */
+export function terminalText(text: string): string {
+  return (
+    text
+      // eslint-disable-next-line no-control-regex -- matching escapes is the point
+      .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Za-z0-9]|\x1b[=>]/g, "")
+      .split("\n")
+      .map((l) => {
+        const parts = l.replace(/\r+$/, "").split("\r");
+        return parts[parts.length - 1] ?? "";
+      })
+      .join("\n")
+  );
 }

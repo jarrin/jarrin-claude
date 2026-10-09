@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { AGENT_PATH } from "../../monitor/shared/protocol.js";
+import { LogTails } from "./tail.js";
 import { trustSystemCAs } from "./trust.js";
 import type {
   AgentMessage,
@@ -51,6 +52,11 @@ export interface MonitorOptions {
   readonly instance: InstanceInfo;
   /** Text the user sent the loop from the monitor. */
   readonly onInput?: (text: string) => void;
+  /**
+   * The sessions' working directory. When set, a Bash call that redirects its
+   * output to a file has that file followed live (see `tail.ts`).
+   */
+  readonly cwd?: string;
   readonly open?: (url: string) => SocketLike;
   readonly now?: () => number;
   readonly newId?: () => string;
@@ -224,10 +230,17 @@ export function connectMonitor(opts: MonitorOptions): Monitor {
 
   connect();
 
+  const tails = opts.cwd
+    ? new LogTails({ cwd: opts.cwd, emit: push, now })
+    : undefined;
+
   return {
     ready,
     loop: (text) => push([{ t: now(), kind: "loop", text }]),
-    stream: (raw, issue) => push(streamLines(raw, issue, now())),
+    stream: (raw, issue) => {
+      push(streamLines(raw, issue, now()));
+      tails?.feed(raw, issue);
+    },
     status: (s) => {
       status = s;
       statusDirty = true;
@@ -273,6 +286,7 @@ export function connectMonitor(opts: MonitorOptions): Monitor {
         };
       }),
     close: async () => {
+      await tails?.stopAll();
       if (flushTimer !== null) clearTimeout(flushTimer);
       if (retryTimer !== null) clearTimeout(retryTimer);
       flush();

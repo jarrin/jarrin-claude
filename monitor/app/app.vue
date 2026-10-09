@@ -26,6 +26,13 @@ const boards = computed(() =>
 const questions = computed(() =>
   active.value ? questionsOf(state.value, active.value) : [],
 );
+provideForge(
+  computed(() => ({
+    ...(active.value?.forge ? { url: active.value.forge } : {}),
+    repo: active.value?.repo ?? "",
+    milestones: active.value?.milestones ?? [],
+  })),
+);
 
 // Open the first tab by default, and fall back when the active one is dismissed.
 watch(
@@ -58,6 +65,11 @@ const dotClass = (inst: { online: boolean; paused: boolean }): string =>
 
 const unread = (id: string, total: number): number =>
   Math.max(0, total - (seen.value[id] ?? 0));
+/** Capped, so a busy tab's badge keeps the width it was laid out with. */
+const unreadLabel = (id: string, total: number): string => {
+  const n = unread(id, total);
+  return n > 999 ? "999+" : String(n);
+};
 const openQuestions = (id: string): number => {
   const inst = instances.value.find((i) => i.id === id);
   return inst
@@ -82,8 +94,13 @@ const openQuestions = (id: string): number => {
           :content="false"
           variant="link"
           size="sm"
-          class="min-w-0 flex-1"
-          :ui="{ list: 'overflow-x-auto overflow-y-hidden', trigger: 'py-3' }"
+          class="min-w-0 flex-1 self-stretch"
+          :ui="{
+            root: 'h-full items-stretch',
+            list: 'h-full overflow-x-auto overflow-y-hidden border-b-0 border-l border-default p-0 mb-0',
+            trigger:
+              'rounded-none border-r border-default px-3 data-[state=active]:bg-black/5 dark:data-[state=active]:bg-black/25',
+          }"
         >
           <template #leading="{ item }">
             <span :class="['size-2 rounded-full', dotClass(item.inst)]" />
@@ -96,13 +113,16 @@ const openQuestions = (id: string): number => {
               size="sm"
               title="Open questions"
             />
+            <!-- Always laid out, so it appearing never shifts the tabs beside it. -->
             <UBadge
-              v-if="
-                item.inst.id !== activeId &&
-                unread(item.inst.id, item.inst.lines.length)
-              "
-              :label="String(unread(item.inst.id, item.inst.lines.length))"
+              :label="unreadLabel(item.inst.id, item.inst.lines.length)"
               size="sm"
+              :class="[
+                'min-w-9 justify-center',
+                (item.inst.id === activeId ||
+                  !unread(item.inst.id, item.inst.lines.length)) &&
+                  'invisible',
+              ]"
             />
             <UIcon
               v-if="!item.inst.online && !openQuestions(item.inst.id)"

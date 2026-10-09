@@ -39,6 +39,9 @@ side, because the CLI and the server share one wire protocol.
 | WebSocket routes: `/ws/agent` (loops) and `/ws/watch` (browsers) | `monitor/server/routes/ws/` |
 | UI state folding + notification rules (pure, tested) | `monitor/app/utils/instances.ts` |
 | UI | `monitor/app/app.vue`, `monitor/app/components/` |
+| Log entries: one component per tool / line kind, all rendering through the base `log/LogRow.vue` (time, issue, icon, action, title, `inline-result` slot, collapsible body). `log/registry.ts` maps a route from `utils/tools.ts` (`routeTool`: built-in kind, `mcp/<server>/<resource>/<verb>`, then `mcp/gitea`, `mcp`, `default`) to its component — add a tool by adding a route and a component | `monitor/app/components/log/` |
+| Gitea result shapes (zod, from gitea-mcp's `slim*` helpers) and forge links (`InstanceInfo.forge` + `useForge`) | `monitor/app/utils/gitea.ts`, `monitor/app/utils/forge.ts` |
+| Live tail of a Bash call's `> file` redirect (`tail` lines, ended by `system/task_notification`) | `src/loop/tail.ts`, `monitor/app/components/log/LiveTail.vue` |
 | Loop-side client (implements the driver's `LoopStore`) | `src/loop/monitor.ts` |
 | Live input into a session (stdin stream-json) | `src/loop/input.ts`, `src/loop/runner.ts` |
 | Driver: questions, pause, restart logic | `src/loop/driver.ts`, `src/loop/progress.ts` |

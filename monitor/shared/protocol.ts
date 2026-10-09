@@ -20,7 +20,8 @@ export type LogKind =
   | "output" // a tool result
   | "error" // a failed tool result or failed run
   | "result" // the end-of-session summary
-  | "system"; // session init and other harness events
+  | "system" // session init and other harness events
+  | "tail"; // new content of a file a running Bash call writes its output to
 
 export interface LogLine {
   /** Epoch milliseconds. */
@@ -55,7 +56,12 @@ export type LogDetail =
       readonly hunks: readonly PatchHunk[];
       /** Patch lines dropped to keep the message small. */
       readonly omitted: number;
-    };
+    }
+  /**
+   * A `tail` line: the file a Bash call redirects its output to, followed live
+   * while the command runs. `done` marks the last line of the tail.
+   */
+  | { readonly type: "tail"; readonly file: string; readonly done: boolean };
 
 export interface MilestoneRef {
   readonly id: number;
@@ -111,6 +117,8 @@ export interface InstanceInfo {
   readonly id: string;
   readonly host: string;
   readonly repo: string;
+  /** The forge's web root (e.g. `https://gitea.example.com`), for issue links. */
+  readonly forge?: string;
   readonly milestones: readonly MilestoneRef[];
   readonly pid: number;
   readonly startedAt: number;

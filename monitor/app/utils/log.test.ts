@@ -6,6 +6,7 @@ import {
   jsonResultMarkdown,
   patchText,
   splitTool,
+  terminalText,
   toolIcon,
 } from "./log";
 
@@ -31,6 +32,38 @@ describe("groupLines", () => {
   it("keeps unpaired results (older lines without ids) as their own rows", () => {
     const items = groupLines([at("tool", "→ Bash  ls"), at("output", "x")]);
     expect(items).toHaveLength(2);
+  });
+
+  it("folds tail lines into their call's live output, after its result too", () => {
+    const tail = (text: string, done: boolean, call = "1"): LogLine => ({
+      t: 0,
+      kind: "tail",
+      text,
+      call,
+      detail: { type: "tail", file: "/tmp/c.log", done },
+    });
+    const items = groupLines([
+      at("tool", "→ Bash  make > /tmp/c.log", "1"),
+      tail("a\n", false),
+      at("output", "running in background", "1"),
+      tail("b\n", false),
+      tail("", true),
+      tail("orphan", false, "9"),
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.tail).toEqual({
+      file: "/tmp/c.log",
+      text: "a\nb\n",
+      done: true,
+    });
+  });
+});
+
+describe("terminalText", () => {
+  it("drops colour codes and keeps the last state of a rewritten line", () => {
+    expect(terminalText("\x1b[32m✓ ok\x1b[0m\n10%\r50%\r100%\n")).toBe(
+      "✓ ok\n100%\n",
+    );
   });
 });
 

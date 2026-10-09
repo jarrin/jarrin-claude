@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { Board, EntryStatus } from "#shared/protocol";
+import ForgeLink from "~/components/log/ForgeLink.vue";
+import { issueUrl, milestoneUrl } from "~/utils/forge";
 
 defineProps<{ boards: readonly Board[] }>();
 
@@ -13,6 +15,8 @@ const STATUS: Record<EntryStatus, { icon: string; class: string }> = {
   blocked: { icon: "i-lucide-circle-x", class: "text-error" },
   closed: { icon: "i-lucide-circle-check", class: "text-success" },
 };
+
+const forge = useForge();
 
 const done = (b: Board): number =>
   b.entries.filter((e) => e.status === "closed").length;
@@ -30,7 +34,11 @@ const done = (b: Board): number =>
     </p>
     <div v-for="b in boards" :key="b.milestone.id" class="mb-4 last:mb-0">
       <div class="mb-1.5 flex items-center justify-between gap-2 text-sm">
-        <span class="font-medium">{{ b.milestone.title }}</span>
+        <ForgeLink
+          :text="b.milestone.title"
+          :href="milestoneUrl(forge, b.milestone.id, b.repo)"
+          class="font-medium"
+        />
         <span class="text-xs text-muted"
           >{{ done(b) }}/{{ b.entries.length }}</span
         >
@@ -48,14 +56,19 @@ const done = (b: Board): number =>
               :name="STATUS[e.status].icon"
               :class="['mt-0.5 size-4 shrink-0', STATUS[e.status].class]"
             />
-            <span class="text-muted">#{{ e.number }}</span>
-            <span
+            <ForgeLink
+              :text="`#${e.number}`"
+              :href="issueUrl(forge, e.number, b.repo)"
+              class="text-muted"
+            />
+            <ForgeLink
+              :text="e.title"
+              :href="issueUrl(forge, e.number, b.repo)"
               :class="[
                 'min-w-0 flex-1',
                 { 'text-muted line-through': e.status === 'closed' },
               ]"
-              >{{ e.title }}</span
-            >
+            />
             <UBadge
               v-if="e.stashed"
               label="stashed"

@@ -209,10 +209,12 @@ async function runLoopCommand(
       id: randomUUID(),
       host: hostname(),
       repo,
+      forge: auth.host,
       milestones: milestones.map((m) => ({ id: m.id, title: m.title })),
       pid: proc.pid,
       startedAt: Date.now(),
     },
+    cwd: repoRoot,
     onInput: (text) => {
       out(`  ✉ input from the monitor: ${text.slice(0, 160)}`);
       inputs.push(text);

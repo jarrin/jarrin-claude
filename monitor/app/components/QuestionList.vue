@@ -1,11 +1,14 @@
 <script setup lang="ts">
+import ForgeLink from "~/components/log/ForgeLink.vue";
 import type { Question } from "#shared/protocol";
+import { issueUrl } from "~/utils/forge";
 import { clock } from "~/utils/instances";
 import { markdownPlugins } from "~/utils/markdown";
 
 defineProps<{ questions: readonly Question[] }>();
 const emit = defineEmits<{ answer: [questionId: string, text: string] }>();
 
+const forge = useForge();
 const drafts = ref<Record<string, string>>({});
 
 const submit = (id: string): void => {
@@ -40,8 +43,16 @@ const submit = (id: string): void => {
       class="mb-4 grid gap-2 border-b border-default pb-4 last:mb-0 last:border-0 last:pb-0"
     >
       <header class="flex items-baseline gap-1.5 text-sm">
-        <span class="text-muted">#{{ q.issue }}</span>
-        <span class="min-w-0 flex-1 font-medium">{{ q.title }}</span>
+        <ForgeLink
+          :text="`#${q.issue}`"
+          :href="issueUrl(forge, q.issue, q.repo)"
+          class="text-muted"
+        />
+        <ForgeLink
+          :text="q.title"
+          :href="issueUrl(forge, q.issue, q.repo)"
+          class="min-w-0 flex-1 font-medium"
+        />
         <span class="text-xs text-dimmed">{{ clock(q.askedAt) }}</span>
       </header>
       <Markdown :value="q.text" :plugins="markdownPlugins" class="text-sm" />
