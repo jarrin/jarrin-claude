@@ -170,25 +170,25 @@ repo's directory; override it with `JARRIN_GROUP_ROOT` and the global library wi
 One typed entrypoint (`@stricli/core` + `@clack/prompts`, strict TypeScript) backs the
 subcommands:
 
-| Command                         | What it does                                                                                                                                  |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `claudjar init`                 | Set up (new repo) or update `.claude/.jarrin.yml`, preserving comments + `backlog:`                                                           |
-| `claudjar info`                 | Print the merged, resolved config for this repo: rules (✓/✗), commands, project stack, backlog, worktree, skills                              |
-| `claudjar worktree create <n>`  | Add a git worktree and bootstrap it from the `worktree:` config (branch, copy, port, setup)                                                   |
-| `claudjar worktree merge <n>`   | Merge a worktree branch into the current branch, keeping it (`--remove` to clean up; claude resolves conflicts)                               |
-| `claudjar worktree remove <n>`  | Remove a worktree: stop its stack, delete the directory, safely delete the branch (`--no-teardown` skips the stop)                            |
-| `claudjar worktree list`        | List this repo's git worktrees                                                                                                                |
-| `claudjar goto <n>`             | Switch to a worktree by starting `claude` there; `main` goes back to the original checkout                                                    |
-| `claudjar start` / `stop`       | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout                                            |
-| `claudjar caddy up` / `down`    | Start / stop the machine-wide caddy on host ports 80 + 443 (one container serves every registered project)                                    |
-| `claudjar caddy join` / `leave` | Register / deregister this checkout's `<slug>.localhost` route (worktrees register themselves on create)                                      |
-| `claudjar caddy status`         | Show the caddy container state and every registered route                                                                                     |
-| `claudjar caddy trust`          | Anchor the caddy's internal CA in this host's trust store, so `https://<slug>.localhost` verifies (sudo, once)                                |
-| `claudjar loop <milestone>…`    | Work every open issue of Gitea milestones unattended, a fresh `claude -p` per issue; waits out usage limits; questions go to one Gitea ticket |
-| `claudjar release`              | Cut a version: bump `project.dist.version`, mirror it into `sync:` files, build, commit, tag (never pushes)                                   |
-| `claudjar install`              | Machine setup: symlink config into `~/.claude`, link the binary onto PATH, enable hooks, check prerequisites                                  |
-| `claudjar help --full`          | Print every command's help as one Markdown document (`--include-internal` adds the `api` commands)                                            |
-| `claudjar api …`                | **Internal.** The hook entrypoints Claude Code invokes (`session-start`, `statusline`) — never run by hand                                    |
+| Command                         | What it does                                                                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `claudjar init`                 | Set up (new repo) or update `.claude/.jarrin.yml`, preserving comments + `backlog:`                                                              |
+| `claudjar info`                 | Print the merged, resolved config for this repo: rules (✓/✗), commands, project stack, backlog, worktree, skills                                 |
+| `claudjar worktree create <n>`  | Add a git worktree and bootstrap it from the `worktree:` config (branch, copy, port, setup)                                                      |
+| `claudjar worktree merge <n>`   | Merge a worktree branch into the current branch, keeping it (`--remove` to clean up; claude resolves conflicts)                                  |
+| `claudjar worktree remove <n>`  | Remove a worktree: stop its stack, delete the directory, safely delete the branch (`--no-teardown` skips the stop)                               |
+| `claudjar worktree list`        | List this repo's git worktrees                                                                                                                   |
+| `claudjar goto <n>`             | Switch to a worktree by starting `claude` there; `main` goes back to the original checkout                                                       |
+| `claudjar start` / `stop`       | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout                                               |
+| `claudjar caddy up` / `down`    | Start / stop the machine-wide caddy on host ports 80 + 443 (one container serves every registered project)                                       |
+| `claudjar caddy join` / `leave` | Register / deregister this checkout's `<slug>.localhost` route (worktrees register themselves on create)                                         |
+| `claudjar caddy status`         | Show the caddy container state and every registered route                                                                                        |
+| `claudjar caddy trust`          | Anchor the caddy's internal CA in this host's trust store, so `https://<slug>.localhost` verifies (sudo, once)                                   |
+| `claudjar loop <milestone>…`    | Work every open issue of Gitea milestones unattended, a fresh `claude -p` per issue; waits out usage limits; progress + questions on the monitor |
+| `claudjar release`              | Cut a version: bump `project.dist.version`, mirror it into `sync:` files, build, commit, tag (never pushes)                                      |
+| `claudjar install`              | Machine setup: symlink config into `~/.claude`, link the binary onto PATH, enable hooks, check prerequisites                                     |
+| `claudjar help --full`          | Print every command's help as one Markdown document (`--include-internal` adds the `api` commands)                                               |
+| `claudjar api …`                | **Internal.** The hook entrypoints Claude Code invokes (`session-start`, `statusline`) — never run by hand                                       |
 
 `worktree create` reads the `worktree:` block from `.claude/.jarrin.local.yml` (a gitignored,
 per-machine override merged over the committed `.jarrin.yml` — **only `worktree:` overrides**).
@@ -343,30 +343,31 @@ are worked too.
   — every milestone drained, no issue blocked or awaiting an answer, not stopped by
   `--max-issues` — the loop itself runs `git push` for the checked-out branch (`--no-push`
   opts out). Otherwise it pushes nothing and leaves that to you; releasing is always yours.
-- **Questions go to one ticket per milestone, and you answer them from Gitea.** A session
-  that needs a decision ends its final message on a `<<<QUESTION … QUESTION>>>` block and
-  leaves the issue open. The loop posts it as a comment on the milestone's **open-questions
-  ticket** (created on the first question, found again by a hidden `<!-- claudjar-loop:questions -->`
-  body marker, never worked as an issue), stashes any uncommitted work as
-  `claudjar loop #<n>`, raises a `notify-send` desktop notification whose **Open question**
-  action opens that comment (`--no-notify` turns it off), and moves on to the next issue.
-  Reply in a comment on the ticket: a reply starting with `#<n>` answers that issue, any
-  other answers the oldest open question. Before every pick the loop reads the ticket; an
-  answered issue is resumed first, in its **own** session (`--resume`), told to pop its
-  stash. Once only questions remain the loop polls every `--poll-seconds` (default 60)
-  until they are answered or you Ctrl-C. The ticket is closed when the loop ends with
-  nothing waiting, and reopened by the next question.
-- **Progress is a ticket too, and it is what makes a restart safe.** On start the loop finds
-  or files each milestone's **Loop progress** ticket (marker `<!-- claudjar-loop:progress -->`)
-  listing the open issues as a checklist; issues filed later are appended, and closed ones
-  ticked. Each session prints its plan as a `<<<STEPS … STEPS>>>` checklist and reprints it as
-  it ticks steps; the loop reads that live from the stream and nests it under the issue, next
-  to a status (working / waiting for an answer / blocked). The description is the loop's —
-  hand edits are overwritten — because it also carries the loop's state in a hidden comment
-  (each issue's session id, waiting questions, stashes, answers already delivered). A
-  restarted loop reads it back: an issue it was **working** on resumes its own session first,
-  and issues **waiting** on an answer keep waiting rather than starting over. The ticket is
-  closed once every issue on it is.
+- **The loop needs the monitor.** Its progress and questions live on the claudjar monitor
+  (below), so `--monitor <url>` or `CLAUDJAR_MONITOR_URL` is required, and the loop waits for
+  the monitor's `welcome` — the stored state of its milestones — before it starts anything.
+- **Questions are answered on the monitor.** A session that needs a decision ends its final
+  message on a `<<<QUESTION … QUESTION>>>` block and leaves the issue open. The loop relays it
+  to the monitor (which raises a browser desktop notification), stashes any uncommitted work as
+  `claudjar loop #<n>`, and moves on to the next issue. Type the answer into the question's box
+  in the loop's tab: it reaches the loop at once, and the answered issue is resumed first, in
+  its **own** session (`--resume`), told to pop its stash. The question closes once the session
+  is resumed. Once only questions remain the loop idles until one is answered or you Ctrl-C.
+  Questions are kept per repo + milestone, so one asked by a loop that has since stopped can
+  still be answered; the next loop on that milestone picks the answer up.
+- **Progress is kept on the monitor, and it is what makes a restart safe.** Each milestone's
+  board lists its open issues (issues filed later are appended, closed ones ticked). Each
+  session prints its plan as a `<<<STEPS … STEPS>>>` checklist and reprints it as it ticks
+  steps; the loop reads that live from the stream and nests it under the issue, next to a
+  status (working / waiting for an answer / blocked). The board also carries each issue's
+  session id, question id and stash flag, so a restarted loop resumes an issue it was
+  **working** on in its own session first, and issues **waiting** on an answer keep waiting
+  rather than starting over.
+- **Pause and input.** From the monitor a loop can be paused — the running session finishes,
+  no new one starts until it is resumed — and sent input. Sessions get their prompt over
+  stdin as stream-json (`--input-format stream-json`), and stdin stays open until the run's
+  `result`, so input typed while a session runs reaches it as a user message mid-turn. Input
+  sent while no session runs opens the next session's prompt.
 - **Usage limits are waited out, not lost.** The session's `stream-json` carries a
   `rate_limit_event` whose `status: rejected` names `resetsAt` (epoch seconds). The loop sleeps
   until then plus a minute and `--resume`s the **same** session, so a half-done issue keeps its
@@ -389,26 +390,37 @@ claudjar loop --dry-run feature-a feature-b   # see the queue
 claudjar loop feature-a feature-b             # work it; Ctrl-C stops after releasing the lock
 ```
 
-#### Live monitor
+#### The monitor
 
-`monitor/` is a small Nuxt 4 app (Nitro WebSocket server + one-page UI) that shows every
-running loop live, deployed as the `claudjar` stack on the homeserver at
-<https://claudjar.jarrin.nl>. A loop reports to it when `--monitor <url>` or
-`CLAUDJAR_MONITOR_URL` is set (e.g. `export CLAUDJAR_MONITOR_URL=wss://claudjar.jarrin.nl`):
+`monitor/` is a small Nuxt 4 app (Nitro WebSocket server + one-page UI) that every loop
+reports to, deployed as the `claudjar` stack on the homeserver at <https://claudjar.jarrin.nl>
+(`export CLAUDJAR_MONITOR_URL=wss://claudjar.jarrin.nl`). It is both the live view and the
+loop's durable store:
 
-- Each loop process gets one tab, named `<milestones> @ <hostname>`, with a green/grey
-  online dot, an unread counter, and a status (`running`, `finished: …`, `interrupted`).
-  A reconnect keeps the same tab; an offline tab can be dismissed and is forgotten after 24 h.
-- The stream-json of every session is rendered colour-coded per line: loop progress,
+- Each loop process gets one tab, named `<milestones> @ <hostname>`, with an online / paused /
+  offline dot, an open-question badge, an unread counter, and a status line (`working #12 …`,
+  `waiting for answers to #3`, `paused`, `finished: …`). A reconnect keeps the same tab.
+- The tab is split: the session log on the left, the milestone **progress tree** (issues and
+  their steps) above the **open questions** on the right, each question with its own answer
+  box, and an action bar below — **Pause / Resume** and **send input to the loop**.
+- The stream-json of every session is rendered colour-coded per line: loop progress, input,
   assistant text, thinking, tool calls (with their command / path), tool output (first 12
   lines), errors, and the end-of-session summary. The CLI does that conversion
   (`src/loop/monitor.ts`), so only compact lines cross the wire.
-- Best-effort by design: lines queue while the socket is down and the loop never waits on or
-  fails because of the monitor. State lives in server memory only (last 5000 lines per tab).
+- **Browser desktop notifications** (enable once with the button in the header) for a new
+  question, an issue turning blocked, and a loop that finishes or stops. Clicking one opens
+  that loop's tab.
+- Boards, open questions and instance identities are persisted to `$NUXT_DATA_DIR/state.json`
+  (the stack's `data` volume; debounced, atomic writes). Log lines are memory-only (last 5000
+  per tab). An offline tab can be dismissed and is forgotten after 24 h — but never while one
+  of its milestones still has an open question.
+- The loop never fails because of the monitor: everything it sends queues while the socket is
+  down and is re-sent on reconnect (asks and resolves included, deduplicated by id).
 - The wire protocol is `monitor/shared/protocol.ts` — dependency-free types the CLI imports
-  directly; the server validates agent messages against its zod mirror.
+  directly; the server validates everything agents and browsers send against its zod mirror.
 - Optional shared secret: set `CLAUDJAR_MONITOR_TOKEN` in the server's `~/.server.env`
-  (passed through as `NUXT_AGENT_TOKEN`) and export the same value where loops run.
+  (passed through as `NUXT_AGENT_TOKEN`) and export the same value where loops run. The
+  browser side has no auth: it is served on the LAN / WireGuard only.
 
 `monitor/` is a standalone pnpm project (own lockfile and `check`, chained from the root
 `pnpm check`). The container config lives in `monitor/Dockerfile` and

@@ -1,7 +1,7 @@
 import { workOrder } from "./gitea.js";
-import type { Comment, GiteaClient, Issue, Milestone } from "./gitea.js";
+import type { GiteaClient, Issue, Milestone } from "./gitea.js";
 import { ProgressBoard, parseSteps } from "./progress.js";
-import type { Entry } from "./progress.js";
+import type { Entry, SaveBoard } from "./progress.js";
 import { limitWaitMs } from "./stream.js";
 import type { RunOutcome, RunWatch } from "./stream.js";
 
@@ -21,8 +21,29 @@ export interface LoopDeps {
   readonly log: (line: string) => void;
   /** Stash uncommitted work under `label`; true when there was any to stash. */
   readonly stash: (label: string) => Promise<boolean>;
-  /** Desktop notification; `url` is what clicking it should open. Never throws. */
-  readonly notify: (title: string, body: string, url: string) => void;
+  readonly store: LoopStore;
+}
+
+/**
+ * The loop's durable state and its line to the user — the claudjar monitor. It
+ * keeps each milestone's progress, relays questions and their answers (the
+ * browser raises the notification), and carries pause / resume.
+ */
+export interface LoopStore {
+  /** The milestone's entries as stored when the loop connected. */
+  stored(milestone: Milestone): readonly Entry[];
+  readonly save: SaveBoard;
+  /** Relay a question to the user; returns its id. */
+  ask(milestone: Milestone, issue: Issue, text: string): string;
+  /** A question's answer (null while unanswered), or null when the store has no such question. */
+  question(id: string): { readonly answer: string | null } | null;
+  /** The loop resumed the session with the answer: close the question. */
+  resolve(id: string): void;
+  paused(): boolean;
+  /** Resolves on the next answer or pause / resume — or after `ms` at the latest. */
+  wait(ms: number): Promise<void>;
+  /** One line on what the loop is doing, shown next to its tab. */
+  status(text: string): void;
 }
 
 export interface LoopOptions {
@@ -32,7 +53,7 @@ export interface LoopOptions {
   readonly maxIssues: number;
   /** Stop after this many issues in a row are left open (auth expired, broken gate…). */
   readonly maxFailures: number;
-  /** How often to look for answers once nothing else is left to work. */
+  /** Longest wait between checks while paused or waiting on answers. */
   readonly pollMs: number;
 }
 
@@ -55,20 +76,10 @@ export function parseQuestion(resultText: string): string | null {
   return q ? q : null;
 }
 
-/** Hidden marker on the loop's own comments, so they are never read as answers. */
-const commentMarker = (kind: string, issue: Issue): string =>
-  `<!-- claudjar-loop:${kind} #${String(issue.number)} -->`;
-const isLoopComment = (c: Comment): boolean =>
-  c.body.includes("<!-- claudjar-loop:");
-
 const stashLabel = (issue: Issue): string =>
   `claudjar loop #${String(issue.number)}`;
 
-export function issuePrompt(
-  repo: string,
-  issue: Issue,
-  questions: number | null,
-): string {
+export function issuePrompt(repo: string, issue: Issue): string {
   return [
     `Continue ${String(issue.number)}`,
     "",
@@ -101,16 +112,12 @@ export function issuePrompt(
     "  <the question, self-contained: context, the options, your recommendation>",
     "  QUESTION>>>",
     "",
-    "  The loop posts it on the milestone's open-questions ticket — do not post it yourself.",
+    "  The loop relays it to the user — do not post it on the forge yourself.",
     "  It stashes any uncommitted work while you wait, and works other issues meanwhile.",
     "- Blocked with nothing to ask (broken environment, missing access): comment on the",
     "  issue what is needed and why, leave it OPEN, and stop. The loop then skips it.",
-    ...(questions
-      ? [
-          `- Earlier answers may already be on the open-questions ticket #${String(questions)};`,
-          "  read it for anything about this issue before asking again.",
-        ]
-      : []),
+    "- The user may send you notes while you work; they arrive as user messages. Take",
+    "  them into account and carry on under these same rules.",
     "- Stop once the issue is closed, blocked, or asked about; the loop moves on itself.",
   ].join("\n");
 }
@@ -134,13 +141,13 @@ export function restartPrompt(issue: Issue): string {
 
 export function answerPrompt(
   issue: Issue,
-  answers: readonly string[],
+  answer: string,
   stashed: boolean,
 ): string {
   return [
     `The user answered your question about issue #${String(issue.number)}:`,
     "",
-    ...answers.map((a) => a.replace(/^/gm, "> ")),
+    answer.replace(/^/gm, "> "),
     "",
     ...(stashed
       ? [
@@ -155,87 +162,47 @@ export function answerPrompt(
   ].join("\n");
 }
 
-const LEADING_REF = /^\s*#(\d+)\b/;
-
-interface Waiting {
-  readonly entry: Entry;
-  readonly milestone: Milestone;
-}
-
-/**
- * Hand each new non-loop comment on a questions ticket to one waiting issue: the one
- * its leading `#<n>` names, else the oldest question on that ticket. Delivered
- * comments are recorded on the progress ticket, so an answer is never delivered
- * twice — not even across a restart.
- */
-async function collectAnswers(
-  gitea: GiteaClient,
-  board: ProgressBoard,
-  waiting: readonly Waiting[],
-): Promise<Map<number, string[]>> {
-  const answers = new Map<number, string[]>();
-  const byTicket = new Map<number, Waiting[]>();
-  for (const w of waiting) {
-    const ticket = board.questionsNumber(w.milestone);
-    if (ticket === null) continue;
-    byTicket.set(ticket, [...(byTicket.get(ticket) ?? []), w]);
-  }
-  for (const [ticket, group] of byTicket) {
-    const oldestFirst = [...group].sort(
-      (a, b) => (a.entry.askedAt ?? 0) - (b.entry.askedAt ?? 0),
-    );
-    for (const c of await gitea.comments(ticket)) {
-      if (isLoopComment(c) || !c.body.trim()) continue;
-      const ref = LEADING_REF.exec(c.body);
-      const named = ref
-        ? oldestFirst.find((w) => w.entry.number === Number(ref[1]))
-        : undefined;
-      const target =
-        named ?? oldestFirst.find((w) => c.id > (w.entry.askedAt ?? 0));
-      if (!target || c.id <= (target.entry.askedAt ?? 0)) continue;
-      if (board.isConsumed(target.milestone, c.id)) continue;
-      await board.consume(target.milestone, c.id);
-      answers.set(target.entry.number, [
-        ...(answers.get(target.entry.number) ?? []),
-        c.body.trim(),
-      ]);
-    }
-  }
-  return answers;
-}
-
 /**
  * Work every open issue of `milestones`, in the order given, one fresh Claude
  * session per issue. Issues are re-listed before each pick, so follow-ups filed
  * mid-run (caveat / cleanup tickets) are picked up too. A usage limit pauses the
  * run until it resets and RESUMES the same session. A session that ends on a
- * question waits: the question goes to the milestone's open-questions ticket,
- * other issues are worked meanwhile, and the user's reply resumes that session.
+ * question waits: the question is relayed to the user through the store, other
+ * issues are worked meanwhile, and the user's answer resumes that session. While
+ * paused, the current session runs to its end and no new one starts.
  *
- * All of it is tracked on each milestone's progress ticket, which is also what a
- * restarted loop reads back: interrupted sessions are resumed first, and issues
- * still waiting on an answer keep waiting instead of starting over.
+ * All of it is kept in the store, which is also what a restarted loop reads
+ * back: interrupted sessions are resumed first, and issues still waiting on an
+ * answer keep waiting instead of starting over.
  */
 export async function runLoop(
   deps: LoopDeps,
   opts: LoopOptions,
 ): Promise<LoopSummary> {
-  const board = new ProgressBoard(deps.gitea, deps.log);
-  for (const m of opts.milestones) {
-    await board.load(m);
-    await board.sync(m, await deps.gitea.openIssues(m));
-  }
+  const { store } = deps;
+  const board = new ProgressBoard(
+    opts.milestones,
+    (m) => store.stored(m),
+    store.save,
+  );
+  for (const m of opts.milestones)
+    board.sync(m, await deps.gitea.openIssues(m));
   const closed: Issue[] = [];
   const leftOpen: Issue[] = [];
   const attempted = new Set<number>();
   let failuresInRow = 0;
   let announcedWait = false;
 
-  const summary = async (
-    stopReason: string,
-    drained = false,
-  ): Promise<LoopSummary> => {
-    await board.finish();
+  /** Hold here while the user has the loop paused. */
+  const holdWhilePaused = async (): Promise<void> => {
+    if (!store.paused()) return;
+    deps.log("--- paused — resume from the monitor to carry on");
+    store.status("paused");
+    while (store.paused()) await store.wait(opts.pollMs);
+    deps.log("--- resumed");
+  };
+
+  const summary = (stopReason: string, drained = false): LoopSummary => {
     const awaiting = board
       .inStatus("waiting")
       .map(({ entry }) => asIssue(entry));
@@ -259,14 +226,15 @@ export async function runLoop(
       session: (id) => void board.update(milestone, issue, { sessionId: id }),
       text: (text) => {
         const steps = parseSteps(text);
-        if (steps) void board.update(milestone, issue, { steps });
+        if (steps) board.update(milestone, issue, { steps });
       },
     };
-    await board.update(milestone, issue, {
+    board.update(milestone, issue, {
       status: "working",
-      askedAt: null,
+      questionId: null,
       stashed: false,
     });
+    store.status(`working #${String(issue.number)} ${issue.title}`);
     let outcome = await deps.run(prompt, resume, issue, watch);
     while (outcome.limited) {
       const waitMs = limitWaitMs(outcome.resetsAt, deps.now());
@@ -274,63 +242,45 @@ export async function runLoop(
       deps.log(
         `--- usage limit hit; waiting until ${until}, then resuming #${String(issue.number)}`,
       );
+      store.status(
+        `usage limit — resuming #${String(issue.number)} at ${until}`,
+      );
       await deps.sleep(waitMs);
       outcome = outcome.sessionId
         ? await deps.run(resumePrompt(issue), outcome.sessionId, issue, watch)
-        : await deps.run(
-            issuePrompt(opts.repo, issue, board.questionsNumber(milestone)),
-            null,
-            issue,
-            watch,
-          );
+        : await deps.run(issuePrompt(opts.repo, issue), null, issue, watch);
     }
 
     if (await deps.gitea.isClosed(issue.number)) {
       closed.push(issue);
       failuresInRow = 0;
-      await board.update(milestone, issue, { status: "closed" });
+      board.update(milestone, issue, { status: "closed" });
       deps.log(`=== #${String(issue.number)} closed`);
       return null;
     }
 
     const question = parseQuestion(outcome.resultText);
     if (question && outcome.sessionId) {
-      const questions = await board.questionsTicket(milestone);
-      const posted = await deps.gitea.comment(
-        questions.number,
-        [
-          commentMarker("question", issue),
-          `### #${String(issue.number)} ${issue.title}`,
-          "",
-          question,
-          "",
-          `_Reply in a comment. Start it with \`#${String(issue.number)}\` if more than one question is open._`,
-        ].join("\n"),
-      );
+      const questionId = store.ask(milestone, issue, question);
       const stashed = await deps.stash(stashLabel(issue));
-      await board.update(milestone, issue, {
+      board.update(milestone, issue, {
         status: "waiting",
         sessionId: outcome.sessionId,
-        askedAt: posted.id,
+        questionId,
         stashed,
       });
       failuresInRow = 0;
       announcedWait = false;
       deps.log(
-        `=== #${String(issue.number)} asked a question — waiting for an answer on #${String(questions.number)}` +
+        `=== #${String(issue.number)} asked a question — waiting for an answer on the monitor` +
           (stashed ? " (uncommitted work stashed)" : ""),
-      );
-      deps.notify(
-        `claudjar loop: question on #${String(issue.number)}`,
-        `${issue.title}\n\n${question.slice(0, 300)}`,
-        posted.url || questions.url,
       );
       return null;
     }
 
     leftOpen.push(issue);
     failuresInRow++;
-    await board.update(milestone, issue, { status: "blocked" });
+    board.update(milestone, issue, { status: "blocked" });
     deps.log(
       `=== #${String(issue.number)} left open — skipping it` +
         (outcome.isError && outcome.resultText
@@ -344,6 +294,7 @@ export async function runLoop(
 
   // A previous loop died mid-session: pick those sessions up where they stopped.
   for (const { entry, milestone } of board.inStatus("working")) {
+    await holdWhilePaused();
     const issue = asIssue(entry);
     attempted.add(issue.number);
     deps.log(
@@ -352,36 +303,43 @@ export async function runLoop(
     );
     const stop = entry.sessionId
       ? await work(issue, milestone, restartPrompt(issue), entry.sessionId)
-      : await work(
-          issue,
-          milestone,
-          issuePrompt(opts.repo, issue, board.questionsNumber(milestone)),
-          null,
-        );
+      : await work(issue, milestone, issuePrompt(opts.repo, issue), null);
     if (stop) return summary(stop);
   }
 
   for (;;) {
+    await holdWhilePaused();
     const waiting = board.inStatus("waiting");
     for (const w of waiting) attempted.add(w.entry.number);
-    if (waiting.length > 0) {
-      const answers = await collectAnswers(deps.gitea, board, waiting);
-      const answered = waiting.find((w) => answers.has(w.entry.number));
-      if (answered) {
-        const { entry, milestone } = answered;
-        const issue = asIssue(entry);
+    let answered: { w: (typeof waiting)[number]; answer: string } | null = null;
+    for (const w of waiting) {
+      const q = w.entry.questionId ? store.question(w.entry.questionId) : null;
+      if (!q) {
+        // The monitor no longer knows the question (its state was lost): nothing
+        // will ever answer it, so the issue is blocked rather than waited on forever.
+        board.update(w.milestone, asIssue(w.entry), { status: "blocked" });
+        leftOpen.push(asIssue(w.entry));
         deps.log(
-          `\n=== #${String(issue.number)} answered — resuming its session`,
+          `=== #${String(w.entry.number)} lost its question on the monitor — skipping it`,
         );
-        const stop = await work(
-          issue,
-          milestone,
-          answerPrompt(issue, answers.get(issue.number) ?? [], entry.stashed),
-          entry.sessionId,
-        );
-        if (stop) return summary(stop);
         continue;
       }
+      if (q.answer !== null && !answered) answered = { w, answer: q.answer };
+    }
+    if (answered) {
+      const { entry, milestone } = answered.w;
+      const issue = asIssue(entry);
+      deps.log(
+        `\n=== #${String(issue.number)} answered — resuming its session`,
+      );
+      const prompt = answerPrompt(issue, answered.answer, entry.stashed);
+      // Working before resolved: a crash in between resumes the session instead
+      // of waiting on a question the monitor has already closed.
+      board.update(milestone, issue, { status: "working", questionId: null });
+      if (entry.questionId) store.resolve(entry.questionId);
+      const stop = await work(issue, milestone, prompt, entry.sessionId);
+      if (stop) return summary(stop);
+      continue;
     }
 
     const capped = opts.maxIssues > 0 && attempted.size >= opts.maxIssues;
@@ -389,7 +347,7 @@ export async function runLoop(
     if (!capped) {
       for (const milestone of opts.milestones) {
         const open = workOrder(await deps.gitea.openIssues(milestone));
-        await board.sync(milestone, open);
+        board.sync(milestone, open);
         const issue = open.find((i) => !attempted.has(i.number));
         if (issue) {
           next = { issue, milestone };
@@ -406,7 +364,7 @@ export async function runLoop(
       const stop = await work(
         issue,
         milestone,
-        issuePrompt(opts.repo, issue, board.questionsNumber(milestone)),
+        issuePrompt(opts.repo, issue),
         null,
       );
       if (stop) return summary(stop);
@@ -416,15 +374,19 @@ export async function runLoop(
     const reason = capped
       ? `reached --max-issues ${String(opts.maxIssues)}`
       : "no open issues left";
-    if (waiting.length === 0) return summary(reason, !capped);
+    const stillWaiting = board.inStatus("waiting");
+    if (stillWaiting.length === 0) return summary(reason, !capped);
     if (!announcedWait) {
-      const list = waiting.map((w) => `#${String(w.entry.number)}`).join(" ");
+      const list = stillWaiting
+        .map((w) => `#${String(w.entry.number)}`)
+        .join(" ");
       deps.log(
         `--- ${reason}; waiting for answers to ${list} (Ctrl-C to stop)`,
       );
+      store.status(`waiting for answers to ${list}`);
       announcedWait = true;
     }
-    await deps.sleep(opts.pollMs);
+    await store.wait(opts.pollMs);
   }
 }
 

@@ -11,7 +11,7 @@ describe("parseAgentMessage", () => {
           id: "a",
           host: "h",
           repo: "o/r",
-          milestones: ["M"],
+          milestones: [{ id: 1, title: "M" }],
           pid: 1,
           startedAt: 2,
         },
@@ -48,5 +48,20 @@ describe("parseWatcherMessage", () => {
       type: "dismiss",
       id: "a",
     });
+  });
+
+  it("accepts an answer, a control and an input", () => {
+    expect(
+      parseWatcherMessage('{"type":"answer","questionId":"q","text":"yes"}'),
+    ).toMatchObject({ type: "answer" });
+    expect(
+      parseWatcherMessage('{"type":"control","id":"a","action":"pause"}'),
+    ).toMatchObject({ action: "pause" });
+    expect(
+      parseWatcherMessage('{"type":"control","id":"a","action":"kill"}'),
+    ).toBeNull();
+    expect(
+      parseWatcherMessage('{"type":"input","id":"a","text":""}'),
+    ).toBeNull();
   });
 });

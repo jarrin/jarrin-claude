@@ -267,23 +267,21 @@ FLAGS
 
 ```
 USAGE
-  claudjar loop [--repo value] [--dry-run] [--max-issues value] [--max-failures value] [--model value] [--permission-mode value] [--poll-seconds value] [--push] [--monitor value] [--notify] <args>...
+  claudjar loop [--repo value] [--dry-run] [--max-issues value] [--max-failures value] [--model value] [--permission-mode value] [--push] [--monitor value] <args>...
   claudjar loop --help
 
-Runs `claude -p "Continue <n>"` for each open issue of the given milestones, in order, a new session per issue (the context is cleared between issues). A usage limit pauses the loop until it resets, then resumes the same session. A session that ends on a question parks its issue: the question is posted on the milestone's single open-questions ticket (with a desktop notification linking to it), other issues are worked meanwhile, and a reply there resumes that session. Once only questions are left the loop polls for answers. Each milestone's Loop progress ticket lists its issues with the sessions' steps as checkboxes and keeps the loop's state, so a restart resumes interrupted sessions and keeps waiting on unanswered questions. An issue the session leaves open without a question (blocked) is skipped. Sessions only commit, never release or push; a clean finish (every issue closed) pushes the checked-out branch unless --no-push. Loops may run in parallel as long as no two share a worktree or a milestone. Stream logs go to ~/.claudjar/loop/<owner>__<name>/. With --monitor (or CLAUDJAR_MONITOR_URL, e.g. wss://claudjar.jarrin.nl) every session is also streamed live to the claudjar monitor, one tab per loop; CLAUDJAR_MONITOR_TOKEN is sent when the monitor requires one.
+Runs `claude -p "Continue <n>"` for each open issue of the given milestones, in order, a new session per issue (the context is cleared between issues). A usage limit pauses the loop until it resets, then resumes the same session. The loop needs the claudjar monitor (--monitor or CLAUDJAR_MONITOR_URL, e.g. wss://claudjar.jarrin.nl; CLAUDJAR_MONITOR_TOKEN when it requires one): it keeps each milestone's progress — the issues and the sessions' <<<STEPS checklists — so a restart resumes interrupted sessions and keeps waiting on unanswered questions, and it shows every session live, one tab per loop. A session that ends on a question parks its issue: the question appears on the monitor (with a browser desktop notification), other issues are worked meanwhile, and the answer typed there resumes that session. From the monitor the loop can also be paused (the current session finishes, no new one starts) and sent input, which reaches the running session as a user message. An issue the session leaves open without a question (blocked) is skipped. Sessions only commit, never release or push; a clean finish (every issue closed) pushes the checked-out branch unless --no-push. Loops may run in parallel as long as no two share a worktree or a milestone. Stream logs go to ~/.claudjar/loop/<owner>__<name>/.
 
 FLAGS
-     [--repo]                Gitea owner/name (default: backlog.plan.repo, else backlog.repo)
-     [--dry-run]             List the queue in work order and exit                                                    [default = false]
-     [--max-issues]          Stop after this many issues (0 = all)                                                    [default = 0]
-     [--max-failures]        Stop after this many issues in a row are left open (0 = never)                           [default = 3]
-     [--model]               Model for every session (default: Claude Code's own)
-     [--permission-mode]     Claude Code --permission-mode for the unattended sessions                                [default = bypassPermissions]
-     [--poll-seconds]        Seconds between checks for answers once only questions are left                          [default = 60]
-     [--push/--no-push]      `git push` when the loop finishes cleanly (every issue closed, none blocked or awaiting) [default = true]
-     [--monitor]             Live monitor URL to stream to (default: $CLAUDJAR_MONITOR_URL)
-     [--notify/--no-notify]  Desktop notification (notify-send) when a session asks a question                        [default = true]
-  -h  --help                 Print help information and exit
+     [--repo]             Gitea owner/name (default: backlog.plan.repo, else backlog.repo)
+     [--dry-run]          List the queue in work order and exit                                                    [default = false]
+     [--max-issues]       Stop after this many issues (0 = all)                                                    [default = 0]
+     [--max-failures]     Stop after this many issues in a row are left open (0 = never)                           [default = 3]
+     [--model]            Model for every session (default: Claude Code's own)
+     [--permission-mode]  Claude Code --permission-mode for the unattended sessions                                [default = bypassPermissions]
+     [--push/--no-push]   `git push` when the loop finishes cleanly (every issue closed, none blocked or awaiting) [default = true]
+     [--monitor]          claudjar monitor URL — required (default: $CLAUDJAR_MONITOR_URL)
+  -h  --help              Print help information and exit
 
 ARGUMENTS
   args...  Milestone title (exact) or numeric id; worked in the order given

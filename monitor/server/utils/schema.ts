@@ -1,11 +1,23 @@
 import { z } from "zod";
 
-import type { AgentMessage, LogKind, WatcherMessage } from "#shared/protocol";
+import type {
+  AgentMessage,
+  Board,
+  Entry,
+  EntryStatus,
+  InstanceSummary,
+  LogKind,
+  Question,
+  WatcherMessage,
+} from "#shared/protocol";
+
+import type { Saved } from "./hub";
 
 const MAX_TEXT = 64 * 1024;
 
 const logKind = z.enum([
   "loop",
+  "input",
   "text",
   "thinking",
   "tool",
@@ -22,14 +34,41 @@ const logLine = z.object({
   issue: z.number().int().optional(),
 });
 
+const milestoneRef = z.object({
+  id: z.number().int(),
+  title: z.string().max(256),
+});
+
 const instanceInfo = z.object({
   id: z.string().min(1).max(64),
   host: z.string().min(1).max(128),
   repo: z.string().max(256),
-  milestones: z.array(z.string().max(256)).max(32),
+  milestones: z.array(milestoneRef).max(32),
   pid: z.number().int(),
   startedAt: z.number(),
 });
+
+const entryStatus = z.enum([
+  "open",
+  "working",
+  "waiting",
+  "blocked",
+  "closed",
+] as const satisfies readonly EntryStatus[]);
+
+const entry = z.object({
+  number: z.number().int(),
+  title: z.string().max(1024),
+  status: entryStatus,
+  steps: z
+    .array(z.object({ text: z.string().max(2048), done: z.boolean() }))
+    .max(200),
+  sessionId: z.string().max(128).nullable(),
+  questionId: z.string().max(64).nullable(),
+  stashed: z.boolean(),
+}) satisfies z.ZodType<Entry>;
+
+const questionText = z.string().min(1).max(MAX_TEXT);
 
 const agentMessage = z.discriminatedUnion("type", [
   z.object({
@@ -38,13 +77,75 @@ const agentMessage = z.discriminatedUnion("type", [
     token: z.string().optional(),
   }),
   z.object({ type: z.literal("log"), lines: z.array(logLine).max(5000) }),
-  z.object({ type: z.literal("status"), status: z.string().max(512) }),
+  z.object({
+    type: z.literal("status"),
+    status: z.string().max(512),
+    paused: z.boolean(),
+  }),
+  z.object({
+    type: z.literal("progress"),
+    milestone: milestoneRef,
+    entries: z.array(entry).max(1000),
+  }),
+  z.object({
+    type: z.literal("ask"),
+    question: z.object({
+      id: z.string().min(1).max(64),
+      milestone: milestoneRef,
+      issue: z.number().int(),
+      title: z.string().max(1024),
+      text: questionText,
+    }),
+  }),
+  z.object({ type: z.literal("resolved"), questionId: z.string().max(64) }),
 ]) satisfies z.ZodType<AgentMessage>;
 
-const watcherMessage = z.object({
-  type: z.literal("dismiss"),
+const watcherMessage = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("dismiss"), id: z.string() }),
+  z.object({
+    type: z.literal("answer"),
+    questionId: z.string(),
+    text: questionText,
+  }),
+  z.object({
+    type: z.literal("control"),
+    id: z.string(),
+    action: z.enum(["pause", "resume"]),
+  }),
+  z.object({ type: z.literal("input"), id: z.string(), text: questionText }),
+]) satisfies z.ZodType<WatcherMessage>;
+
+const board = z.object({
+  repo: z.string(),
+  milestone: milestoneRef,
+  entries: z.array(entry),
+  updatedAt: z.number(),
+}) satisfies z.ZodType<Board>;
+
+const question = z.object({
   id: z.string(),
-}) satisfies z.ZodType<WatcherMessage>;
+  repo: z.string(),
+  milestone: milestoneRef,
+  issue: z.number().int(),
+  title: z.string(),
+  text: z.string(),
+  askedAt: z.number(),
+  answer: z.string().nullable(),
+  answeredAt: z.number().nullable(),
+}) satisfies z.ZodType<Question>;
+
+const saved = z.object({
+  instances: z.array(
+    instanceInfo.extend({
+      online: z.boolean(),
+      status: z.string(),
+      paused: z.boolean(),
+      lastSeen: z.number(),
+    }) satisfies z.ZodType<InstanceSummary>,
+  ),
+  boards: z.array(board),
+  questions: z.array(question),
+}) satisfies z.ZodType<Saved>;
 
 function parseWith<T>(schema: z.ZodType<T>, raw: string): T | null {
   let json: unknown;
@@ -62,3 +163,5 @@ export const parseAgentMessage = (raw: string): AgentMessage | null =>
 
 export const parseWatcherMessage = (raw: string): WatcherMessage | null =>
   parseWith(watcherMessage, raw);
+
+export const parseSaved = (raw: string): Saved | null => parseWith(saved, raw);

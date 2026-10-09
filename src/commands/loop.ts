@@ -19,9 +19,10 @@ import type { LocalContext } from "../context.js";
 import { toplevel } from "../git.js";
 import { runLoop } from "../loop/driver.js";
 import { giteaClient, resolveAuth, workOrder } from "../loop/gitea.js";
+import { InputBox } from "../loop/input.js";
 import { connectMonitor } from "../loop/monitor.js";
 import type { Milestone } from "../loop/gitea.js";
-import { desktopNotify, pushBranch, stashIfDirty } from "../loop/notify.js";
+import { pushBranch, stashIfDirty } from "../loop/repo.js";
 import { claudeRunner } from "../loop/runner.js";
 
 interface LoopFlags {
@@ -31,8 +32,6 @@ interface LoopFlags {
   readonly maxFailures: number;
   readonly model?: string;
   readonly permissionMode: string;
-  readonly pollSeconds: number;
-  readonly notify: boolean;
   readonly push: boolean;
   readonly monitor?: string;
 }
@@ -187,6 +186,13 @@ async function runLoopCommand(
     return;
   }
 
+  const monitorUrl = flags.monitor ?? proc.env.CLAUDJAR_MONITOR_URL ?? "";
+  if (!monitorUrl)
+    return fail(
+      "no monitor — the loop keeps its progress and questions on the claudjar monitor; " +
+        "pass --monitor <url> or set CLAUDJAR_MONITOR_URL (e.g. wss://claudjar.jarrin.nl).",
+    );
+
   const stateDir = join(
     homedir(),
     ".claudjar",
@@ -195,36 +201,45 @@ async function runLoopCommand(
   );
   const release = acquireLocks(loopLocks(stateDir, repoRoot, milestones));
   if (typeof release === "string") return fail(release);
-  const monitorUrl = flags.monitor ?? proc.env.CLAUDJAR_MONITOR_URL ?? "";
-  const monitor = monitorUrl
-    ? connectMonitor({
-        url: monitorUrl,
-        token: proc.env.CLAUDJAR_MONITOR_TOKEN ?? "",
-        instance: {
-          id: randomUUID(),
-          host: hostname(),
-          repo,
-          milestones: milestones.map((m) => m.title),
-          pid: proc.pid,
-          startedAt: Date.now(),
-        },
-      })
-    : null;
+  const inputs = new InputBox();
+  const monitor = connectMonitor({
+    url: monitorUrl,
+    token: proc.env.CLAUDJAR_MONITOR_TOKEN ?? "",
+    instance: {
+      id: randomUUID(),
+      host: hostname(),
+      repo,
+      milestones: milestones.map((m) => ({ id: m.id, title: m.title })),
+      pid: proc.pid,
+      startedAt: Date.now(),
+    },
+    onInput: (text) => {
+      out(`  ✉ input from the monitor: ${text.slice(0, 160)}`);
+      inputs.push(text);
+    },
+  });
   const log = (line: string): void => {
     out(line);
-    monitor?.loop(line);
+    monitor.loop(line);
   };
-  monitor?.status("running");
   const onSignal = (): void => {
     release();
-    monitor?.status("interrupted");
+    monitor.status("interrupted");
     // Exit only once the monitor has seen the interruption (bounded wait).
-    void (monitor?.close() ?? Promise.resolve()).finally(() => proc.exit(130));
+    void monitor.close().finally(() => proc.exit(130));
   };
   proc.once("SIGINT", onSignal);
   proc.once("SIGTERM", onSignal);
 
   try {
+    // The monitor holds the state a restart resumes from: never start without it.
+    const slow = setTimeout(
+      () => out(`loop: waiting for the monitor at ${monitorUrl}…`),
+      3000,
+    );
+    await monitor.ready;
+    clearTimeout(slow);
+    monitor.status("running");
     const summary = await runLoop(
       {
         gitea,
@@ -235,26 +250,25 @@ async function runLoopCommand(
           model: flags.model ?? "",
           claudeBin: proc.env.CLAUDE_BIN ?? "claude",
           out,
-          onLine: monitor
-            ? (line, issue) => monitor.stream(line, issue.number)
-            : undefined,
+          onLine: (line, issue) => monitor.stream(line, issue.number),
+          inputs,
         }),
         sleep: (ms) => delay(ms),
         now: () => Date.now(),
         log,
         stash: (label) => stashIfDirty(repoRoot, label),
-        notify: flags.notify ? desktopNotify : () => {},
+        store: monitor,
       },
       {
         repo,
         milestones,
         maxIssues: flags.maxIssues,
         maxFailures: flags.maxFailures,
-        pollMs: Math.max(flags.pollSeconds, 5) * 1000,
+        pollMs: 60_000,
       },
     );
     log(`\nloop finished: ${summary.stopReason}`);
-    monitor?.status(`finished: ${summary.stopReason}`);
+    monitor.status(`finished: ${summary.stopReason}`);
     out(
       `  closed:    ${summary.closed.map((i) => `#${String(i.number)}`).join(" ") || "—"}`,
     );
@@ -280,7 +294,7 @@ async function runLoopCommand(
     }
   } finally {
     release();
-    await monitor?.close();
+    await monitor.close();
   }
 }
 
@@ -340,13 +354,6 @@ export const loopCommand = buildCommand({
         brief: "Claude Code --permission-mode for the unattended sessions",
         default: "bypassPermissions",
       },
-      pollSeconds: {
-        kind: "parsed",
-        parse: parseCount,
-        brief:
-          "Seconds between checks for answers once only questions are left",
-        default: "60",
-      },
       push: {
         kind: "boolean",
         brief:
@@ -356,14 +363,9 @@ export const loopCommand = buildCommand({
       monitor: {
         kind: "parsed",
         parse: String,
-        brief: "Live monitor URL to stream to (default: $CLAUDJAR_MONITOR_URL)",
-        optional: true,
-      },
-      notify: {
-        kind: "boolean",
         brief:
-          "Desktop notification (notify-send) when a session asks a question",
-        default: true,
+          "claudjar monitor URL — required (default: $CLAUDJAR_MONITOR_URL)",
+        optional: true,
       },
     },
   },
@@ -373,20 +375,20 @@ export const loopCommand = buildCommand({
     fullDescription:
       'Runs `claude -p "Continue <n>"` for each open issue of the given milestones, in ' +
       "order, a new session per issue (the context is cleared between issues). A usage " +
-      "limit pauses the loop until it resets, then resumes the same session. A session " +
-      "that ends on a question parks its issue: the question is posted on the " +
-      "milestone's single open-questions ticket (with a desktop notification linking " +
-      "to it), other issues are worked meanwhile, and a reply there resumes that " +
-      "session. Once only questions are left the loop polls for answers. Each " +
-      "milestone's Loop progress ticket lists its issues with the sessions' steps as " +
-      "checkboxes and keeps the loop's state, so a restart resumes interrupted " +
-      "sessions and keeps waiting on unanswered questions. An issue " +
-      "the session leaves open without a question (blocked) is skipped. Sessions only " +
-      "commit, never release or push; a clean finish (every issue closed) pushes the " +
-      "checked-out branch unless --no-push. Loops may run in parallel as long " +
-      "as no two share a worktree or a milestone. Stream logs go to " +
-      "~/.claudjar/loop/<owner>__<name>/. With --monitor (or CLAUDJAR_MONITOR_URL, e.g. " +
-      "wss://claudjar.jarrin.nl) every session is also streamed live to the claudjar " +
-      "monitor, one tab per loop; CLAUDJAR_MONITOR_TOKEN is sent when the monitor requires one.",
+      "limit pauses the loop until it resets, then resumes the same session. The loop " +
+      "needs the claudjar monitor (--monitor or CLAUDJAR_MONITOR_URL, e.g. " +
+      "wss://claudjar.jarrin.nl; CLAUDJAR_MONITOR_TOKEN when it requires one): it keeps " +
+      "each milestone's progress — the issues and the sessions' <<<STEPS checklists — so " +
+      "a restart resumes interrupted sessions and keeps waiting on unanswered questions, " +
+      "and it shows every session live, one tab per loop. A session that ends on a " +
+      "question parks its issue: the question appears on the monitor (with a browser " +
+      "desktop notification), other issues are worked meanwhile, and the answer typed " +
+      "there resumes that session. From the monitor the loop can also be paused (the " +
+      "current session finishes, no new one starts) and sent input, which reaches the " +
+      "running session as a user message. An issue the session leaves open without a " +
+      "question (blocked) is skipped. Sessions only commit, never release or push; a " +
+      "clean finish (every issue closed) pushes the checked-out branch unless --no-push. " +
+      "Loops may run in parallel as long as no two share a worktree or a milestone. " +
+      "Stream logs go to ~/.claudjar/loop/<owner>__<name>/.",
   },
 });

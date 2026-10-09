@@ -1,24 +1,33 @@
+import { randomUUID } from "node:crypto";
+
 import { AGENT_PATH } from "../../monitor/shared/protocol.js";
 import { trustSystemCAs } from "./trust.js";
 import type {
   AgentMessage,
+  Board,
+  Entry,
   InstanceInfo,
   LogKind,
   LogLine,
+  MilestoneRef,
+  ServerMessage,
 } from "../../monitor/shared/protocol.js";
+import type { LoopStore } from "./driver.js";
 
 /**
- * Live feed of a running loop to the claudjar monitor (`monitor/` in this repo,
- * served at e.g. wss://claudjar.jarrin.nl). Strictly best-effort: the loop never
- * waits on it or fails because of it. Lines queue while the socket is down and
- * flush on reconnect; the same instance id keeps the same tab across reconnects.
+ * The loop's link to the claudjar monitor (`monitor/` in this repo, served at e.g.
+ * wss://claudjar.jarrin.nl): the live log feed, and the loop's durable store —
+ * progress boards, questions and their answers, pause / resume, and the user's
+ * input. The loop never fails because of it: everything queues while the socket
+ * is down and is re-sent on reconnect under the same instance id.
  */
-export interface Monitor {
+export interface Monitor extends LoopStore {
+  /** The monitor's stored state, once it has welcomed this loop for the first time. */
+  readonly ready: Promise<void>;
   /** One of the loop's own progress lines. */
   loop(text: string): void;
   /** One raw stream-json line from the session working `issue`. */
   stream(raw: string, issue: number): void;
-  status(status: string): void;
   /** Flush what is queued (bounded wait), then disconnect for good. */
   close(): Promise<void>;
 }
@@ -30,6 +39,7 @@ export interface SocketLike {
   onopen: ((ev: Event) => void) | null;
   onclose: ((ev: CloseEvent) => void) | null;
   onerror: ((ev: ErrorEvent) => void) | null;
+  onmessage: ((ev: MessageEvent) => void) | null;
   send(data: string): void;
   close(): void;
 }
@@ -38,8 +48,11 @@ export interface MonitorOptions {
   readonly url: string;
   readonly token: string;
   readonly instance: InstanceInfo;
+  /** Text the user sent the loop from the monitor. */
+  readonly onInput?: (text: string) => void;
   readonly open?: (url: string) => SocketLike;
   readonly now?: () => number;
+  readonly newId?: () => string;
 }
 
 const OPEN = 1;
@@ -55,8 +68,11 @@ export function agentUrl(base: string): string {
   return url.toString();
 }
 
+type Ask = Extract<AgentMessage, { type: "ask" }>["question"];
+
 export function connectMonitor(opts: MonitorOptions): Monitor {
   const now = opts.now ?? Date.now;
+  const newId = opts.newId ?? randomUUID;
   const open =
     opts.open ??
     ((url: string): SocketLike => {
@@ -65,21 +81,45 @@ export function connectMonitor(opts: MonitorOptions): Monitor {
     });
   const url = agentUrl(opts.url);
   let queue: LogLine[] = [];
-  let status: string | null = null;
+  let status = "starting";
+  let paused = false;
+  let statusDirty = true;
+  /** Latest entries per milestone, and which still have to be sent. */
+  const boards = new Map<
+    number,
+    { milestone: MilestoneRef; entries: readonly Entry[] }
+  >();
+  const dirtyBoards = new Set<number>();
+  /** Questions as the monitor last told us, plus our own asks. */
+  const questions = new Map<string, { answer: string | null }>();
+  /** Asks and resolves the monitor may not have yet; re-sent on every reconnect. */
+  const asks = new Map<string, Ask>();
+  const resolves = new Set<string>();
+  let stored: { boards: readonly Board[] } = { boards: [] };
   let socket: SocketLike | null = null;
   let closed = false;
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let wake: (() => void) | null = null;
+  let welcomed: () => void = () => {};
+  const ready = new Promise<void>((resolve) => (welcomed = resolve));
 
-  const send = (msg: AgentMessage): void => socket?.send(JSON.stringify(msg));
+  const send = (msg: AgentMessage): void => {
+    if (socket?.readyState === OPEN) socket.send(JSON.stringify(msg));
+  };
 
   const flush = (): void => {
     flushTimer = null;
     if (socket?.readyState !== OPEN) return;
-    if (status !== null) {
-      send({ type: "status", status });
-      status = null;
+    if (statusDirty) {
+      send({ type: "status", status, paused });
+      statusDirty = false;
     }
+    for (const id of dirtyBoards) {
+      const b = boards.get(id);
+      if (b) send({ type: "progress", ...b });
+    }
+    dirtyBoards.clear();
     if (queue.length) {
       send({ type: "log", lines: queue });
       queue = [];
@@ -88,6 +128,47 @@ export function connectMonitor(opts: MonitorOptions): Monitor {
 
   const schedule = (): void => {
     if (flushTimer === null) flushTimer = setTimeout(flush, FLUSH_MS);
+  };
+
+  const notify = (): void => {
+    const w = wake;
+    wake = null;
+    w?.();
+  };
+
+  const receive = (msg: ServerMessage): void => {
+    switch (msg.type) {
+      case "welcome":
+        for (const q of msg.questions)
+          questions.set(q.id, { answer: q.answer });
+        stored = { boards: msg.boards };
+        welcomed();
+        notify();
+        return;
+      case "answer":
+        questions.set(msg.questionId, { answer: msg.text });
+        push([{ t: now(), kind: "loop", text: "--- answer received" }]);
+        notify();
+        return;
+      case "control":
+        paused = msg.action === "pause";
+        statusDirty = true;
+        push([
+          {
+            t: now(),
+            kind: "loop",
+            text: paused
+              ? "--- pause requested: no new session starts until resumed"
+              : "--- resume requested",
+          },
+        ]);
+        notify();
+        return;
+      case "input":
+        push([{ t: now(), kind: "input", text: `✉ ${msg.text}` }]);
+        opts.onInput?.(msg.text);
+        return;
+    }
   };
 
   const connect = (): void => {
@@ -106,7 +187,20 @@ export function connectMonitor(opts: MonitorOptions): Monitor {
         instance: opts.instance,
         ...(opts.token ? { token: opts.token } : {}),
       });
+      for (const questionId of resolves) send({ type: "resolved", questionId });
+      for (const question of asks.values()) send({ type: "ask", question });
+      statusDirty = true;
+      for (const id of boards.keys()) dirtyBoards.add(id);
       flush();
+    };
+    ws.onmessage = (ev) => {
+      let msg: ServerMessage;
+      try {
+        msg = JSON.parse(String(ev.data)) as ServerMessage;
+      } catch {
+        return;
+      }
+      receive(msg);
     };
     ws.onerror = () => {};
     ws.onclose = () => {
@@ -130,17 +224,59 @@ export function connectMonitor(opts: MonitorOptions): Monitor {
   connect();
 
   return {
+    ready,
     loop: (text) => push([{ t: now(), kind: "loop", text }]),
     stream: (raw, issue) => push(streamLines(raw, issue, now())),
     status: (s) => {
       status = s;
+      statusDirty = true;
       schedule();
     },
+    stored: (m) =>
+      stored.boards.find((b) => b.milestone.id === m.id)?.entries ?? [],
+    save: (milestone, entries) => {
+      boards.set(milestone.id, { milestone, entries: [...entries] });
+      dirtyBoards.add(milestone.id);
+      schedule();
+    },
+    ask: (milestone, issue, text) => {
+      const question: Ask = {
+        id: newId(),
+        milestone,
+        issue: issue.number,
+        title: issue.title,
+        text,
+      };
+      asks.set(question.id, question);
+      questions.set(question.id, { answer: null });
+      send({ type: "ask", question });
+      return question.id;
+    },
+    question: (id) => questions.get(id) ?? null,
+    resolve: (id) => {
+      asks.delete(id);
+      questions.delete(id);
+      resolves.add(id);
+      send({ type: "resolved", questionId: id });
+    },
+    paused: () => paused,
+    wait: (ms) =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          wake = null;
+          resolve();
+        }, ms);
+        wake = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      }),
     close: async () => {
       if (flushTimer !== null) clearTimeout(flushTimer);
       if (retryTimer !== null) clearTimeout(retryTimer);
       flush();
       closed = true;
+      notify();
       const ws = socket;
       if (!ws) return;
       const deadline = now() + CLOSE_WAIT_MS;

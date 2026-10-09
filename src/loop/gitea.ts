@@ -20,31 +20,11 @@ export interface Issue {
   readonly title: string;
 }
 
-export interface Comment {
-  readonly id: number;
-  readonly body: string;
-  readonly url: string;
-}
-
-/** One of the loop's own tickets in a milestone (open questions, progress). */
-export interface LoopTicket {
-  readonly number: number;
-  readonly url: string;
-  readonly body: string;
-}
-
 /**
- * Every ticket the loop files carries a marker of this shape in its body. Tickets are
- * found by marker (never by title, which the user may edit) and are never worked.
+ * Older loops filed their own progress / open-questions tickets, marked with this in the
+ * body. Those tickets may still be open in a milestone; they are never worked.
  */
 export const LOOP_MARKER_PREFIX = "<!-- claudjar-loop:";
-
-/** What a loop ticket is called, found by, and created with. */
-export interface LoopTicketSpec {
-  readonly marker: string;
-  readonly title: string;
-  readonly body: string;
-}
 
 /** What the loop reads and writes; an interface so the driver tests use a fake. */
 export interface GiteaClient {
@@ -52,15 +32,6 @@ export interface GiteaClient {
   /** Open issues of the milestone, minus the loop's own tickets. */
   openIssues(milestone: Milestone): Promise<Issue[]>;
   isClosed(issue: number): Promise<boolean>;
-  /** Find the milestone's ticket carrying `spec.marker` (reopening it), or create it. */
-  ensureLoopTicket(
-    milestone: Milestone,
-    spec: LoopTicketSpec,
-  ): Promise<LoopTicket>;
-  editBody(issue: number, body: string): Promise<void>;
-  closeIssue(issue: number): Promise<void>;
-  comment(issue: number, body: string): Promise<Comment>;
-  comments(issue: number): Promise<Comment[]>;
 }
 
 type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
@@ -142,15 +113,12 @@ export function giteaClient(
   }
   const get = (path: string): Promise<unknown> => request("GET", path);
 
-  async function milestoneIssues(
-    milestone: Milestone,
-    state: "open" | "all",
-  ): Promise<unknown[]> {
+  async function milestoneIssues(milestone: Milestone): Promise<unknown[]> {
     const rows: unknown[] = [];
     for (let page = 1; ; page++) {
       const batch = asArray(
         await get(
-          `/issues?state=${state}&type=issues&milestones=${String(milestone.id)}` +
+          `/issues?state=open&type=issues&milestones=${String(milestone.id)}` +
             `&limit=${String(PAGE)}&page=${String(page)}`,
         ),
       );
@@ -185,7 +153,7 @@ export function giteaClient(
     },
 
     async openIssues(milestone: Milestone): Promise<Issue[]> {
-      return (await milestoneIssues(milestone, "open"))
+      return (await milestoneIssues(milestone))
         .filter((row) => !stringField(row, "body").includes(LOOP_MARKER_PREFIX))
         .map(toIssue)
         .filter((i): i is Issue => i !== null);
@@ -193,54 +161,6 @@ export function giteaClient(
 
     async isClosed(issue: number): Promise<boolean> {
       return field(await get(`/issues/${String(issue)}`), "state") === "closed";
-    },
-
-    async ensureLoopTicket(
-      milestone: Milestone,
-      spec: LoopTicketSpec,
-    ): Promise<LoopTicket> {
-      const found = (await milestoneIssues(milestone, "all")).find((row) =>
-        stringField(row, "body").includes(spec.marker),
-      );
-      const row =
-        found ??
-        (await request("POST", "/issues", {
-          title: spec.title,
-          milestone: milestone.id,
-          body: spec.body,
-        }));
-      const number = field(row, "number");
-      if (typeof number !== "number")
-        throw new Error(`"${spec.title}" ticket: unexpected response`);
-      if (found !== undefined && field(found, "state") !== "open")
-        await request("PATCH", `/issues/${String(number)}`, { state: "open" });
-      return {
-        number,
-        url: stringField(row, "html_url"),
-        body: stringField(row, "body"),
-      };
-    },
-
-    async editBody(issue: number, body: string): Promise<void> {
-      await request("PATCH", `/issues/${String(issue)}`, { body });
-    },
-
-    async closeIssue(issue: number): Promise<void> {
-      await request("PATCH", `/issues/${String(issue)}`, { state: "closed" });
-    },
-
-    async comment(issue: number, body: string): Promise<Comment> {
-      const c = toComment(
-        await request("POST", `/issues/${String(issue)}/comments`, { body }),
-      );
-      if (!c) throw new Error(`commenting on #${String(issue)} failed`);
-      return c;
-    },
-
-    async comments(issue: number): Promise<Comment[]> {
-      return asArray(await get(`/issues/${String(issue)}/comments`))
-        .map(toComment)
-        .filter((c): c is Comment => c !== null);
     },
   };
 }
@@ -260,17 +180,6 @@ function toMilestone(value: unknown): Milestone | null {
 function stringField(value: unknown, key: string): string {
   const v = field(value, key);
   return typeof v === "string" ? v : "";
-}
-
-function toComment(value: unknown): Comment | null {
-  const id = field(value, "id");
-  return typeof id === "number"
-    ? {
-        id,
-        body: stringField(value, "body"),
-        url: stringField(value, "html_url"),
-      }
-    : null;
 }
 
 function toIssue(value: unknown): Issue | null {

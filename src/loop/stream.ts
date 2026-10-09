@@ -34,6 +34,11 @@ export class StreamTracker {
 
   constructor(private readonly watch: RunWatch | null = null) {}
 
+  /** True once the run has reported its `result`. */
+  get finished(): boolean {
+    return this.result !== null;
+  }
+
   /** Consume one line; returns a short human-readable progress line, if any. */
   feed(line: string): string | null {
     let msg: unknown;

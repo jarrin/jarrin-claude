@@ -113,11 +113,12 @@ with `bypassPermissions` and runs until the milestones are empty — hours of un
 work. Give the user the command (`--dry-run` first to show the queue); do not launch it from
 inside a session. It clears context between issues, waits out usage limits and resumes the
 same session, and skips an issue left open. A session that needs a decision ends on a
-`<<<QUESTION … QUESTION>>>` block; the loop posts it on the milestone's single
-open-questions ticket, notifies the desktop, and resumes that session when the user
-replies there. Each milestone also gets a **Loop progress** ticket (checklist of
-issues, each with the session's `<<<STEPS` sub-checklist) that holds the loop's state, so a
-restarted loop resumes where it stopped. Loop sessions only ever **commit** — never release,
+`<<<QUESTION … QUESTION>>>` block; the loop relays it to the claudjar monitor
+(`CLAUDJAR_MONITOR_URL`, required — see the `claudjar-monitor` skill), where the user answers
+it and gets a browser notification, and resumes that session with the answer. The monitor
+also keeps each milestone's progress (issues, each with the session's `<<<STEPS` checklist)
+so a restarted loop resumes where it stopped, and can pause the loop or send input into
+the running session. Loop sessions only ever **commit** — never release,
 tag, bump, or push. The loop `git push`es the branch itself only when it finishes cleanly
 (every issue closed; `--no-push` opts out); otherwise the push is the user's. Details in the jarrin-claude README, *Looping a
 milestone*.

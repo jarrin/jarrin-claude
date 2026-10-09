@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentMessage } from "../../monitor/shared/protocol.js";
+import type {
+  AgentMessage,
+  ServerMessage,
+} from "../../monitor/shared/protocol.js";
 import { agentUrl, connectMonitor, streamLines } from "./monitor.js";
 import type { SocketLike } from "./monitor.js";
 
@@ -10,6 +13,7 @@ class FakeSocket implements SocketLike {
   onopen: ((ev: Event) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
   onerror: ((ev: Event) => void) | null = null;
+  onmessage: ((ev: MessageEvent) => void) | null = null;
   sent: AgentMessage[] = [];
   send(data: string): void {
     this.sent.push(JSON.parse(data) as AgentMessage);
@@ -21,6 +25,11 @@ class FakeSocket implements SocketLike {
     this.readyState = 1;
     this.onopen?.(new Event("open"));
   }
+  receive(msg: ServerMessage): void {
+    this.onmessage?.(
+      new MessageEvent("message", { data: JSON.stringify(msg) }),
+    );
+  }
   drop(): void {
     this.readyState = 3;
     this.onclose?.(new Event("close") as CloseEvent);
@@ -31,7 +40,7 @@ const instance = {
   id: "i1",
   host: "desktop",
   repo: "o/r",
-  milestones: ["M"],
+  milestones: [{ id: 4, title: "M" }],
   pid: 1,
   startedAt: 0,
 };
@@ -73,7 +82,7 @@ describe("connectMonitor", () => {
     s.accept();
     expect(s.sent).toEqual([
       { type: "hello", instance, token: "tok" },
-      { type: "status", status: "running" },
+      { type: "status", status: "running", paused: false },
       { type: "log", lines: [{ t: 5, kind: "loop", text: "=== #1 start" }] },
     ]);
   });
@@ -99,7 +108,7 @@ describe("connectMonitor", () => {
     if (!second) throw new Error("no reconnect");
     second.accept();
     expect(second.sent[0]).toEqual({ type: "hello", instance });
-    expect(second.sent[1]).toMatchObject({
+    expect(second.sent[2]).toMatchObject({
       type: "log",
       lines: [{ text: "while down" }],
     });
@@ -121,6 +130,145 @@ describe("connectMonitor", () => {
     await monitor.close();
     vi.advanceTimersByTime(10_000);
     expect(sockets).toHaveLength(1);
+  });
+});
+
+describe("connectMonitor as the loop store", () => {
+  beforeEach(() => void vi.useFakeTimers());
+  afterEach(() => void vi.useRealTimers());
+
+  const M = { id: 4, title: "M" };
+  const entry = {
+    number: 1,
+    title: "a",
+    status: "working" as const,
+    steps: [],
+    sessionId: null,
+    questionId: null,
+    stashed: false,
+  };
+
+  function connected(onInput?: (text: string) => void) {
+    const sockets: FakeSocket[] = [];
+    let ids = 0;
+    const monitor = connectMonitor({
+      url: "ws://x",
+      token: "",
+      instance,
+      now: () => 0,
+      newId: () => `q${String(++ids)}`,
+      onInput,
+      open: () => {
+        const s = new FakeSocket();
+        sockets.push(s);
+        return s;
+      },
+    });
+    const socket = (n: number): FakeSocket => {
+      const s = sockets[n];
+      if (!s) throw new Error(`no socket ${String(n)}`);
+      return s;
+    };
+    socket(0).accept();
+    return { monitor, socket };
+  }
+
+  it("is ready once welcomed, with the stored boards and questions", async () => {
+    const { monitor, socket } = connected();
+    socket(0).receive({
+      type: "welcome",
+      boards: [{ repo: "o/r", milestone: M, entries: [entry], updatedAt: 0 }],
+      questions: [
+        {
+          id: "old",
+          repo: "o/r",
+          milestone: M,
+          issue: 1,
+          title: "a",
+          text: "?",
+          askedAt: 0,
+          answer: "yes",
+          answeredAt: 1,
+        },
+      ],
+    });
+    await monitor.ready;
+    expect(monitor.stored(M)).toEqual([entry]);
+    expect(monitor.stored({ id: 9, title: "x" })).toEqual([]);
+    expect(monitor.question("old")).toEqual({ answer: "yes" });
+    expect(monitor.question("nope")).toBeNull();
+  });
+
+  it("sends the latest board per milestone, coalesced", () => {
+    const { monitor, socket } = connected();
+    monitor.save(M, [entry]);
+    monitor.save(M, [{ ...entry, status: "closed" }]);
+    vi.advanceTimersByTime(200);
+    const progress = socket(0).sent.filter((m) => m.type === "progress");
+    expect(progress).toEqual([
+      {
+        type: "progress",
+        milestone: M,
+        entries: [{ ...entry, status: "closed" }],
+      },
+    ]);
+  });
+
+  it("asks, takes the answer, wakes a wait, and resolves", async () => {
+    const { monitor, socket } = connected();
+    const id = monitor.ask(M, { number: 1, title: "a" }, "A or B?");
+    expect(socket(0).sent.at(-1)).toEqual({
+      type: "ask",
+      question: { id, milestone: M, issue: 1, title: "a", text: "A or B?" },
+    });
+    expect(monitor.question(id)).toEqual({ answer: null });
+    const waited = monitor.wait(60_000);
+    socket(0).receive({ type: "answer", questionId: id, text: "B" });
+    await waited;
+    expect(monitor.question(id)).toEqual({ answer: "B" });
+    monitor.resolve(id);
+    expect(socket(0).sent.at(-1)).toEqual({ type: "resolved", questionId: id });
+  });
+
+  it("re-sends unresolved asks and pending resolves on reconnect", () => {
+    const { monitor, socket } = connected();
+    socket(0).drop();
+    const kept = monitor.ask(M, { number: 1, title: "a" }, "?");
+    const gone = monitor.ask(M, { number: 2, title: "b" }, "?");
+    monitor.resolve(gone);
+    vi.advanceTimersByTime(3000);
+    socket(1).accept();
+    expect(socket(1).sent[1]).toEqual({ type: "resolved", questionId: gone });
+    expect(socket(1).sent[2]).toMatchObject({
+      type: "ask",
+      question: { id: kept },
+    });
+  });
+
+  it("pauses and resumes on control, reporting it with the status", () => {
+    const { monitor, socket } = connected();
+    socket(0).receive({ type: "control", action: "pause" });
+    expect(monitor.paused()).toBe(true);
+    vi.advanceTimersByTime(200);
+    expect(socket(0).sent).toContainEqual({
+      type: "status",
+      status: "starting",
+      paused: true,
+    });
+    socket(0).receive({ type: "control", action: "resume" });
+    expect(monitor.paused()).toBe(false);
+  });
+
+  it("hands input to the loop and logs it", () => {
+    const got: string[] = [];
+    const { socket } = connected((t) => got.push(t));
+    socket(0).receive({ type: "input", text: "use v2" });
+    vi.advanceTimersByTime(200);
+    expect(got).toEqual(["use v2"]);
+    expect(socket(0).sent.at(-1)).toMatchObject({
+      type: "log",
+      lines: [{ kind: "input", text: "✉ use v2" }],
+    });
   });
 });
 

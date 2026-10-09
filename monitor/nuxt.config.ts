@@ -16,6 +16,8 @@ export default defineNuxtConfig({
   runtimeConfig: {
     // NUXT_AGENT_TOKEN: when set, loop instances must present it in `hello`.
     agentToken: "",
+    // NUXT_DATA_DIR: where the loops' progress and open questions are persisted.
+    dataDir: ".data",
   },
   nitro: { experimental: { websocket: true } },
 });

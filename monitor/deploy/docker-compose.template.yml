@@ -5,8 +5,9 @@
 #
 # The image is built on the workstation and pushed to zot — nothing is built on the server.
 # Loops connect over wss://claudjar.jarrin.nl/ws/agent; browsers watch on /ws/watch. Caddy
-# proxies the WebSocket upgrade as-is. State is in memory only (a restart starts empty and
-# running loops re-announce themselves on reconnect), so there is no volume.
+# proxies the WebSocket upgrade as-is. The loops' durable state — each milestone's progress
+# board and the open questions — lives in the `data` volume; log lines are memory-only.
+# A named volume (not a bind mount) so it inherits the image's node-owned /data.
 name: homeserver-claudjar
 services:
   claudjar:
@@ -15,6 +16,8 @@ services:
       # Optional shared secret: when set, loops must export the same value as
       # CLAUDJAR_MONITOR_TOKEN. Empty = any LAN/WireGuard client may report in.
       NUXT_AGENT_TOKEN: ${CLAUDJAR_MONITOR_TOKEN:-}
+    volumes:
+      - data:/data
     x-homeserver:
       expose: 3000
       health_check:
@@ -22,3 +25,6 @@ services:
       homepage:
         bookmark: true
         group: Tools
+
+volumes:
+  data:

@@ -2,12 +2,18 @@
  * Wire protocol between `claudjar loop` instances (agents), this server, and the
  * browser UI (watchers). Plain types only: the claudjar CLI imports this file
  * directly, so it must not pull in any dependency. The server validates what
- * agents send against the zod mirror in `server/utils/schema.ts`.
+ * agents and watchers send against the zod mirror in `server/utils/schema.ts`.
+ *
+ * The server is the loop's durable store: each milestone's progress (the issues
+ * and their sessions' steps) and the open questions live here, persisted, so a
+ * restarted loop picks up where the last one stopped and a question can be
+ * answered while no loop is running.
  */
 
 /** How a log line is coloured. */
 export type LogKind =
   | "loop" // the loop's own progress lines
+  | "input" // input the user sent to the loop
   | "text" // assistant text
   | "thinking" // assistant thinking
   | "tool" // a tool call
@@ -25,16 +31,66 @@ export interface LogLine {
   readonly issue?: number;
 }
 
+export interface MilestoneRef {
+  readonly id: number;
+  readonly title: string;
+}
+
+export type EntryStatus = "open" | "working" | "waiting" | "blocked" | "closed";
+
+export interface Step {
+  readonly text: string;
+  readonly done: boolean;
+}
+
+/** One milestone issue as the loop tracks it. */
+export interface Entry {
+  readonly number: number;
+  readonly title: string;
+  readonly status: EntryStatus;
+  /** The session's own steps, from its latest `<<<STEPS` block. */
+  readonly steps: readonly Step[];
+  /** The session that worked it last; what a restart or an answer resumes. */
+  readonly sessionId: string | null;
+  /** While waiting: the open question's id. */
+  readonly questionId: string | null;
+  readonly stashed: boolean;
+}
+
+/** A milestone's progress: every issue the loop has seen in it, in work order. */
+export interface Board {
+  readonly repo: string;
+  readonly milestone: MilestoneRef;
+  readonly entries: readonly Entry[];
+  readonly updatedAt: number;
+}
+
+/** A question a session ended on; open until the loop resumes it with the answer. */
+export interface Question {
+  /** Chosen by the agent, so a re-sent ask is recognised. */
+  readonly id: string;
+  readonly repo: string;
+  readonly milestone: MilestoneRef;
+  readonly issue: number;
+  readonly title: string;
+  readonly text: string;
+  readonly askedAt: number;
+  readonly answer: string | null;
+  readonly answeredAt: number | null;
+}
+
 /** Who a loop instance is; sent once per connection, stable across reconnects. */
 export interface InstanceInfo {
   /** Random per loop process — a reconnect keeps the same tab. */
   readonly id: string;
   readonly host: string;
   readonly repo: string;
-  readonly milestones: readonly string[];
+  readonly milestones: readonly MilestoneRef[];
   readonly pid: number;
   readonly startedAt: number;
 }
+
+export type ControlAction = "pause" | "resume";
 
 /** Agent → server. */
 export type AgentMessage =
@@ -44,11 +100,46 @@ export type AgentMessage =
       readonly token?: string;
     }
   | { readonly type: "log"; readonly lines: readonly LogLine[] }
-  | { readonly type: "status"; readonly status: string };
+  | {
+      readonly type: "status";
+      readonly status: string;
+      readonly paused: boolean;
+    }
+  | {
+      readonly type: "progress";
+      readonly milestone: MilestoneRef;
+      readonly entries: readonly Entry[];
+    }
+  | {
+      readonly type: "ask";
+      readonly question: Omit<
+        Question,
+        "repo" | "askedAt" | "answer" | "answeredAt"
+      >;
+    }
+  /** The loop resumed the session with the answer: the question is closed. */
+  | { readonly type: "resolved"; readonly questionId: string };
+
+/** Server → agent. */
+export type ServerMessage =
+  /** Reply to `hello`: the stored state of the instance's milestones. */
+  | {
+      readonly type: "welcome";
+      readonly boards: readonly Board[];
+      readonly questions: readonly Question[];
+    }
+  | {
+      readonly type: "answer";
+      readonly questionId: string;
+      readonly text: string;
+    }
+  | { readonly type: "control"; readonly action: ControlAction }
+  | { readonly type: "input"; readonly text: string };
 
 export interface InstanceSummary extends InstanceInfo {
   readonly online: boolean;
   readonly status: string;
+  readonly paused: boolean;
   readonly lastSeen: number;
 }
 
@@ -56,23 +147,61 @@ export interface InstanceView extends InstanceSummary {
   readonly lines: readonly LogLine[];
 }
 
-/** Server → watcher. */
+/** Server → watcher. Boards and questions are keyed by repo + milestone, not instance. */
 export type WatchMessage =
-  | { readonly type: "snapshot"; readonly instances: readonly InstanceView[] }
+  | {
+      readonly type: "snapshot";
+      readonly instances: readonly InstanceView[];
+      readonly boards: readonly Board[];
+      readonly questions: readonly Question[];
+    }
   | { readonly type: "instance"; readonly instance: InstanceSummary }
   | {
       readonly type: "log";
       readonly id: string;
       readonly lines: readonly LogLine[];
     }
-  | { readonly type: "removed"; readonly id: string };
+  | { readonly type: "removed"; readonly id: string }
+  | { readonly type: "board"; readonly board: Board }
+  | { readonly type: "question"; readonly question: Question }
+  | { readonly type: "question-closed"; readonly id: string };
 
 /** Watcher → server. */
-export type WatcherMessage = { readonly type: "dismiss"; readonly id: string };
+export type WatcherMessage =
+  | { readonly type: "dismiss"; readonly id: string }
+  | {
+      readonly type: "answer";
+      readonly questionId: string;
+      readonly text: string;
+    }
+  | {
+      readonly type: "control";
+      readonly id: string;
+      readonly action: ControlAction;
+    }
+  | { readonly type: "input"; readonly id: string; readonly text: string };
+
+/** The key boards are stored under: one per repo + milestone. */
+export function boardKey(repo: string, milestoneId: number): string {
+  return `${repo}#${String(milestoneId)}`;
+}
+
+/** Whether `instance` works the milestone a board or question belongs to. */
+export function covers(
+  instance: Pick<InstanceInfo, "repo" | "milestones">,
+  item: { readonly repo: string; readonly milestone: MilestoneRef },
+): boolean {
+  return (
+    instance.repo === item.repo &&
+    instance.milestones.some((m) => m.id === item.milestone.id)
+  );
+}
 
 /** Tab label: the milestone name(s) plus the host the loop runs on. */
 export function instanceLabel(info: InstanceInfo): string {
-  const what = info.milestones.length ? info.milestones.join(", ") : info.repo;
+  const what = info.milestones.length
+    ? info.milestones.map((m) => m.title).join(", ")
+    : info.repo;
   return `${what} @ ${info.host}`;
 }
 
