@@ -19,6 +19,7 @@ import { toplevel } from "../git.js";
 import { runLoop } from "../loop/driver.js";
 import { giteaClient, resolveAuth, workOrder } from "../loop/gitea.js";
 import type { Milestone } from "../loop/gitea.js";
+import { desktopNotify, stashIfDirty } from "../loop/notify.js";
 import { claudeRunner } from "../loop/runner.js";
 
 interface LoopFlags {
@@ -28,6 +29,8 @@ interface LoopFlags {
   readonly maxFailures: number;
   readonly model?: string;
   readonly permissionMode: string;
+  readonly pollSeconds: number;
+  readonly notify: boolean;
 }
 
 /**
@@ -210,12 +213,15 @@ async function runLoopCommand(
         sleep: (ms) => delay(ms),
         now: () => Date.now(),
         log: out,
+        stash: (label) => stashIfDirty(repoRoot, label),
+        notify: flags.notify ? desktopNotify : () => {},
       },
       {
         repo,
         milestones,
         maxIssues: flags.maxIssues,
         maxFailures: flags.maxFailures,
+        pollMs: Math.max(flags.pollSeconds, 5) * 1000,
       },
     );
     out(`\nloop finished: ${summary.stopReason}`);
@@ -225,8 +231,12 @@ async function runLoopCommand(
     out(
       `  left open: ${summary.leftOpen.map((i) => `#${String(i.number)}`).join(" ") || "—"}`,
     );
+    out(
+      `  awaiting:  ${summary.awaiting.map((i) => `#${String(i.number)}`).join(" ") || "—"}`,
+    );
     out(`  logs:      ${stateDir}`);
-    if (summary.leftOpen.length > 0) proc.exitCode = 1;
+    if (summary.leftOpen.length > 0 || summary.awaiting.length > 0)
+      proc.exitCode = 1;
   } finally {
     release();
   }
@@ -288,6 +298,19 @@ export const loopCommand = buildCommand({
         brief: "Claude Code --permission-mode for the unattended sessions",
         default: "bypassPermissions",
       },
+      pollSeconds: {
+        kind: "parsed",
+        parse: parseCount,
+        brief:
+          "Seconds between checks for answers once only questions are left",
+        default: "60",
+      },
+      notify: {
+        kind: "boolean",
+        brief:
+          "Desktop notification (notify-send) when a session asks a question",
+        default: true,
+      },
     },
   },
   docs: {
@@ -296,8 +319,12 @@ export const loopCommand = buildCommand({
     fullDescription:
       'Runs `claude -p "Continue <n>"` for each open issue of the given milestones, in ' +
       "order, a new session per issue (the context is cleared between issues). A usage " +
-      "limit pauses the loop until it resets, then resumes the same session. An issue " +
-      "the session leaves open (blocked) is skipped. Loops may run in parallel as long " +
+      "limit pauses the loop until it resets, then resumes the same session. A session " +
+      "that ends on a question parks its issue: the question is posted on the " +
+      "milestone's single open-questions ticket (with a desktop notification linking " +
+      "to it), other issues are worked meanwhile, and a reply there resumes that " +
+      "session. Once only questions are left the loop polls for answers. An issue " +
+      "the session leaves open without a question (blocked) is skipped. Loops may run in parallel as long " +
       "as no two share a worktree or a milestone. Stream logs go to " +
       "~/.claudjar/loop/<owner>__<name>/.",
   },

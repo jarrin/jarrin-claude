@@ -170,25 +170,25 @@ repo's directory; override it with `JARRIN_GROUP_ROOT` and the global library wi
 One typed entrypoint (`@stricli/core` + `@clack/prompts`, strict TypeScript) backs the
 subcommands:
 
-| Command                         | What it does                                                                                                       |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `claudjar init`                 | Set up (new repo) or update `.claude/.jarrin.yml`, preserving comments + `backlog:`                                |
-| `claudjar info`                 | Print the merged, resolved config for this repo: rules (✓/✗), commands, project stack, backlog, worktree, skills   |
-| `claudjar worktree create <n>`  | Add a git worktree and bootstrap it from the `worktree:` config (branch, copy, port, setup)                        |
-| `claudjar worktree merge <n>`   | Merge a worktree branch into the current branch, keeping it (`--remove` to clean up; claude resolves conflicts)    |
-| `claudjar worktree remove <n>`  | Remove a worktree: stop its stack, delete the directory, safely delete the branch (`--no-teardown` skips the stop) |
-| `claudjar worktree list`        | List this repo's git worktrees                                                                                     |
-| `claudjar goto <n>`             | Switch to a worktree by starting `claude` there; `main` goes back to the original checkout                         |
-| `claudjar start` / `stop`       | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout                 |
-| `claudjar caddy up` / `down`    | Start / stop the machine-wide caddy on host ports 80 + 443 (one container serves every registered project)         |
-| `claudjar caddy join` / `leave` | Register / deregister this checkout's `<slug>.localhost` route (worktrees register themselves on create)           |
-| `claudjar caddy status`         | Show the caddy container state and every registered route                                                          |
-| `claudjar caddy trust`          | Anchor the caddy's internal CA in this host's trust store, so `https://<slug>.localhost` verifies (sudo, once)     |
-| `claudjar loop <milestone>…`    | Work every open issue of Gitea milestones unattended, a fresh `claude -p` per issue; waits out usage limits        |
-| `claudjar release`              | Cut a version: bump `project.dist.version`, mirror it into `sync:` files, build, commit, tag (never pushes)        |
-| `claudjar install`              | Machine setup: symlink config into `~/.claude`, link the binary onto PATH, enable hooks, check prerequisites       |
-| `claudjar help --full`          | Print every command's help as one Markdown document (`--include-internal` adds the `api` commands)                 |
-| `claudjar api …`                | **Internal.** The hook entrypoints Claude Code invokes (`session-start`, `statusline`) — never run by hand         |
+| Command                         | What it does                                                                                                                                  |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claudjar init`                 | Set up (new repo) or update `.claude/.jarrin.yml`, preserving comments + `backlog:`                                                           |
+| `claudjar info`                 | Print the merged, resolved config for this repo: rules (✓/✗), commands, project stack, backlog, worktree, skills                              |
+| `claudjar worktree create <n>`  | Add a git worktree and bootstrap it from the `worktree:` config (branch, copy, port, setup)                                                   |
+| `claudjar worktree merge <n>`   | Merge a worktree branch into the current branch, keeping it (`--remove` to clean up; claude resolves conflicts)                               |
+| `claudjar worktree remove <n>`  | Remove a worktree: stop its stack, delete the directory, safely delete the branch (`--no-teardown` skips the stop)                            |
+| `claudjar worktree list`        | List this repo's git worktrees                                                                                                                |
+| `claudjar goto <n>`             | Switch to a worktree by starting `claude` there; `main` goes back to the original checkout                                                    |
+| `claudjar start` / `stop`       | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout                                            |
+| `claudjar caddy up` / `down`    | Start / stop the machine-wide caddy on host ports 80 + 443 (one container serves every registered project)                                    |
+| `claudjar caddy join` / `leave` | Register / deregister this checkout's `<slug>.localhost` route (worktrees register themselves on create)                                      |
+| `claudjar caddy status`         | Show the caddy container state and every registered route                                                                                     |
+| `claudjar caddy trust`          | Anchor the caddy's internal CA in this host's trust store, so `https://<slug>.localhost` verifies (sudo, once)                                |
+| `claudjar loop <milestone>…`    | Work every open issue of Gitea milestones unattended, a fresh `claude -p` per issue; waits out usage limits; questions go to one Gitea ticket |
+| `claudjar release`              | Cut a version: bump `project.dist.version`, mirror it into `sync:` files, build, commit, tag (never pushes)                                   |
+| `claudjar install`              | Machine setup: symlink config into `~/.claude`, link the binary onto PATH, enable hooks, check prerequisites                                  |
+| `claudjar help --full`          | Print every command's help as one Markdown document (`--include-internal` adds the `api` commands)                                            |
+| `claudjar api …`                | **Internal.** The hook entrypoints Claude Code invokes (`session-start`, `statusline`) — never run by hand                                    |
 
 `worktree create` reads the `worktree:` block from `.claude/.jarrin.local.yml` (a gitignored,
 per-machine override merged over the committed `.jarrin.yml` — **only `worktree:` overrides**).
@@ -333,10 +333,25 @@ between issues. The issue list is re-read before every pick, so follow-up ticket
 are worked too.
 
 - **Done is closed.** A session closes its issue when finished (comment, then close — the
-  staged-planning rules). An issue it leaves open is treated as **blocked** and skipped; the
-  prompt tells it never to ask, and to comment what it needs instead. `--max-failures`
+  staged-planning rules). An issue it leaves open without a question is treated as
+  **blocked** and skipped, after commenting what it needs. `--max-failures`
   (default 3) stops the loop when that many issues in a row stay open — expired auth or a red
   gate, not a run of bad tickets.
+- **Questions go to one ticket per milestone, and you answer them from Gitea.** A session
+  that needs a decision ends its final message on a `<<<QUESTION … QUESTION>>>` block and
+  leaves the issue open. The loop posts it as a comment on the milestone's **open-questions
+  ticket** (created on the first question, found again by a hidden `<!-- claudjar-loop:questions -->`
+  body marker, never worked as an issue), stashes any uncommitted work as
+  `claudjar loop #<n>`, raises a `notify-send` desktop notification whose **Open question**
+  action opens that comment (`--no-notify` turns it off), and moves on to the next issue.
+  Reply in a comment on the ticket: a reply starting with `#<n>` answers that issue, any
+  other answers the oldest open question. Before every pick the loop reads the ticket; an
+  answered issue is resumed first, in its **own** session (`--resume`), told to pop its
+  stash. Once only questions remain the loop polls every `--poll-seconds` (default 60)
+  until they are answered or you Ctrl-C. The ticket is closed when the loop ends with
+  nothing waiting, and reopened by the next question. Parked state lives in the loop's
+  memory: after a restart, an unanswered issue starts a fresh session, which is pointed at
+  the ticket to read earlier answers.
 - **Usage limits are waited out, not lost.** The session's `stream-json` carries a
   `rate_limit_event` whose `status: rejected` names `resetsAt` (epoch seconds). The loop sleeps
   until then plus a minute and `--resume`s the **same** session, so a half-done issue keeps its

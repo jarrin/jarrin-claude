@@ -10,10 +10,11 @@ import {
   backlogRepo,
   loopLocks,
 } from "../commands/loop.js";
-import { runLoop } from "./driver.js";
+import { parseQuestion, runLoop } from "./driver.js";
 import type { RunClaude } from "./driver.js";
 import { giteaClient, resolveAuth, workOrder } from "./gitea.js";
-import type { GiteaClient, Issue, Milestone } from "./gitea.js";
+import { QUESTIONS_MARKER } from "./gitea.js";
+import type { Comment, GiteaClient, Issue, Milestone } from "./gitea.js";
 import { FALLBACK_WAIT_MS, StreamTracker, limitWaitMs } from "./stream.js";
 import type { RunOutcome } from "./stream.js";
 
@@ -101,6 +102,56 @@ describe("giteaClient", () => {
     expect(issues).toHaveLength(51);
     expect(urls[1]).toContain("milestones=5");
     expect(urls[1]).toContain("page=2");
+  });
+
+  it("never lists the open-questions ticket as work", async () => {
+    const client = giteaClient(auth, "o/r", () =>
+      respond([
+        { number: 1, title: "work" },
+        { number: 2, title: "Open questions", body: `${QUESTIONS_MARKER}\n…` },
+      ]),
+    );
+    const issues = await client.openIssues({ id: 5, title: "m" });
+    expect(issues.map((i) => i.number)).toEqual([1]);
+  });
+
+  it("reopens an existing questions ticket instead of filing a second", async () => {
+    const calls: [string, string][] = [];
+    const client = giteaClient(auth, "o/r", (url, init) => {
+      calls.push([init.method ?? "GET", url]);
+      return respond(
+        init.method === "PATCH"
+          ? {}
+          : [
+              {
+                number: 7,
+                state: "closed",
+                html_url: "https://g/o/r/issues/7",
+                body: QUESTIONS_MARKER,
+              },
+            ],
+      );
+    });
+    await expect(
+      client.ensureQuestionsIssue({ id: 5, title: "m" }),
+    ).resolves.toEqual({ number: 7, url: "https://g/o/r/issues/7" });
+    expect(calls.map(([m]) => m)).toEqual(["GET", "PATCH"]);
+    expect(calls[0]?.[1]).toContain("state=all");
+  });
+});
+
+describe("parseQuestion", () => {
+  it("reads the block a session ends on", () => {
+    expect(
+      parseQuestion(
+        "Done some.\n\n<<<QUESTION\nA or B?\nI'd pick A.\nQUESTION>>>",
+      ),
+    ).toBe("A or B?\nI'd pick A.");
+  });
+
+  it("is null without one", () => {
+    expect(parseQuestion("Blocked: no access.")).toBeNull();
+    expect(parseQuestion("<<<QUESTION\n\nQUESTION>>>")).toBeNull();
   });
 });
 
@@ -208,13 +259,29 @@ describe("runLoop", () => {
     resultText: "",
   });
 
+  const QUESTIONS = 100;
+
   function fakeGitea(byMilestone: Record<number, Issue[]>): {
     client: GiteaClient;
     close: (n: number) => void;
+    closed: Set<number>;
+    /** Comments on the questions ticket, in order. */
+    thread: Comment[];
+    reply: (body: string) => void;
   } {
     const closed = new Set<number>();
+    const thread: Comment[] = [];
+    let nextId = 1;
+    const add = (body: string): Comment => {
+      const c = { id: nextId++, body, url: `u#${String(nextId)}` };
+      thread.push(c);
+      return c;
+    };
     return {
       close: (n) => void closed.add(n),
+      closed,
+      thread,
+      reply: (body) => void add(body),
       client: {
         resolveMilestone: () => Promise.reject(new Error("unused")),
         openIssues: (m) =>
@@ -222,13 +289,35 @@ describe("runLoop", () => {
             (byMilestone[m.id] ?? []).filter((i) => !closed.has(i.number)),
           ),
         isClosed: (n) => Promise.resolve(closed.has(n)),
+        ensureQuestionsIssue: () => {
+          closed.delete(QUESTIONS);
+          return Promise.resolve({ number: QUESTIONS, url: "q" });
+        },
+        closeIssue: (n) => {
+          closed.add(n);
+          return Promise.resolve();
+        },
+        comment: (_n, body) => Promise.resolve(add(body)),
+        comments: () => Promise.resolve([...thread]),
       },
     };
   }
 
+  const quiet = {
+    sleep: () => Promise.resolve(),
+    now: () => 0,
+    log: () => {},
+    stash: () => Promise.resolve(false),
+    notify: () => {},
+  };
+  const asks = (sessionId: string, q: string): RunOutcome => ({
+    ...ok(sessionId),
+    resultText: `<<<QUESTION\n${q}\nQUESTION>>>`,
+  });
+
   const m1: Milestone = { id: 1, title: "one" };
   const m2: Milestone = { id: 2, title: "two" };
-  const base = { repo: "o/r", maxIssues: 0, maxFailures: 3 };
+  const base = { repo: "o/r", maxIssues: 0, maxFailures: 3, pollMs: 1000 };
 
   it("works milestones in order, one fresh session per issue", async () => {
     const g = fakeGitea({ 1: [issue(3), issue(1)], 2: [issue(2)] });
@@ -242,9 +331,7 @@ describe("runLoop", () => {
       {
         gitea: g.client,
         run,
-        sleep: () => Promise.resolve(),
-        now: () => 0,
-        log: () => {},
+        ...quiet,
       },
       { ...base, milestones: [m1, m2] },
     );
@@ -284,6 +371,8 @@ describe("runLoop", () => {
         },
         now: () => 40_000,
         log: () => {},
+        stash: () => Promise.resolve(false),
+        notify: () => {},
       },
       { ...base, milestones: [m1] },
     );
@@ -298,9 +387,7 @@ describe("runLoop", () => {
       {
         gitea: g.client,
         run,
-        sleep: () => Promise.resolve(),
-        now: () => 0,
-        log: () => {},
+        ...quiet,
       },
       { ...base, maxFailures: 2, milestones: [m1] },
     );
@@ -318,13 +405,92 @@ describe("runLoop", () => {
       {
         gitea: g.client,
         run,
-        sleep: () => Promise.resolve(),
-        now: () => 0,
-        log: () => {},
+        ...quiet,
       },
       { ...base, maxIssues: 1, milestones: [m1] },
     );
     expect(summary.closed).toHaveLength(1);
+  });
+
+  it("parks a question, works on, and resumes the session with the answer", async () => {
+    const g = fakeGitea({ 1: [issue(1), issue(2)] });
+    const calls: [number, string | null, string][] = [];
+    const notified: string[] = [];
+    let stashes = 0;
+    const run: RunClaude = (prompt, resume, i) => {
+      calls.push([i.number, resume, prompt]);
+      if (i.number === 1 && resume === null)
+        return Promise.resolve(asks("s1", "Drop the column?"));
+      if (i.number === 2) g.reply("Yes, drop it."); // answered while #2 runs
+      g.close(i.number);
+      return Promise.resolve(ok(`s${String(i.number)}`));
+    };
+    const summary = await runLoop(
+      {
+        ...quiet,
+        gitea: g.client,
+        run,
+        stash: () => {
+          stashes++;
+          return Promise.resolve(true);
+        },
+        notify: (_t, _b, url) => void notified.push(url),
+      },
+      { ...base, milestones: [m1] },
+    );
+    expect(calls.map(([n, r]) => [n, r])).toEqual([
+      [1, null],
+      [2, null],
+      [1, "s1"],
+    ]);
+    expect(calls[2]?.[2]).toContain("> Yes, drop it.");
+    expect(calls[2]?.[2]).toContain("git stash pop");
+    expect(g.thread[0]?.body).toContain("Drop the column?");
+    expect(notified).toHaveLength(1);
+    expect(stashes).toBe(1);
+    expect(summary.closed.map((i) => i.number)).toEqual([2, 1]);
+    expect(summary.awaiting).toEqual([]);
+    expect(g.closed.has(QUESTIONS)).toBe(true);
+  });
+
+  it("routes a reply by its leading #n and polls while only questions remain", async () => {
+    const g = fakeGitea({ 1: [issue(1), issue(2)] });
+    const resumed: number[] = [];
+    let polls = 0;
+    const run: RunClaude = (_p, resume, i) => {
+      if (resume === null)
+        return Promise.resolve(asks(`s${String(i.number)}`, "?"));
+      resumed.push(i.number);
+      g.close(i.number);
+      return Promise.resolve(ok("s"));
+    };
+    await runLoop(
+      {
+        ...quiet,
+        gitea: g.client,
+        run,
+        sleep: () => {
+          polls++;
+          if (polls === 1) g.reply("#2 yes, go ahead");
+          if (polls === 2) g.reply("and for the other one: no");
+          return Promise.resolve();
+        },
+      },
+      { ...base, milestones: [m1] },
+    );
+    expect(resumed).toEqual([2, 1]);
+  });
+
+  it("leaves the questions ticket open while a question is unanswered", async () => {
+    const g = fakeGitea({ 1: [issue(1), issue(2)] });
+    const run: RunClaude = (_p, _r, i) =>
+      Promise.resolve(i.number === 1 ? asks("s1", "?") : ok("s2"));
+    const summary = await runLoop(
+      { ...quiet, gitea: g.client, run },
+      { ...base, maxIssues: 2, maxFailures: 1, milestones: [m1] },
+    );
+    expect(summary.awaiting.map((i) => i.number)).toEqual([1]);
+    expect(g.closed.has(QUESTIONS)).toBe(false);
   });
 });
 

@@ -19,11 +19,35 @@ export interface Issue {
   readonly title: string;
 }
 
-/** The three reads the loop needs; an interface so the driver tests use a fake. */
+export interface Comment {
+  readonly id: number;
+  readonly body: string;
+  readonly url: string;
+}
+
+/** A milestone's open-questions ticket, as `ensureQuestionsIssue` returns it. */
+export interface QuestionsIssue {
+  readonly number: number;
+  readonly url: string;
+}
+
+/**
+ * Marks the loop's open-questions ticket in its body. The ticket is found by this
+ * marker (never by title, which the user may edit) and is never worked as an issue.
+ */
+export const QUESTIONS_MARKER = "<!-- claudjar-loop:questions -->";
+
+/** What the loop reads and writes; an interface so the driver tests use a fake. */
 export interface GiteaClient {
   resolveMilestone(ref: string): Promise<Milestone>;
+  /** Open issues of the milestone, minus its open-questions ticket. */
   openIssues(milestone: Milestone): Promise<Issue[]>;
   isClosed(issue: number): Promise<boolean>;
+  /** Find the milestone's open-questions ticket (reopening it) or create it. */
+  ensureQuestionsIssue(milestone: Milestone): Promise<QuestionsIssue>;
+  closeIssue(issue: number): Promise<void>;
+  comment(issue: number, body: string): Promise<Comment>;
+  comments(issue: number): Promise<Comment[]>;
 }
 
 type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
@@ -98,17 +122,44 @@ export function giteaClient(
   trustSystemCAs();
   const base = `${auth.host}/api/v1/repos/${repo}`;
 
-  async function get(path: string): Promise<unknown> {
+  async function request(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<unknown> {
     const res = await fetchImpl(`${base}${path}`, {
+      method,
       headers: {
         Authorization: `token ${auth.token}`,
         Accept: "application/json",
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (!res.ok) {
-      throw new Error(`Gitea GET ${path} failed: HTTP ${String(res.status)}`);
+      throw new Error(
+        `Gitea ${method} ${path} failed: HTTP ${String(res.status)}`,
+      );
     }
     return res.json();
+  }
+  const get = (path: string): Promise<unknown> => request("GET", path);
+
+  async function milestoneIssues(
+    milestone: Milestone,
+    state: "open" | "all",
+  ): Promise<unknown[]> {
+    const rows: unknown[] = [];
+    for (let page = 1; ; page++) {
+      const batch = asArray(
+        await get(
+          `/issues?state=${state}&type=issues&milestones=${String(milestone.id)}` +
+            `&limit=${String(PAGE)}&page=${String(page)}`,
+        ),
+      );
+      rows.push(...batch);
+      if (batch.length < PAGE) return rows;
+    }
   }
 
   return {
@@ -137,24 +188,66 @@ export function giteaClient(
     },
 
     async openIssues(milestone: Milestone): Promise<Issue[]> {
-      const issues: Issue[] = [];
-      for (let page = 1; ; page++) {
-        const rows = asArray(
-          await get(
-            `/issues?state=open&type=issues&milestones=${String(milestone.id)}` +
-              `&limit=${String(PAGE)}&page=${String(page)}`,
-          ),
-        );
-        for (const row of rows) {
-          const issue = toIssue(row);
-          if (issue) issues.push(issue);
-        }
-        if (rows.length < PAGE) return issues;
-      }
+      return (await milestoneIssues(milestone, "open"))
+        .filter((row) => !isQuestionsRow(row))
+        .map(toIssue)
+        .filter((i): i is Issue => i !== null);
     },
 
     async isClosed(issue: number): Promise<boolean> {
       return field(await get(`/issues/${String(issue)}`), "state") === "closed";
+    },
+
+    async ensureQuestionsIssue(milestone: Milestone): Promise<QuestionsIssue> {
+      const found = (await milestoneIssues(milestone, "all")).find(
+        isQuestionsRow,
+      );
+      if (found !== undefined) {
+        const number = field(found, "number");
+        if (typeof number !== "number")
+          throw new Error("open-questions ticket: unexpected response");
+        if (field(found, "state") !== "open")
+          await request("PATCH", `/issues/${String(number)}`, {
+            state: "open",
+          });
+        return { number, url: stringField(found, "html_url") };
+      }
+      const created = await request("POST", "/issues", {
+        title: `Open questions — ${milestone.title}`,
+        milestone: milestone.id,
+        body: [
+          QUESTIONS_MARKER,
+          "",
+          `Questions \`claudjar loop\` sessions ask while working milestone **${milestone.title}**.`,
+          "",
+          "Answer by commenting here. Start the reply with the issue number (`#12 …`) when",
+          "more than one question is waiting; otherwise it answers the oldest one. The loop",
+          "resumes that issue's session with your answer, and closes this ticket when it",
+          "finishes with nothing left to ask.",
+        ].join("\n"),
+      });
+      const number = field(created, "number");
+      if (typeof number !== "number")
+        throw new Error("creating the open-questions ticket failed");
+      return { number, url: stringField(created, "html_url") };
+    },
+
+    async closeIssue(issue: number): Promise<void> {
+      await request("PATCH", `/issues/${String(issue)}`, { state: "closed" });
+    },
+
+    async comment(issue: number, body: string): Promise<Comment> {
+      const c = toComment(
+        await request("POST", `/issues/${String(issue)}/comments`, { body }),
+      );
+      if (!c) throw new Error(`commenting on #${String(issue)} failed`);
+      return c;
+    },
+
+    async comments(issue: number): Promise<Comment[]> {
+      return asArray(await get(`/issues/${String(issue)}/comments`))
+        .map(toComment)
+        .filter((c): c is Comment => c !== null);
     },
   };
 }
@@ -168,6 +261,26 @@ function toMilestone(value: unknown): Milestone | null {
   const title = field(value, "title");
   return typeof id === "number" && typeof title === "string"
     ? { id, title }
+    : null;
+}
+
+function stringField(value: unknown, key: string): string {
+  const v = field(value, key);
+  return typeof v === "string" ? v : "";
+}
+
+function isQuestionsRow(row: unknown): boolean {
+  return stringField(row, "body").includes(QUESTIONS_MARKER);
+}
+
+function toComment(value: unknown): Comment | null {
+  const id = field(value, "id");
+  return typeof id === "number"
+    ? {
+        id,
+        body: stringField(value, "body"),
+        url: stringField(value, "html_url"),
+      }
     : null;
 }
 
