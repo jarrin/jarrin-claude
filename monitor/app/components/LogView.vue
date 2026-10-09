@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { LogLine } from "#shared/protocol";
-import { clock } from "~/utils/instances";
 
 const props = defineProps<{ lines: readonly LogLine[] }>();
 
@@ -33,11 +32,7 @@ onMounted(toBottom);
   <div class="log-wrap">
     <div ref="box" class="log" @scroll="onScroll">
       <div v-if="lines.length === 0" class="empty">No output yet.</div>
-      <div v-for="(line, i) in lines" :key="i" :class="['line', line.kind]">
-        <span class="time">{{ clock(line.t) }}</span>
-        <span class="issue">{{ line.issue ? `#${line.issue}` : "" }}</span>
-        <span class="text">{{ line.text }}</span>
-      </div>
+      <LogEntry v-for="(line, i) in lines" :key="i" :line="line" />
     </div>
     <button
       v-if="!follow"

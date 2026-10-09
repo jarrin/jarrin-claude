@@ -295,6 +295,9 @@ export function connectMonitor(opts: MonitorOptions): Monitor {
 const MAX_INPUT = 300;
 const MAX_OUTPUT_LINES = 12;
 const MAX_OUTPUT_CHARS = 2000;
+/** JSON output is kept whole (the monitor renders it), so it gets a bigger budget. */
+const MAX_JSON_CHARS = 12_000;
+const MAX_JSON_ITEMS = 50;
 
 /** Turn one stream-json line into the monitor's coloured log lines. */
 export function streamLines(raw: string, issue: number, t: number): LogLine[] {
@@ -394,6 +397,8 @@ function toolOutput(content: unknown): string {
             .join("\n")
         : "";
   if (!text.trim()) return "(no output)";
+  const json = compactJson(text);
+  if (json !== undefined) return json;
   const lines = text.trimEnd().split("\n");
   const shown = lines.slice(0, MAX_OUTPUT_LINES).join("\n");
   const more = lines.length - MAX_OUTPUT_LINES;
@@ -401,6 +406,42 @@ function toolOutput(content: unknown): string {
     clip(shown, MAX_OUTPUT_CHARS) +
     (more > 0 ? `\n… ${String(more)} more lines` : "")
   );
+}
+
+/**
+ * Re-serialise an object/array tool result to fit {@link MAX_JSON_CHARS} while
+ * staying valid JSON — clipping its strings and arrays rather than its tail — so
+ * the monitor can still parse and render it. `undefined` when it is not JSON.
+ */
+function compactJson(text: string): string | undefined {
+  const head = text.trimStart()[0];
+  if (head !== "{" && head !== "[") return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  for (let max = 4000; ; max = Math.floor(max / 2)) {
+    const out = JSON.stringify(shrink(value, max));
+    if (out.length <= MAX_JSON_CHARS || max < 40) return out;
+  }
+}
+
+function shrink(value: unknown, maxString: number): unknown {
+  if (typeof value === "string") return clip(value, maxString);
+  if (Array.isArray(value)) {
+    const kept = (value as unknown[])
+      .slice(0, MAX_JSON_ITEMS)
+      .map((v) => shrink(v, maxString));
+    const more = value.length - kept.length;
+    return more > 0 ? [...kept, `… ${String(more)} more items`] : kept;
+  }
+  if (value !== null && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, shrink(v, maxString)]),
+    );
+  return value;
 }
 
 function clip(text: string, max: number): string {

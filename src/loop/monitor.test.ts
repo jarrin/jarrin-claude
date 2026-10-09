@@ -321,6 +321,30 @@ describe("streamLines", () => {
     expect(bad).toMatchObject({ kind: "error", text: "boom" });
   });
 
+  it("keeps JSON tool output parseable instead of cutting its tail", () => {
+    const comments = Array.from({ length: 60 }, (_, i) => ({
+      id: i,
+      body: `**Stage ${String(i)}**\n${"x".repeat(5000)}`,
+    }));
+    const [out] = feed({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            content: [{ type: "text", text: JSON.stringify(comments) }],
+          },
+        ],
+      },
+    });
+    const text = out?.text ?? "";
+    expect(text.length).toBeLessThanOrEqual(12_000);
+    const parsed = JSON.parse(text) as unknown[];
+    expect(parsed).toHaveLength(51);
+    expect(parsed[0]).toMatchObject({ id: 0 });
+    expect(parsed[50]).toBe("… 10 more items");
+  });
+
   it("summarises the result and session init", () => {
     expect(
       feed({

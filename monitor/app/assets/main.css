@@ -240,6 +240,177 @@ main.none {
   color: var(--cyan);
 }
 
+/* Markdown from the model or a tool: keep it compact inside the log grid. */
+.md {
+  white-space: normal;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p,
+.md ul,
+.md ol,
+.md pre,
+.md blockquote,
+.md table {
+  margin: 0.4em 0;
+}
+
+.md ul,
+.md ol {
+  padding-left: 1.4em;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 0.7em 0 0.3em;
+  font-size: 1.05em;
+  color: var(--fg);
+}
+
+.md h1,
+.md h2 {
+  font-size: 1.15em;
+}
+
+.md strong {
+  color: var(--fg);
+}
+
+.md code {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #0b0d11;
+  font:
+    12px ui-monospace,
+    "JetBrains Mono",
+    Menlo,
+    monospace;
+}
+
+.md pre {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #0b0d11;
+  overflow-x: auto;
+}
+
+.md pre code {
+  padding: 0;
+  background: none;
+}
+
+.md a {
+  color: var(--blue);
+}
+
+.md blockquote {
+  padding-left: 8px;
+  border-left: 3px solid var(--border);
+  color: var(--dim);
+}
+
+.md table {
+  border-collapse: collapse;
+}
+
+.md th,
+.md td {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.line.output .md {
+  color: var(--fg);
+}
+
+/* Structured (JSON) tool output: folded to a few lines until expanded. */
+.fold {
+  position: relative;
+  max-height: 14em;
+  overflow: hidden;
+  white-space: normal;
+}
+
+.fold.open {
+  max-height: none;
+  padding-bottom: 1.6em;
+}
+
+.fold-toggle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 1.5em 0 0;
+  border: 0;
+  background: linear-gradient(transparent, var(--bg) 70%);
+  color: var(--blue);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fold.open .fold-toggle {
+  padding-top: 0;
+  background: none;
+}
+
+.json {
+  display: grid;
+  gap: 2px;
+}
+
+.json .json {
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+.json-row {
+  display: grid;
+  grid-template-columns: minmax(3em, max-content) 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.json-key {
+  color: var(--cyan);
+}
+
+.json-scalar.string {
+  color: var(--fg);
+}
+
+.json-scalar.number,
+.json-scalar.boolean {
+  color: var(--yellow);
+}
+
+.json-scalar.null,
+.json-empty {
+  color: var(--dim);
+}
+
 .follow {
   position: absolute;
   right: 16px;
