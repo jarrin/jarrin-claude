@@ -184,6 +184,7 @@ subcommands:
 | `claudjar caddy join` / `leave` | Register / deregister this checkout's `<slug>.localhost` route (worktrees register themselves on create)           |
 | `claudjar caddy status`         | Show the caddy container state and every registered route                                                          |
 | `claudjar caddy trust`          | Anchor the caddy's internal CA in this host's trust store, so `https://<slug>.localhost` verifies (sudo, once)     |
+| `claudjar loop <milestone>…`    | Work every open issue of Gitea milestones unattended, a fresh `claude -p` per issue; waits out usage limits        |
 | `claudjar release`              | Cut a version: bump `project.dist.version`, mirror it into `sync:` files, build, commit, tag (never pushes)        |
 | `claudjar install`              | Machine setup: symlink config into `~/.claude`, link the binary onto PATH, enable hooks, check prerequisites       |
 | `claudjar help --full`          | Print every command's help as one Markdown document (`--include-internal` adds the `api` commands)                 |
@@ -322,6 +323,41 @@ the `Caddyfile` beside it is regenerated wholesale on every change, so hand-edit
 `merge --remove` drop it, and `init` registers the repo when the config it writes opts in.
 Reloading a caddy that isn't running is a no-op rather than an error, so `join` works before
 `caddy up` was ever run.
+
+### Looping a milestone
+
+`claudjar loop <milestone>…` works a backlog unattended. For each open issue of the given
+milestones — in the order given; inside a milestone `Stage <n>` tickets by `n`, then the rest
+oldest first — it starts a **new** `claude -p "Continue <n>"` session, so the context is cleared
+between issues. The issue list is re-read before every pick, so follow-up tickets filed mid-run
+are worked too.
+
+- **Done is closed.** A session closes its issue when finished (comment, then close — the
+  staged-planning rules). An issue it leaves open is treated as **blocked** and skipped; the
+  prompt tells it never to ask, and to comment what it needs instead. `--max-failures`
+  (default 3) stops the loop when that many issues in a row stay open — expired auth or a red
+  gate, not a run of bad tickets.
+- **Usage limits are waited out, not lost.** The session's `stream-json` carries a
+  `rate_limit_event` whose `status: rejected` names `resetsAt` (epoch seconds). The loop sleeps
+  until then plus a minute and `--resume`s the **same** session, so a half-done issue keeps its
+  context. With no reset time it probes again after 15 minutes. Plain interactive Claude Code
+  does not do this: it stops at the limit until you send another message.
+- **Unattended means a permission mode.** Sessions run with `--permission-mode
+bypassPermissions` by default (`--permission-mode` to change it). Anything that would need
+  approval otherwise fails the issue and the loop moves on.
+- Milestones resolve by **exact** title (Gitea's `name=` is a substring match) or numeric id;
+  the repo is `--repo`, else `backlog.plan.repo`, else `backlog.repo`. Credentials come from
+  `GITEA_HOST` / `GITEA_ACCESS_TOKEN`, else the `gitea` MCP server's env in `~/.claude.json`.
+  The OS trust store is added to Node's, so a Gitea behind a private CA works.
+- Loops run in parallel — one per worktree, each on its own milestones. A pid lock per worktree
+  and per milestone (`~/.claudjar/loop/<owner>__<name>/locks/`) refuses a second loop in the same
+  checkout or on a milestone another loop holds. Each session's raw stream is kept in that
+  directory as `<timestamp>-issue-<n>.jsonl`. `--dry-run` prints the queue and exits.
+
+```bash
+claudjar loop --dry-run feature-a feature-b   # see the queue
+claudjar loop feature-a feature-b             # work it; Ctrl-C stops after releasing the lock
+```
 
 ### Releasing
 

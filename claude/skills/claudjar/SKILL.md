@@ -9,7 +9,9 @@ description: >-
   containers** up or down ("start the project", "bring it up", "docker compose up",
   "stop the services", "what port is this on?"); to **set up or inspect a repo's Claude
   config** ("activate this repo", "which rules load here?", "add a command table",
-  "what's my config?"); or to **install this machine's Claude config**. Also use it when
+  "what's my config?"); to **work a Gitea milestone's issues unattended** ("loop the
+  issues", "run all issues in milestone X", "auto-work the backlog"); or to **install this
+  machine's Claude config**. Also use it when
   a user asks what claudjar can do. Reach for this BEFORE running `git worktree`,
   `docker compose`, or hand-editing .claude/.jarrin.yml.
 version: 0.1.0
@@ -54,6 +56,7 @@ table.
 | To start / stop the machine-wide proxy   | `claudjar caddy up` / `claudjar caddy down` |
 | To see what is routed where              | `claudjar caddy status`                     |
 | `https://…localhost` trusted on this host | `claudjar caddy trust` (sudo, once per machine) |
+| To work a milestone's issues unattended | `claudjar loop <milestone>…` (`--dry-run` first) |
 | To cut / tag a release                   | `claudjar release [--bump major\|minor]`    |
 | To see this repo's resolved config       | `claudjar info`                             |
 | To activate a repo / change its rules    | `claudjar init`                             |
@@ -104,6 +107,13 @@ certificate warning, run `claudjar caddy trust` (sudo) — it anchors the CA's r
 intermediate in the host trust store, once per machine. Do not hand-import certificates or
 add per-project TLS config; the CA survives container recreation in the
 `claudjar-caddy-data` volume.
+
+**`loop` is the user's to start, not yours.** It spawns one `claude -p` session per issue
+with `bypassPermissions` and runs until the milestones are empty — hours of unattended
+work. Give the user the command (`--dry-run` first to show the queue); do not launch it from
+inside a session. It clears context between issues, waits out usage limits and resumes the
+same session, and skips an issue left open. Details in the jarrin-claude README, *Looping a
+milestone*.
 
 **`release` refuses more than it does.** It runs only on `main` with a clean tree, and
 never pushes. If it refuses, relay the reason — do not work around it by tagging or

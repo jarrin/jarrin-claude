@@ -263,6 +263,28 @@ FLAGS
   -h --help  Print help information and exit
 ```
 
+### claudjar loop
+
+```
+USAGE
+  claudjar loop [--repo value] [--dry-run] [--max-issues value] [--max-failures value] [--model value] [--permission-mode value] <args>...
+  claudjar loop --help
+
+Runs `claude -p "Continue <n>"` for each open issue of the given milestones, in order, a new session per issue (the context is cleared between issues). A usage limit pauses the loop until it resets, then resumes the same session. An issue the session leaves open (blocked) is skipped. Loops may run in parallel as long as no two share a worktree or a milestone. Stream logs go to ~/.claudjar/loop/<owner>__<name>/.
+
+FLAGS
+     [--repo]             Gitea owner/name (default: backlog.plan.repo, else backlog.repo)
+     [--dry-run]          List the queue in work order and exit                            [default = false]
+     [--max-issues]       Stop after this many issues (0 = all)                            [default = 0]
+     [--max-failures]     Stop after this many issues in a row are left open (0 = never)   [default = 3]
+     [--model]            Model for every session (default: Claude Code's own)
+     [--permission-mode]  Claude Code --permission-mode for the unattended sessions        [default = bypassPermissions]
+  -h  --help              Print help information and exit
+
+ARGUMENTS
+  args...  Milestone title (exact) or numeric id; worked in the order given
+```
+
 ### claudjar release
 
 ```

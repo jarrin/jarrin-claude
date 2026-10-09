@@ -9,6 +9,7 @@ import { helpCommand } from "./commands/help.js";
 import { infoCommand } from "./commands/info.js";
 import { initCommand } from "./commands/init.js";
 import { installCommand } from "./commands/install.js";
+import { loopCommand } from "./commands/loop.js";
 import { releaseCommand } from "./commands/release.js";
 import { startCommand, stopCommand } from "./commands/start.js";
 import { worktreeRoutes } from "./commands/worktree.js";
@@ -45,6 +46,7 @@ export function buildRoutes(hideInternal: boolean) {
       start: startCommand,
       stop: stopCommand,
       caddy: caddyRoutes,
+      loop: loopCommand,
       release: releaseCommand,
       help: helpCommand,
       api: apiRoutes,
