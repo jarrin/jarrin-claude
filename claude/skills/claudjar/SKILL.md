@@ -118,7 +118,8 @@ open-questions ticket, notifies the desktop, and resumes that session when the u
 replies there. Each milestone also gets a **Loop progress** ticket (checklist of
 issues, each with the session's `<<<STEPS` sub-checklist) that holds the loop's state, so a
 restarted loop resumes where it stopped. Loop sessions only ever **commit** — never release,
-tag, bump, or push; push the result yourself once the loop has finished. Details in the jarrin-claude README, *Looping a
+tag, bump, or push. The loop `git push`es the branch itself only when it finishes cleanly
+(every issue closed; `--no-push` opts out); otherwise the push is the user's. Details in the jarrin-claude README, *Looping a
 milestone*.
 
 **`release` refuses more than it does.** It runs only on `main` with a clean tree, and

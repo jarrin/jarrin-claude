@@ -267,20 +267,21 @@ FLAGS
 
 ```
 USAGE
-  claudjar loop [--repo value] [--dry-run] [--max-issues value] [--max-failures value] [--model value] [--permission-mode value] [--poll-seconds value] [--notify] <args>...
+  claudjar loop [--repo value] [--dry-run] [--max-issues value] [--max-failures value] [--model value] [--permission-mode value] [--poll-seconds value] [--push] [--notify] <args>...
   claudjar loop --help
 
-Runs `claude -p "Continue <n>"` for each open issue of the given milestones, in order, a new session per issue (the context is cleared between issues). A usage limit pauses the loop until it resets, then resumes the same session. A session that ends on a question parks its issue: the question is posted on the milestone's single open-questions ticket (with a desktop notification linking to it), other issues are worked meanwhile, and a reply there resumes that session. Once only questions are left the loop polls for answers. Each milestone's Loop progress ticket lists its issues with the sessions' steps as checkboxes and keeps the loop's state, so a restart resumes interrupted sessions and keeps waiting on unanswered questions. An issue the session leaves open without a question (blocked) is skipped. Loops may run in parallel as long as no two share a worktree or a milestone. Stream logs go to ~/.claudjar/loop/<owner>__<name>/.
+Runs `claude -p "Continue <n>"` for each open issue of the given milestones, in order, a new session per issue (the context is cleared between issues). A usage limit pauses the loop until it resets, then resumes the same session. A session that ends on a question parks its issue: the question is posted on the milestone's single open-questions ticket (with a desktop notification linking to it), other issues are worked meanwhile, and a reply there resumes that session. Once only questions are left the loop polls for answers. Each milestone's Loop progress ticket lists its issues with the sessions' steps as checkboxes and keeps the loop's state, so a restart resumes interrupted sessions and keeps waiting on unanswered questions. An issue the session leaves open without a question (blocked) is skipped. Sessions only commit, never release or push; a clean finish (every issue closed) pushes the checked-out branch unless --no-push. Loops may run in parallel as long as no two share a worktree or a milestone. Stream logs go to ~/.claudjar/loop/<owner>__<name>/.
 
 FLAGS
      [--repo]                Gitea owner/name (default: backlog.plan.repo, else backlog.repo)
-     [--dry-run]             List the queue in work order and exit                             [default = false]
-     [--max-issues]          Stop after this many issues (0 = all)                             [default = 0]
-     [--max-failures]        Stop after this many issues in a row are left open (0 = never)    [default = 3]
+     [--dry-run]             List the queue in work order and exit                                                    [default = false]
+     [--max-issues]          Stop after this many issues (0 = all)                                                    [default = 0]
+     [--max-failures]        Stop after this many issues in a row are left open (0 = never)                           [default = 3]
      [--model]               Model for every session (default: Claude Code's own)
-     [--permission-mode]     Claude Code --permission-mode for the unattended sessions         [default = bypassPermissions]
-     [--poll-seconds]        Seconds between checks for answers once only questions are left   [default = 60]
-     [--notify/--no-notify]  Desktop notification (notify-send) when a session asks a question [default = true]
+     [--permission-mode]     Claude Code --permission-mode for the unattended sessions                                [default = bypassPermissions]
+     [--poll-seconds]        Seconds between checks for answers once only questions are left                          [default = 60]
+     [--push/--no-push]      `git push` when the loop finishes cleanly (every issue closed, none blocked or awaiting) [default = true]
+     [--notify/--no-notify]  Desktop notification (notify-send) when a session asks a question                        [default = true]
   -h  --help                 Print help information and exit
 
 ARGUMENTS

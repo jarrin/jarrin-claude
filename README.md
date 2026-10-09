@@ -339,8 +339,10 @@ are worked too.
   gate, not a run of bad tickets.
 - **Local and commit-only.** Every session is told to commit and nothing more: no
   `claudjar release`, no version bump or tag, no forge release, no push — even when an issue
-  asks for one. The loop's output is a run of local commits; pushing (and releasing) is yours
-  to do once it has finished.
+  asks for one. The loop's output is a run of local commits. When it **finishes cleanly**
+  — every milestone drained, no issue blocked or awaiting an answer, not stopped by
+  `--max-issues` — the loop itself runs `git push` for the checked-out branch (`--no-push`
+  opts out). Otherwise it pushes nothing and leaves that to you; releasing is always yours.
 - **Questions go to one ticket per milestone, and you answer them from Gitea.** A session
   that needs a decision ends its final message on a `<<<QUESTION … QUESTION>>>` block and
   leaves the issue open. The loop posts it as a comment on the milestone's **open-questions

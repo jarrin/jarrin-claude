@@ -19,7 +19,7 @@ import { toplevel } from "../git.js";
 import { runLoop } from "../loop/driver.js";
 import { giteaClient, resolveAuth, workOrder } from "../loop/gitea.js";
 import type { Milestone } from "../loop/gitea.js";
-import { desktopNotify, stashIfDirty } from "../loop/notify.js";
+import { desktopNotify, pushBranch, stashIfDirty } from "../loop/notify.js";
 import { claudeRunner } from "../loop/runner.js";
 
 interface LoopFlags {
@@ -31,6 +31,7 @@ interface LoopFlags {
   readonly permissionMode: string;
   readonly pollSeconds: number;
   readonly notify: boolean;
+  readonly push: boolean;
 }
 
 /**
@@ -237,6 +238,17 @@ async function runLoopCommand(
     out(`  logs:      ${stateDir}`);
     if (summary.leftOpen.length > 0 || summary.awaiting.length > 0)
       proc.exitCode = 1;
+    // Sessions only commit; a fully drained run is the one point the result ships.
+    if (summary.clean && flags.push) {
+      const pushError = await pushBranch(repoRoot);
+      if (pushError) {
+        fail(`push failed — the commits are still local:\n${pushError}`);
+      } else {
+        out("  pushed:    yes");
+      }
+    } else if (summary.closed.length > 0) {
+      out("  pushed:    no — run `git push` once the result is right");
+    }
   } finally {
     release();
   }
@@ -305,6 +317,12 @@ export const loopCommand = buildCommand({
           "Seconds between checks for answers once only questions are left",
         default: "60",
       },
+      push: {
+        kind: "boolean",
+        brief:
+          "`git push` when the loop finishes cleanly (every issue closed, none blocked or awaiting)",
+        default: true,
+      },
       notify: {
         kind: "boolean",
         brief:
@@ -327,7 +345,9 @@ export const loopCommand = buildCommand({
       "milestone's Loop progress ticket lists its issues with the sessions' steps as " +
       "checkboxes and keeps the loop's state, so a restart resumes interrupted " +
       "sessions and keeps waiting on unanswered questions. An issue " +
-      "the session leaves open without a question (blocked) is skipped. Loops may run in parallel as long " +
+      "the session leaves open without a question (blocked) is skipped. Sessions only " +
+      "commit, never release or push; a clean finish (every issue closed) pushes the " +
+      "checked-out branch unless --no-push. Loops may run in parallel as long " +
       "as no two share a worktree or a milestone. Stream logs go to " +
       "~/.claudjar/loop/<owner>__<name>/.",
   },

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,7 @@ import {
   parseSteps,
   renderProgress,
 } from "./progress.js";
+import { pushBranch } from "./notify.js";
 import { FALLBACK_WAIT_MS, StreamTracker, limitWaitMs } from "./stream.js";
 import type { RunOutcome } from "./stream.js";
 
@@ -371,6 +373,7 @@ describe("runLoop", () => {
     ]);
     expect(summary.closed.map((i) => i.number)).toEqual([1, 3, 2]);
     expect(summary.stopReason).toBe("no open issues left");
+    expect(summary.clean).toBe(true);
   });
 
   it("waits out a usage limit and resumes the same session", async () => {
@@ -422,6 +425,7 @@ describe("runLoop", () => {
     );
     expect(summary.leftOpen.map((i) => i.number)).toEqual([1, 2]);
     expect(summary.stopReason).toMatch(/2 issues in a row/);
+    expect(summary.clean).toBe(false);
   });
 
   it("honours --max-issues", async () => {
@@ -439,6 +443,7 @@ describe("runLoop", () => {
       { ...base, maxIssues: 1, milestones: [m1] },
     );
     expect(summary.closed).toHaveLength(1);
+    expect(summary.clean).toBe(false);
   });
 
   it("parks a question, works on, and resumes the session with the answer", async () => {
@@ -688,6 +693,59 @@ describe("acquireLocks", () => {
     );
     expect(acquireLocks(loopLocks(dir, "/wt/a", [ms(2)]))).toMatch(
       /worktree \/wt\/a/,
+    );
+  });
+});
+
+describe("pushBranch", () => {
+  const git = (cwd: string, ...args: string[]): string =>
+    execFileSync("git", args, { cwd, encoding: "utf8" });
+
+  const clone = (): { work: string; remote: string } => {
+    const root = mkdtempSync(join(tmpdir(), "claudjar-push-"));
+    const remote = join(root, "remote.git");
+    const work = join(root, "work");
+    git(root, "init", "--bare", "-b", "main", remote);
+    git(root, "init", "-b", "main", work);
+    git(
+      work,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "x",
+    );
+    return { work, remote };
+  };
+
+  it("pushes the branch to its upstream", async () => {
+    const { work, remote } = clone();
+    git(work, "remote", "add", "origin", remote);
+    git(work, "push", "-u", "origin", "main");
+    git(
+      work,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "y",
+    );
+    expect(await pushBranch(work)).toBeNull();
+    expect(git(remote, "rev-parse", "main")).toBe(
+      git(work, "rev-parse", "HEAD"),
+    );
+  });
+
+  it("returns git's error when there is nowhere to push", async () => {
+    const { work } = clone();
+    expect(await pushBranch(work)).toMatch(
+      /no (upstream|configured push destination)/i,
     );
   });
 });

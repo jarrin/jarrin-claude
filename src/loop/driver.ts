@@ -42,6 +42,8 @@ export interface LoopSummary {
   /** Issues still waiting on an answer when the loop stopped. */
   readonly awaiting: Issue[];
   readonly stopReason: string;
+  /** Every milestone drained: nothing capped, skipped as blocked, or awaiting an answer. */
+  readonly clean: boolean;
 }
 
 const QUESTION_BLOCK = /<<<QUESTION\s*\n([\s\S]*?)\n\s*QUESTION>>>/;
@@ -90,7 +92,7 @@ export function issuePrompt(
     "  outcome on the issue, then close it. Closing is how the loop knows it is done.",
     "- Keep everything local: commit only. Never release (`claudjar release`, a version bump,",
     "  a tag, a forge release), never push — even if the issue asks for it. Pushing the result",
-    "  is for after the loop has finished; say in your issue comment that a release is due.",
+    "  is the loop's job once every issue is done; say in your issue comment if a release is due.",
     "- A choice the standing rules give to the user (a surprising commit sweep, a destructive",
     "  step, a decision only the user can make): ask it. Ask as early as you can, leave the",
     "  issue OPEN, and make your final message end with exactly this block, then stop:",
@@ -229,13 +231,20 @@ export async function runLoop(
   let failuresInRow = 0;
   let announcedWait = false;
 
-  const summary = async (stopReason: string): Promise<LoopSummary> => {
+  const summary = async (
+    stopReason: string,
+    drained = false,
+  ): Promise<LoopSummary> => {
     await board.finish();
+    const awaiting = board
+      .inStatus("waiting")
+      .map(({ entry }) => asIssue(entry));
     return {
       closed,
       leftOpen,
-      awaiting: board.inStatus("waiting").map(({ entry }) => asIssue(entry)),
+      awaiting,
       stopReason,
+      clean: drained && leftOpen.length === 0 && awaiting.length === 0,
     };
   };
 
@@ -407,7 +416,7 @@ export async function runLoop(
     const reason = capped
       ? `reached --max-issues ${String(opts.maxIssues)}`
       : "no open issues left";
-    if (waiting.length === 0) return summary(reason);
+    if (waiting.length === 0) return summary(reason, !capped);
     if (!announcedWait) {
       const list = waiting.map((w) => `#${String(w.entry.number)}`).join(" ");
       deps.log(
