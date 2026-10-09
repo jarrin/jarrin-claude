@@ -302,5 +302,61 @@ describe("Hub as the loop store", () => {
         hub.livePost(post("x", false, `c${String(i)}`));
       expect(got).toContainEqual({ type: "live-removed", id: "c0" });
     });
+    it("dismisses finished logs only", () => {
+      const hub = new Hub(() => 1);
+      const got = watched(hub);
+      hub.livePost(post("a", false, "run"));
+      hub.livePost(post("b", true, "fin"));
+      hub.dismissLive("run");
+      hub.dismissLive("fin");
+      expect(got.filter((m) => m.type === "live-removed")).toEqual([
+        { type: "live-removed", id: "fin" },
+      ]);
+    });
+  });
+
+  it("closes a question once its issue shows closed, also on restore", () => {
+    const entry = (status: Entry["status"]): Entry => ({
+      number: 3,
+      title: "t",
+      status,
+      steps: [],
+      sessionId: null,
+      questionId: "q1",
+      stashed: false,
+    });
+    const hub = new Hub(() => 1);
+    hub.hello(info(), () => {});
+    hub.ask("a", { id: "q1", milestone: M1, issue: 3, title: "t", text: "?" });
+    const got = watched(hub);
+    hub.progress("a", M1, [entry("closed")]);
+    expect(got).toContainEqual({ type: "question-closed", id: "q1" });
+
+    const restored = new Hub(() => 1);
+    restored.restore({
+      instances: [],
+      boards: [
+        {
+          repo: "jarrin/x",
+          milestone: M1,
+          entries: [entry("closed")],
+          updatedAt: 0,
+        },
+      ],
+      questions: [
+        {
+          id: "q1",
+          repo: "jarrin/x",
+          milestone: M1,
+          issue: 3,
+          title: "t",
+          text: "?",
+          askedAt: 0,
+          answer: null,
+          answeredAt: null,
+        },
+      ],
+    });
+    expect(watched(restored)[0]).toMatchObject({ questions: [] });
   });
 });

@@ -465,6 +465,27 @@ describe("runLoop", () => {
     expect(summary.awaiting).toEqual([]);
   });
 
+  it("closes the question of an issue closed by hand while it waited", async () => {
+    const g = fakeGitea({ 1: [issue(1), issue(2)] });
+    const store = fakeStore();
+    const run: RunClaude = (_p, _r, i) => {
+      if (i.number === 1) return Promise.resolve(asks("s1", "Keep it?"));
+      g.close(1); // closed on the forge, unanswered
+      g.close(2);
+      return Promise.resolve(ok("s2"));
+    };
+    const summary = await runLoop(
+      { ...quiet, gitea: g.client, run, store },
+      { ...base, milestones: [m1] },
+    );
+    expect(store.resolved).toEqual(["q1"]);
+    expect(store.boards.get(1)?.find((e) => e.number === 1)).toMatchObject({
+      status: "closed",
+      questionId: null,
+    });
+    expect(summary.awaiting).toEqual([]);
+  });
+
   it("waits on the store while only questions remain", async () => {
     const g = fakeGitea({ 1: [issue(1), issue(2)] });
     const store = fakeStore();

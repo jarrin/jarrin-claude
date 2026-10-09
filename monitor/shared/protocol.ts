@@ -261,7 +261,8 @@ export type WatcherMessage =
       readonly id: string;
       readonly action: ControlAction;
     }
-  | { readonly type: "input"; readonly id: string; readonly text: string };
+  | { readonly type: "input"; readonly id: string; readonly text: string }
+  | { readonly type: "dismiss-live"; readonly id: string };
 
 /** The key boards are stored under: one per repo + milestone. */
 export function boardKey(repo: string, milestoneId: number): string {

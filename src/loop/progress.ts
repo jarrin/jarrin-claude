@@ -53,21 +53,24 @@ export class ProgressBoard {
 
   /**
    * Fold the milestone's current open issues in: new ones are appended, and tracked
-   * ones no longer open were closed (by a session or by hand).
+   * ones no longer open were closed (by a session or by hand). Returns the ids of
+   * the questions those closed issues were waiting on: nothing will answer them now.
    */
-  sync(milestone: Milestone, open: readonly Issue[]): void {
+  sync(milestone: Milestone, open: readonly Issue[]): string[] {
     const b = this.must(milestone.id);
     const openNumbers = new Set(open.map((i) => i.number));
-    b.entries = b.entries.map((e) =>
-      openNumbers.has(e.number) || e.status === "closed"
-        ? e
-        : { ...e, status: "closed" },
-    );
+    const orphaned: string[] = [];
+    b.entries = b.entries.map((e) => {
+      if (openNumbers.has(e.number) || e.status === "closed") return e;
+      if (e.questionId) orphaned.push(e.questionId);
+      return { ...e, status: "closed", questionId: null };
+    });
     for (const i of open) {
       if (!b.entries.some((e) => e.number === i.number))
         b.entries.push(blank(i));
     }
     this.save(b.milestone, b.entries);
+    return orphaned;
   }
 
   /** Entries in `status`, across milestones, in milestone then list order. */

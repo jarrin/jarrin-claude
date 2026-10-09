@@ -146,6 +146,7 @@ const watcherMessage = z.discriminatedUnion("type", [
     action: z.enum(["pause", "resume"]),
   }),
   z.object({ type: z.literal("input"), id: z.string(), text: questionText }),
+  z.object({ type: z.literal("dismiss-live"), id: z.string() }),
 ]) satisfies z.ZodType<WatcherMessage>;
 
 const livePost = z.object({

@@ -83,6 +83,7 @@ export class Hub {
     for (const b of saved.boards)
       this.boards.set(boardKey(b.repo, b.milestone.id), b);
     for (const q of saved.questions) this.questions.set(q.id, q);
+    for (const b of this.boards.values()) this.dropOrphans(b);
   }
 
   watch(send: Send): () => void {
@@ -225,6 +226,7 @@ export class Hub {
     };
     this.boards.set(boardKey(board.repo, milestone.id), board);
     this.broadcast({ type: "board", board });
+    this.dropOrphans(board);
     this.save();
   }
 
@@ -297,6 +299,33 @@ export class Hub {
     this.instances.delete(id);
     this.broadcast({ type: "removed", id });
     this.save();
+  }
+
+  /** A watcher cleared a finished live log; a running one stays. */
+  dismissLive(id: string): void {
+    if (!this.live.get(id)?.done) return;
+    this.live.delete(id);
+    this.broadcast({ type: "live-removed", id });
+  }
+
+  /**
+   * Close the questions of issues the board shows closed (closed by hand while
+   * waiting): no session will take the answer, and an open question keeps its
+   * loop's tab from ever being dismissed or pruned.
+   */
+  private dropOrphans(board: Board): void {
+    const closed = new Set(
+      board.entries.filter((e) => e.status === "closed").map((e) => e.number),
+    );
+    for (const q of [...this.questions.values()])
+      if (
+        q.repo === board.repo &&
+        q.milestone.id === board.milestone.id &&
+        closed.has(q.issue)
+      ) {
+        this.questions.delete(q.id);
+        this.broadcast({ type: "question-closed", id: q.id });
+      }
   }
 
   private hasQuestions(inst: Instance): boolean {

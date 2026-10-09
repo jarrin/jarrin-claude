@@ -25,6 +25,9 @@ export default defineWebSocketHandler({
       case "input":
         hub.input(msg.id, msg.text);
         break;
+      case "dismiss-live":
+        hub.dismissLive(msg.id);
+        break;
     }
   },
   close(peer) {

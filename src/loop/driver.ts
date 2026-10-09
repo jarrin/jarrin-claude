@@ -185,8 +185,10 @@ export async function runLoop(
     (m) => store.stored(m),
     store.save,
   );
-  for (const m of opts.milestones)
-    board.sync(m, await deps.gitea.openIssues(m));
+  const sync = (m: Milestone, open: readonly Issue[]): void => {
+    for (const id of board.sync(m, open)) store.resolve(id);
+  };
+  for (const m of opts.milestones) sync(m, await deps.gitea.openIssues(m));
   const closed: Issue[] = [];
   const leftOpen: Issue[] = [];
   const attempted = new Set<number>();
@@ -347,7 +349,7 @@ export async function runLoop(
     if (!capped) {
       for (const milestone of opts.milestones) {
         const open = workOrder(await deps.gitea.openIssues(milestone));
-        board.sync(milestone, open);
+        sync(milestone, open);
         const issue = open.find((i) => !attempted.has(i.number));
         if (issue) {
           next = { issue, milestone };

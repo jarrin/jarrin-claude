@@ -9,6 +9,11 @@ import { basename, terminalText } from "~/utils/log";
  * first; until the reader picks one, the most recently active log is shown.
  */
 const props = defineProps<{ logs: readonly LiveLog[] }>();
+const emit = defineEmits<{ dismiss: [ids: string[]] }>();
+
+const finished = computed(() =>
+  props.logs.filter((l) => l.done).map((l) => l.id),
+);
 
 const picked = ref<string | null>(null);
 const list = computed(() =>
@@ -57,6 +62,19 @@ const where = (log: LiveLog): string =>
       class="w-80 shrink-0 overflow-y-auto border-r border-default text-xs"
       aria-label="Live logs"
     >
+      <div
+        v-if="finished.length"
+        class="flex justify-end border-b border-default px-3 py-1"
+      >
+        <UButton
+          icon="i-lucide-trash-2"
+          :label="`Clear ${finished.length} finished`"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          @click="emit('dismiss', finished)"
+        />
+      </div>
       <button
         v-for="log in list"
         :key="log.id"
@@ -82,6 +100,13 @@ const where = (log: LiveLog): string =>
           <span class="ml-auto shrink-0 text-dimmed">
             {{ clock(log.startedAt) }}
           </span>
+          <UIcon
+            v-if="log.done"
+            name="i-lucide-x"
+            class="size-3.5 shrink-0 text-dimmed hover:text-default"
+            title="Dismiss"
+            @click.stop="emit('dismiss', [log.id])"
+          />
         </span>
         <span class="flex items-center gap-1.5 text-muted">
           <UBadge

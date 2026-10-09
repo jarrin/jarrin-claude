@@ -59,5 +59,6 @@ export function useMonitor(onNotice: (notice: Notice) => void) {
     control: (id: string, action: ControlAction) =>
       send({ type: "control", id, action }),
     input: (id: string, text: string) => send({ type: "input", id, text }),
+    dismissLive: (id: string) => send({ type: "dismiss-live", id }),
   };
 }

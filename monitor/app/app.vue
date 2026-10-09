@@ -12,9 +12,8 @@ const openNotice = (notice: Notice): void => {
   if (notice.instanceId) activeId.value = notice.instanceId;
 };
 const notifications = useNotifications(openNotice);
-const { state, connected, dismiss, answer, control, input } = useMonitor(
-  notifications.notify,
-);
+const { state, connected, dismiss, dismissLive, answer, control, input } =
+  useMonitor(notifications.notify);
 
 const instances = computed(() => state.value.instances);
 /** Lines seen per tab, for the unread counter on the others. */
@@ -181,7 +180,10 @@ const openQuestions = (id: string): number => {
         />
       </header>
       <main v-if="activeId === LIVE_TAB" class="flex min-h-0 flex-1 flex-col">
-        <LiveLogs :logs="state.live" />
+        <LiveLogs
+          :logs="state.live"
+          @dismiss="(ids) => ids.forEach((id) => dismissLive(id))"
+        />
       </main>
       <main v-else-if="active" class="flex min-h-0 flex-1 flex-col">
         <div
