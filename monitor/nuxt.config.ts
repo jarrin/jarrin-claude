@@ -4,7 +4,9 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   // A live dashboard fed entirely over WebSocket: nothing to server-render.
   ssr: false,
-  modules: ["@nuxt/eslint"],
+  modules: ["@nuxt/eslint", "@nuxt/ui", "@comark/nuxt"],
+  // The log was always dark; keep it that way rather than following the OS.
+  colorMode: { preference: "dark", fallback: "dark" },
   eslint: { config: { stylistic: false } },
   css: ["~/assets/main.css"],
   app: {

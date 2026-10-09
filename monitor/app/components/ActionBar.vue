@@ -19,32 +19,37 @@ const send = (): void => {
 </script>
 
 <template>
-  <footer class="actions">
-    <button
+  <footer class="flex items-end gap-2 border-t border-default bg-default p-3">
+    <UButton
       v-if="instance.paused"
-      class="primary"
+      icon="i-lucide-play"
+      label="Resume"
       :disabled="!instance.online"
       @click="emit('resume')"
-    >
-      ▶ Resume
-    </button>
-    <button
+    />
+    <UButton
       v-else
+      icon="i-lucide-pause"
+      label="Pause"
+      color="neutral"
+      variant="subtle"
       :disabled="!instance.online"
       title="Finish the current session, then start no new one until resumed"
       @click="emit('pause')"
+    />
+    <UChatPrompt
+      v-model="draft"
+      :rows="1"
+      :disabled="!instance.online"
+      variant="subtle"
+      class="flex-1"
+      placeholder="Send input to the running session (or the next one, when idle)…"
+      @submit="send"
     >
-      ⏸ Pause
-    </button>
-    <form class="input" @submit.prevent="send">
-      <input
-        v-model="draft"
-        :disabled="!instance.online"
-        placeholder="Send input to the running session (or the next one, when idle)…"
+      <UChatPromptSubmit
+        :disabled="!instance.online || !draft.trim()"
+        size="sm"
       />
-      <button type="submit" :disabled="!instance.online || !draft.trim()">
-        Send
-      </button>
-    </form>
+    </UChatPrompt>
   </footer>
 </template>

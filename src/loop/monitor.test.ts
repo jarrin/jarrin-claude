@@ -345,6 +345,86 @@ describe("streamLines", () => {
     expect(parsed[50]).toBe("… 10 more items");
   });
 
+  it("attaches the full Bash command to its tool line", () => {
+    const [tool] = feed({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_1",
+            name: "Bash",
+            input: { command: "cat a |\n grep b" },
+          },
+        ],
+      },
+    });
+    expect(tool?.call).toBe("tu_1");
+    expect(tool?.detail).toEqual({
+      type: "command",
+      command: "cat a |\n grep b",
+    });
+  });
+
+  it("attaches Edit and Write diffs from tool_use_result", () => {
+    const result = (tool_use_result: unknown) =>
+      feed({
+        type: "user",
+        message: {
+          content: [
+            { type: "tool_result", tool_use_id: "tu_2", content: "updated" },
+          ],
+        },
+        tool_use_result,
+      })[0];
+    expect(
+      result({
+        filePath: "/f.txt",
+        oldString: "b\n",
+        newString: "B\n",
+        structuredPatch: [
+          {
+            oldStart: 1,
+            oldLines: 3,
+            newStart: 1,
+            newLines: 3,
+            lines: [" a", "-b", "+B", " c"],
+          },
+        ],
+      }),
+    ).toMatchObject({
+      kind: "output",
+      text: "updated",
+      call: "tu_2",
+      detail: {
+        type: "patch",
+        file: "/f.txt",
+        hunks: [{ oldStart: 1, newStart: 1, lines: [" a", "-b", "+B", " c"] }],
+        omitted: 0,
+      },
+    });
+    expect(
+      result({
+        type: "create",
+        filePath: "/g.txt",
+        content: "hi\nthere\n",
+        structuredPatch: [],
+      })?.detail,
+    ).toEqual({
+      type: "patch",
+      file: "/g.txt",
+      hunks: [{ oldStart: 0, newStart: 1, lines: ["+hi", "+there"] }],
+      omitted: 0,
+    });
+    const big = result({
+      type: "create",
+      filePath: "/big.txt",
+      content: "x\n".repeat(450),
+    })?.detail;
+    expect(big).toMatchObject({ type: "patch", omitted: 50 });
+    expect(result({ stdout: "done", stderr: "" })?.detail).toBeUndefined();
+  });
+
   it("summarises the result and session init", () => {
     expect(
       feed({

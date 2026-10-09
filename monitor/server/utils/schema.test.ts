@@ -31,6 +31,23 @@ describe("parseAgentMessage", () => {
     expect(msg.lines[0]?.text.length).toBe(64 * 1024);
   });
 
+  it("keeps a line's call id and tool detail", () => {
+    const detail = {
+      type: "patch",
+      file: "/f",
+      hunks: [{ oldStart: 1, newStart: 1, lines: ["-a", "+b"] }],
+      omitted: 0,
+    };
+    const msg = parseAgentMessage(
+      JSON.stringify({
+        type: "log",
+        lines: [{ t: 0, kind: "output", text: "ok", call: "tu_1", detail }],
+      }),
+    );
+    if (msg?.type !== "log") throw new Error("not a log");
+    expect(msg.lines[0]).toMatchObject({ call: "tu_1", detail });
+  });
+
   it("rejects junk and unknown kinds", () => {
     expect(parseAgentMessage("not json")).toBeNull();
     expect(

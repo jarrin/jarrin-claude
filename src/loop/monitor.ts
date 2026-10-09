@@ -7,6 +7,7 @@ import type {
   Board,
   Entry,
   InstanceInfo,
+  LogDetail,
   LogKind,
   LogLine,
   MilestoneRef,
@@ -308,11 +309,17 @@ export function streamLines(raw: string, issue: number, t: number): LogLine[] {
     return raw.trim() ? [{ t, issue, kind: "system", text: raw.trim() }] : [];
   }
   const rec = asRecord(msg);
-  const line = (kind: LogKind, text: string): LogLine => ({
+  const line = (
+    kind: LogKind,
+    text: string,
+    extra: { call?: string; detail?: LogDetail | undefined } = {},
+  ): LogLine => ({
     t,
     issue,
     kind,
     text,
+    ...(extra.call ? { call: extra.call } : {}),
+    ...(extra.detail ? { detail: extra.detail } : {}),
   });
   switch (rec.type) {
     case "system":
@@ -331,20 +338,28 @@ export function streamLines(raw: string, issue: number, t: number): LogLine[] {
         if (b.type === "thinking" && str(b.thinking).trim())
           return [line("thinking", str(b.thinking).trim())];
         if (b.type === "tool_use")
-          return [line("tool", `→ ${str(b.name)}  ${toolInput(b.input)}`)];
+          return [
+            line("tool", `→ ${str(b.name)}  ${toolInput(b.input)}`, {
+              call: str(b.id),
+              detail: commandDetail(str(b.name), b.input),
+            }),
+          ];
         return [];
       });
-    case "user":
-      return blocks(rec.message).flatMap((b): LogLine[] =>
-        b.type === "tool_result"
-          ? [
-              line(
-                b.is_error === true ? "error" : "output",
-                toolOutput(b.content),
-              ),
-            ]
-          : [],
+    case "user": {
+      const results = blocks(rec.message).filter(
+        (b) => b.type === "tool_result",
       );
+      // `tool_use_result` is per record, so it only describes a lone result.
+      const patch =
+        results.length === 1 ? patchDetail(rec.tool_use_result) : undefined;
+      return results.map((b) =>
+        line(b.is_error === true ? "error" : "output", toolOutput(b.content), {
+          call: str(b.tool_use_id),
+          detail: patch,
+        }),
+      );
+    }
     case "result": {
       const parts = [
         rec.is_error === true ? "session failed" : "session done",
@@ -384,6 +399,63 @@ function toolInput(input: unknown): string {
     str(rec.skill) ||
     (input === undefined ? "" : JSON.stringify(input));
   return clip(pick.replace(/\s*\n\s*/g, " ⏎ "), MAX_INPUT);
+}
+
+const MAX_COMMAND = 8000;
+const MAX_PATCH_LINES = 400;
+const MAX_PATCH_LINE = 500;
+
+function commandDetail(name: string, input: unknown): LogDetail | undefined {
+  const command = str(asRecord(input).command);
+  return name === "Bash" && command
+    ? { type: "command", command: clip(command, MAX_COMMAND) }
+    : undefined;
+}
+
+/**
+ * The diff behind an Edit/Write result, from the `tool_use_result` Claude Code
+ * puts beside it in stream-json: `structuredPatch` hunks for a change, or the
+ * whole `content` of a `create`. Hunks are kept until {@link MAX_PATCH_LINES}.
+ */
+function patchDetail(result: unknown): LogDetail | undefined {
+  const rec = asRecord(result);
+  const file = str(rec.filePath);
+  if (!file) return undefined;
+  const hunks =
+    rec.type === "create" && typeof rec.content === "string"
+      ? [
+          {
+            oldStart: 0,
+            newStart: 1,
+            lines: rec.content
+              .replace(/\n$/, "")
+              .split("\n")
+              .map((l) => `+${l}`),
+          },
+        ]
+      : Array.isArray(rec.structuredPatch)
+        ? (rec.structuredPatch as unknown[]).map(asRecord).map((h) => ({
+            oldStart: typeof h.oldStart === "number" ? h.oldStart : 0,
+            newStart: typeof h.newStart === "number" ? h.newStart : 0,
+            lines: Array.isArray(h.lines)
+              ? (h.lines as unknown[]).filter(
+                  (l): l is string => typeof l === "string",
+                )
+              : [],
+          }))
+        : undefined;
+  if (!hunks?.length) return undefined;
+  let budget = MAX_PATCH_LINES;
+  let omitted = 0;
+  const kept = hunks.flatMap((h) => {
+    const lines = h.lines.slice(0, Math.max(budget, 0));
+    omitted += h.lines.length - lines.length;
+    budget -= lines.length;
+    return lines.length
+      ? [{ ...h, lines: lines.map((l) => clip(l, MAX_PATCH_LINE)) }]
+      : [];
+  });
+  return { type: "patch", file, hunks: kept, omitted };
 }
 
 function toolOutput(content: unknown): string {

@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import type { LogLine } from "#shared/protocol";
+import { groupLines } from "~/utils/log";
 
 const props = defineProps<{ lines: readonly LogLine[] }>();
+
+const items = computed(() => groupLines(props.lines));
 
 const box = ref<HTMLElement | null>(null);
 /** Stick to the bottom until the reader scrolls up; scrolling back down re-arms it. */
@@ -29,20 +32,25 @@ onMounted(toBottom);
 </script>
 
 <template>
-  <div class="log-wrap">
-    <div ref="box" class="log" @scroll="onScroll">
-      <div v-if="lines.length === 0" class="empty">No output yet.</div>
-      <LogEntry v-for="(line, i) in lines" :key="i" :line="line" />
+  <div class="relative min-h-0 flex-1">
+    <div ref="box" class="h-full overflow-y-auto py-2" @scroll="onScroll">
+      <div v-if="items.length === 0" class="px-3 text-dimmed">
+        No output yet.
+      </div>
+      <LogEntry v-for="(item, i) in items" :key="i" :item="item" />
     </div>
-    <button
+    <UButton
       v-if="!follow"
-      class="follow"
+      class="absolute right-4 bottom-4"
+      color="neutral"
+      variant="subtle"
+      size="sm"
+      icon="i-lucide-arrow-down"
+      label="Follow"
       @click="
         follow = true;
         toBottom();
       "
-    >
-      ↓ follow
-    </button>
+    />
   </div>
 </template>

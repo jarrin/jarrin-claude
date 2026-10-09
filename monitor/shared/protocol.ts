@@ -29,7 +29,31 @@ export interface LogLine {
   readonly text: string;
   /** The issue the session was working, when the line came from one. */
   readonly issue?: number;
+  /** The tool_use id pairing a `tool` line with its `output` / `error` line. */
+  readonly call?: string;
+  /** Structured detail behind a tool line, rendered richer than `text`. */
+  readonly detail?: LogDetail;
 }
+
+/** One unified-diff hunk, as Claude Code reports it in `structuredPatch`. */
+export interface PatchHunk {
+  readonly oldStart: number;
+  readonly newStart: number;
+  /** Each line prefixed with " ", "-" or "+". */
+  readonly lines: readonly string[];
+}
+
+export type LogDetail =
+  /** A Bash call's full command. */
+  | { readonly type: "command"; readonly command: string }
+  /** What an Edit or Write did to a file; a new file is one all-"+" hunk. */
+  | {
+      readonly type: "patch";
+      readonly file: string;
+      readonly hunks: readonly PatchHunk[];
+      /** Patch lines dropped to keep the message small. */
+      readonly omitted: number;
+    };
 
 export interface MilestoneRef {
   readonly id: number;

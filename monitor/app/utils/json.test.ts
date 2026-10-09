@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isProse, parseJson } from "./render";
+import { isProse, parseJson } from "./json";
 
 describe("parseJson", () => {
   it("decodes objects and arrays", () => {

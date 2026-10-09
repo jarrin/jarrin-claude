@@ -1,35 +1,150 @@
 <script setup lang="ts">
 import type { LogLine } from "#shared/protocol";
 import { clock } from "~/utils/instances";
-import { MARKDOWN_KINDS, parseJson, renderMarkdown } from "~/utils/render";
+import { parseJson } from "~/utils/json";
+import {
+  basename,
+  patchText,
+  splitTool,
+  toolIcon,
+  type LogItem,
+} from "~/utils/log";
+import { fence, markdownPlugins } from "~/utils/markdown";
 
-const props = defineProps<{ line: LogLine }>();
+const props = defineProps<{ item: LogItem }>();
 
-const json = computed(() =>
-  props.line.kind === "output" || props.line.kind === "error"
-    ? parseJson(props.line.text)
-    : undefined,
-);
-const html = computed(() =>
-  MARKDOWN_KINDS.has(props.line.kind) ? renderMarkdown(props.line.text) : "",
-);
+const line = computed(() => props.item.line);
+const result = computed(() => props.item.result);
+const tool = computed(() => splitTool(line.value.text));
 
-/** Structured output starts folded; a click on the fold opens it. */
-const open = ref(false);
+/** The Bash command, highlighted; only tool lines carry one. */
+const command = computed(() => {
+  const d = line.value.detail;
+  return d?.type === "command" ? fence("bash", d.command) : "";
+});
+/** An Edit/Write diff, from the result Claude Code reported for the call. */
+const diff = computed(() => {
+  const d = result.value?.detail;
+  return d?.type === "patch"
+    ? fence("diff", patchText(d), `[${basename(d.file)}]`)
+    : "";
+});
+const failed = computed(() => result.value?.kind === "error");
+
+/** A standalone output line (no paired call), or the paired call's result. */
+const json = (l: LogLine | undefined) => (l ? parseJson(l.text) : undefined);
 </script>
 
 <template>
-  <div :class="['line', line.kind]">
-    <span class="time">{{ clock(line.t) }}</span>
-    <span class="issue">{{ line.issue ? `#${line.issue}` : "" }}</span>
-    <div v-if="json !== undefined" :class="['text', 'fold', { open }]">
-      <JsonNode :value="json" />
-      <button class="fold-toggle" @click="open = !open">
-        {{ open ? "▴ collapse" : "▾ expand" }}
-      </button>
+  <div
+    class="grid grid-cols-[4rem_2.75rem_1fr] px-3 py-px font-mono text-[12.5px]/normal hover:bg-elevated/40"
+  >
+    <span class="select-none text-dimmed">{{ clock(line.t) }}</span>
+    <span class="select-none text-dimmed">{{
+      line.issue ? `#${line.issue}` : ""
+    }}</span>
+
+    <div class="min-w-0">
+      <!-- A tool call, its result folded in: hidden until opened, except diffs. -->
+      <UChatTool
+        v-if="line.kind === 'tool'"
+        :text="tool.name"
+        :suffix="tool.summary"
+        :icon="failed ? 'i-lucide-circle-x' : toolIcon(tool.name)"
+        :default-open="Boolean(diff)"
+        :loading="!result"
+        chevron="leading"
+        unmount-on-hide
+        :ui="{
+          root: 'w-full',
+          trigger: failed ? 'text-error' : 'text-info',
+          suffix: 'truncate',
+        }"
+      >
+        <div class="grid gap-2 py-1">
+          <Markdown
+            v-if="command"
+            :value="command"
+            :plugins="markdownPlugins"
+          />
+          <Markdown v-if="diff" :value="diff" :plugins="markdownPlugins" />
+          <template v-else-if="result">
+            <JsonNode
+              v-if="json(result) !== undefined"
+              :value="json(result) ?? null"
+            />
+            <pre
+              v-else
+              :class="[
+                'whitespace-pre-wrap break-all',
+                failed ? 'text-error' : 'text-muted',
+              ]"
+              >{{ result.text }}</pre>
+          </template>
+          <span v-else class="text-dimmed">Running…</span>
+        </div>
+      </UChatTool>
+
+      <UChatReasoning
+        v-else-if="line.kind === 'thinking'"
+        :text="line.text"
+        :default-open="false"
+        unmount-on-hide
+        :ui="{ trigger: 'text-secondary' }"
+      >
+        <Markdown
+          :value="line.text"
+          :plugins="markdownPlugins"
+          class="font-sans text-sm text-muted"
+        />
+      </UChatReasoning>
+
+      <Markdown
+        v-else-if="line.kind === 'text' || line.kind === 'result'"
+        :value="line.text"
+        :plugins="markdownPlugins"
+        :class="[
+          'font-sans text-sm',
+          line.kind === 'result' ? 'text-success' : 'text-default',
+        ]"
+      />
+
+      <!-- A result whose call is unknown (lines from before calls were paired). -->
+      <UCollapsible
+        v-else-if="line.kind === 'output' || line.kind === 'error'"
+        unmount-on-hide
+      >
+        <UButton
+          variant="link"
+          size="xs"
+          :color="line.kind === 'error' ? 'error' : 'neutral'"
+          trailing-icon="i-lucide-chevron-down"
+          class="px-0 font-mono"
+          :label="line.kind === 'error' ? 'error output' : 'output'"
+        />
+        <template #content>
+          <JsonNode
+            v-if="json(line) !== undefined"
+            :value="json(line) ?? null"
+          />
+          <pre v-else class="whitespace-pre-wrap break-all text-muted">{{
+            line.text
+          }}</pre>
+        </template>
+      </UCollapsible>
+
+      <span
+        v-else
+        :class="[
+          'whitespace-pre-wrap break-words',
+          {
+            'font-semibold text-primary': line.kind === 'loop',
+            'text-warning': line.kind === 'input',
+            'text-info': line.kind === 'system',
+          },
+        ]"
+        >{{ line.text }}</span
+      >
     </div>
-    <!-- eslint-disable-next-line vue/no-v-html -- sanitised by renderMarkdown -->
-    <div v-else-if="html" class="text md" v-html="html" />
-    <span v-else class="text">{{ line.text }}</span>
   </div>
 </template>

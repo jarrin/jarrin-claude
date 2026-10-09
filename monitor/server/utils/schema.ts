@@ -6,6 +6,7 @@ import type {
   Entry,
   EntryStatus,
   InstanceSummary,
+  LogDetail,
   LogKind,
   Question,
   WatcherMessage,
@@ -27,11 +28,33 @@ const logKind = z.enum([
   "system",
 ] as const satisfies readonly LogKind[]);
 
+const clipped = z.string().transform((s) => s.slice(0, MAX_TEXT));
+
+const logDetail = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("command"), command: clipped }),
+  z.object({
+    type: z.literal("patch"),
+    file: clipped,
+    hunks: z
+      .array(
+        z.object({
+          oldStart: z.number().int(),
+          newStart: z.number().int(),
+          lines: z.array(clipped).max(1000),
+        }),
+      )
+      .max(200),
+    omitted: z.number().int(),
+  }),
+]) satisfies z.ZodType<LogDetail>;
+
 const logLine = z.object({
   t: z.number(),
   kind: logKind,
-  text: z.string().transform((s) => s.slice(0, MAX_TEXT)),
+  text: clipped,
   issue: z.number().int().optional(),
+  call: z.string().max(128).optional(),
+  detail: logDetail.optional(),
 });
 
 const milestoneRef = z.object({
