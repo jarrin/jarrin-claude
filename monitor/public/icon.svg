@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 400" width="300" height="400" xmlns:c2pa="http://c2pa.org/manifest">
+  <rect x="30" y="4" width="240" height="40" rx="12" fill="#D97757"></rect>
+  <path d="M52 50 V68 Q52 82 38 92 Q16 110 16 142 V348 Q16 384 52 384 H248 Q284 384 284 348 V142 Q284 110 262 92 Q248 82 248 68 V50 Z" fill="#F4C9B5" stroke="#D97757" stroke-width="24" stroke-linejoin="round"></path>
+  <g transform="translate(66 150) scale(7)">
+    <path fill-rule="evenodd" clip-rule="evenodd" fill="#D97757" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z"></path>
+  </g>
+</svg>

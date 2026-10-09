@@ -11,6 +11,7 @@ export default defineNuxtConfig({
     head: {
       title: "claudjar loops",
       htmlAttrs: { lang: "en" },
+      link: [{ rel: "icon", type: "image/svg+xml", href: "/icon.svg" }],
     },
   },
   runtimeConfig: {

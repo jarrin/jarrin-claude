@@ -52,7 +52,10 @@ const openQuestions = (id: string): number => {
 <template>
   <div class="shell">
     <header>
-      <span class="brand">claudjar loops</span>
+      <span class="brand">
+        <img src="/icon.svg" alt="" class="logo" />
+        claudjar loops
+      </span>
       <nav class="tabs">
         <button
           v-for="inst in instances"

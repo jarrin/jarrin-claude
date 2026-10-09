@@ -47,9 +47,17 @@ header {
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-weight: 600;
   color: var(--accent);
   white-space: nowrap;
+}
+
+.brand .logo {
+  height: 22px;
+  width: auto;
 }
 
 .tabs {
