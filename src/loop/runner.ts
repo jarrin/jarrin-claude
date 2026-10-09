@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 import type { RunClaude } from "./driver.js";
+import type { Issue } from "./gitea.js";
 import { StreamTracker } from "./stream.js";
 
 export interface RunnerOptions {
@@ -13,6 +14,8 @@ export interface RunnerOptions {
   readonly model: string;
   readonly claudeBin: string;
   readonly out: (line: string) => void;
+  /** Every raw stream-json line, e.g. for the live monitor. */
+  readonly onLine?: (line: string, issue: Issue) => void;
 }
 
 /**
@@ -47,6 +50,7 @@ export function claudeRunner(opts: RunnerOptions): RunClaude {
       const tracker = new StreamTracker(watch);
       createInterface({ input: child.stdout }).on("line", (line) => {
         log.write(`${line}\n`);
+        opts.onLine?.(line, issue);
         const shown = tracker.feed(line);
         if (shown) opts.out(`  ${shown.slice(0, 160)}`);
       });

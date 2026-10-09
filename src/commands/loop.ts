@@ -6,7 +6,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -18,6 +19,7 @@ import type { LocalContext } from "../context.js";
 import { toplevel } from "../git.js";
 import { runLoop } from "../loop/driver.js";
 import { giteaClient, resolveAuth, workOrder } from "../loop/gitea.js";
+import { connectMonitor } from "../loop/monitor.js";
 import type { Milestone } from "../loop/gitea.js";
 import { desktopNotify, pushBranch, stashIfDirty } from "../loop/notify.js";
 import { claudeRunner } from "../loop/runner.js";
@@ -32,6 +34,7 @@ interface LoopFlags {
   readonly pollSeconds: number;
   readonly notify: boolean;
   readonly push: boolean;
+  readonly monitor?: string;
 }
 
 /**
@@ -192,9 +195,31 @@ async function runLoopCommand(
   );
   const release = acquireLocks(loopLocks(stateDir, repoRoot, milestones));
   if (typeof release === "string") return fail(release);
+  const monitorUrl = flags.monitor ?? proc.env.CLAUDJAR_MONITOR_URL ?? "";
+  const monitor = monitorUrl
+    ? connectMonitor({
+        url: monitorUrl,
+        token: proc.env.CLAUDJAR_MONITOR_TOKEN ?? "",
+        instance: {
+          id: randomUUID(),
+          host: hostname(),
+          repo,
+          milestones: milestones.map((m) => m.title),
+          pid: proc.pid,
+          startedAt: Date.now(),
+        },
+      })
+    : null;
+  const log = (line: string): void => {
+    out(line);
+    monitor?.loop(line);
+  };
+  monitor?.status("running");
   const onSignal = (): void => {
     release();
-    proc.exit(130);
+    monitor?.status("interrupted");
+    // Exit only once the monitor has seen the interruption (bounded wait).
+    void (monitor?.close() ?? Promise.resolve()).finally(() => proc.exit(130));
   };
   proc.once("SIGINT", onSignal);
   proc.once("SIGTERM", onSignal);
@@ -210,10 +235,13 @@ async function runLoopCommand(
           model: flags.model ?? "",
           claudeBin: proc.env.CLAUDE_BIN ?? "claude",
           out,
+          onLine: monitor
+            ? (line, issue) => monitor.stream(line, issue.number)
+            : undefined,
         }),
         sleep: (ms) => delay(ms),
         now: () => Date.now(),
-        log: out,
+        log,
         stash: (label) => stashIfDirty(repoRoot, label),
         notify: flags.notify ? desktopNotify : () => {},
       },
@@ -225,7 +253,8 @@ async function runLoopCommand(
         pollMs: Math.max(flags.pollSeconds, 5) * 1000,
       },
     );
-    out(`\nloop finished: ${summary.stopReason}`);
+    log(`\nloop finished: ${summary.stopReason}`);
+    monitor?.status(`finished: ${summary.stopReason}`);
     out(
       `  closed:    ${summary.closed.map((i) => `#${String(i.number)}`).join(" ") || "—"}`,
     );
@@ -251,6 +280,7 @@ async function runLoopCommand(
     }
   } finally {
     release();
+    await monitor?.close();
   }
 }
 
@@ -323,6 +353,12 @@ export const loopCommand = buildCommand({
           "`git push` when the loop finishes cleanly (every issue closed, none blocked or awaiting)",
         default: true,
       },
+      monitor: {
+        kind: "parsed",
+        parse: String,
+        brief: "Live monitor URL to stream to (default: $CLAUDJAR_MONITOR_URL)",
+        optional: true,
+      },
       notify: {
         kind: "boolean",
         brief:
@@ -349,6 +385,8 @@ export const loopCommand = buildCommand({
       "commit, never release or push; a clean finish (every issue closed) pushes the " +
       "checked-out branch unless --no-push. Loops may run in parallel as long " +
       "as no two share a worktree or a milestone. Stream logs go to " +
-      "~/.claudjar/loop/<owner>__<name>/.",
+      "~/.claudjar/loop/<owner>__<name>/. With --monitor (or CLAUDJAR_MONITOR_URL, e.g. " +
+      "wss://claudjar.jarrin.nl) every session is also streamed live to the claudjar " +
+      "monitor, one tab per loop; CLAUDJAR_MONITOR_TOKEN is sent when the monitor requires one.",
   },
 });

@@ -1,0 +1,24 @@
+# claudjar — live monitor for running `claudjar loop` instances, at claudjar.jarrin.nl.
+#
+# Source of truth: monitor/deploy/ in the jarrin-claude repo (github.com/jarrin/jarrin-claude);
+# its deploy.sh copies this file here. Edit it there, not here.
+#
+# The image is built on the workstation and pushed to zot — nothing is built on the server.
+# Loops connect over wss://claudjar.jarrin.nl/ws/agent; browsers watch on /ws/watch. Caddy
+# proxies the WebSocket upgrade as-is. State is in memory only (a restart starts empty and
+# running loops re-announce themselves on reconnect), so there is no volume.
+name: homeserver-claudjar
+services:
+  claudjar:
+    image: zot.jarrin.nl/claudjar-monitor:latest
+    environment:
+      # Optional shared secret: when set, loops must export the same value as
+      # CLAUDJAR_MONITOR_TOKEN. Empty = any LAN/WireGuard client may report in.
+      NUXT_AGENT_TOKEN: ${CLAUDJAR_MONITOR_TOKEN:-}
+    x-homeserver:
+      expose: 3000
+      health_check:
+        test: wget -qO /dev/null http://127.0.0.1:3000/healthz || exit 1
+      homepage:
+        bookmark: true
+        group: Tools

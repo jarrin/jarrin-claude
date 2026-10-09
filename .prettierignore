@@ -8,3 +8,6 @@ pnpm-lock.yaml
 # reflow, so it is excluded from formatting.
 claude/
 .claude/
+
+# The monitor is its own project (own Prettier run via its `check`).
+monitor/

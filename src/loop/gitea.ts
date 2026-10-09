@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getCACertificates, setDefaultCACertificates } from "node:tls";
+
+import { trustSystemCAs } from "./trust.js";
 
 /** Where the Gitea REST API lives and the token that reads it. */
 export interface GiteaAuth {
@@ -108,22 +109,6 @@ function authFrom(host: unknown, token: unknown): GiteaAuth | null {
   if (typeof host !== "string" || typeof token !== "string") return null;
   if (host === "" || token === "") return null;
   return { host: host.replace(/\/+$/, ""), token };
-}
-
-let systemCAsTrusted = false;
-
-/**
- * Node trusts only its bundled CAs, so a self-hosted Gitea behind a private CA
- * (git.jarrin.nl: `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, while curl is fine) fails
- * every fetch. Add the OS store, as curl and the browser already do.
- */
-function trustSystemCAs(): void {
-  if (systemCAsTrusted) return;
-  setDefaultCACertificates([
-    ...getCACertificates("default"),
-    ...getCACertificates("system"),
-  ]);
-  systemCAsTrusted = true;
 }
 
 export function giteaClient(

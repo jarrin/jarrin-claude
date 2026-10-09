@@ -4,7 +4,15 @@ import tseslint from "typescript-eslint";
 import prettier from "eslint-config-prettier";
 
 export default tseslint.config(
-  { ignores: ["dist/**", "node_modules/**", "claude/skills/synced/**"] },
+  {
+    // `monitor/` is its own Nuxt project with its own ESLint config.
+    ignores: [
+      "dist/**",
+      "node_modules/**",
+      "claude/skills/synced/**",
+      "monitor/**",
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {

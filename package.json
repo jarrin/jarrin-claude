@@ -21,8 +21,8 @@
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
+    "test": "vitest run --dir src",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm -C monitor run check",
     "ensurepath": "node scripts/ensurepath.mjs"
   },
   "dependencies": {

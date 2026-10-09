@@ -389,6 +389,33 @@ claudjar loop --dry-run feature-a feature-b   # see the queue
 claudjar loop feature-a feature-b             # work it; Ctrl-C stops after releasing the lock
 ```
 
+#### Live monitor
+
+`monitor/` is a small Nuxt 4 app (Nitro WebSocket server + one-page UI) that shows every
+running loop live, deployed as the `claudjar` stack on the homeserver at
+<https://claudjar.jarrin.nl>. A loop reports to it when `--monitor <url>` or
+`CLAUDJAR_MONITOR_URL` is set (e.g. `export CLAUDJAR_MONITOR_URL=wss://claudjar.jarrin.nl`):
+
+- Each loop process gets one tab, named `<milestones> @ <hostname>`, with a green/grey
+  online dot, an unread counter, and a status (`running`, `finished: …`, `interrupted`).
+  A reconnect keeps the same tab; an offline tab can be dismissed and is forgotten after 24 h.
+- The stream-json of every session is rendered colour-coded per line: loop progress,
+  assistant text, thinking, tool calls (with their command / path), tool output (first 12
+  lines), errors, and the end-of-session summary. The CLI does that conversion
+  (`src/loop/monitor.ts`), so only compact lines cross the wire.
+- Best-effort by design: lines queue while the socket is down and the loop never waits on or
+  fails because of the monitor. State lives in server memory only (last 5000 lines per tab).
+- The wire protocol is `monitor/shared/protocol.ts` — dependency-free types the CLI imports
+  directly; the server validates agent messages against its zod mirror.
+- Optional shared secret: set `CLAUDJAR_MONITOR_TOKEN` in the server's `~/.server.env`
+  (passed through as `NUXT_AGENT_TOKEN`) and export the same value where loops run.
+
+`monitor/` is a standalone pnpm project (own lockfile and `check`, chained from the root
+`pnpm check`). The container config lives in `monitor/Dockerfile` and
+`monitor/deploy/docker-compose.template.yml`; `pnpm -C monitor run deploy` builds the image,
+pushes it to `zot.jarrin.nl`, copies the template to `server-new/stacks/claudjar/`, and
+restarts the stack. Nothing is built on the server.
+
 ### Releasing
 
 `claudjar release` cuts a version from `project.dist`:
