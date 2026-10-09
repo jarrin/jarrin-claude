@@ -117,7 +117,8 @@ same session, and skips an issue left open. A session that needs a decision ends
 open-questions ticket, notifies the desktop, and resumes that session when the user
 replies there. Each milestone also gets a **Loop progress** ticket (checklist of
 issues, each with the session's `<<<STEPS` sub-checklist) that holds the loop's state, so a
-restarted loop resumes where it stopped. Details in the jarrin-claude README, *Looping a
+restarted loop resumes where it stopped. Loop sessions only ever **commit** — never release,
+tag, bump, or push; push the result yourself once the loop has finished. Details in the jarrin-claude README, *Looping a
 milestone*.
 
 **`release` refuses more than it does.** It runs only on `main` with a clean tree, and

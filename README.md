@@ -337,6 +337,10 @@ are worked too.
   **blocked** and skipped, after commenting what it needs. `--max-failures`
   (default 3) stops the loop when that many issues in a row stay open — expired auth or a red
   gate, not a run of bad tickets.
+- **Local and commit-only.** Every session is told to commit and nothing more: no
+  `claudjar release`, no version bump or tag, no forge release, no push — even when an issue
+  asks for one. The loop's output is a run of local commits; pushing (and releasing) is yours
+  to do once it has finished.
 - **Questions go to one ticket per milestone, and you answer them from Gitea.** A session
   that needs a decision ends its final message on a `<<<QUESTION … QUESTION>>>` block and
   leaves the issue open. The loop posts it as a comment on the milestone's **open-questions
