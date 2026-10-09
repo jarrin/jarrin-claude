@@ -4,6 +4,8 @@ import { clock } from "~/utils/instances";
 import { parseJson } from "~/utils/json";
 import {
   basename,
+  inputMarkdown,
+  jsonResultMarkdown,
   patchText,
   splitTool,
   toolIcon,
@@ -17,10 +19,12 @@ const line = computed(() => props.item.line);
 const result = computed(() => props.item.result);
 const tool = computed(() => splitTool(line.value.text));
 
-/** The Bash command, highlighted; only tool lines carry one. */
-const command = computed(() => {
+/** The call's input, highlighted: a Bash command, or any other tool's JSON. */
+const input = computed(() => {
   const d = line.value.detail;
-  return d?.type === "command" ? fence("bash", d.command) : "";
+  if (d?.type === "command") return fence("bash", d.command);
+  if (d?.type === "input") return inputMarkdown(d.json);
+  return "";
 });
 /** An Edit/Write diff, from the result Claude Code reported for the call. */
 const diff = computed(() => {
@@ -30,6 +34,11 @@ const diff = computed(() => {
     : "";
 });
 const failed = computed(() => result.value?.kind === "error");
+/**
+ * Still running: no result yet. A call without an id (from a loop that predates
+ * pairing) can never receive one, so it never spins.
+ */
+const running = computed(() => Boolean(line.value.call) && !result.value);
 
 /** A standalone output line (no paired call), or the paired call's result. */
 const json = (l: LogLine | undefined) => (l ? parseJson(l.text) : undefined);
@@ -52,7 +61,7 @@ const json = (l: LogLine | undefined) => (l ? parseJson(l.text) : undefined);
         :suffix="tool.summary"
         :icon="failed ? 'i-lucide-circle-x' : toolIcon(tool.name)"
         :default-open="Boolean(diff)"
-        :loading="!result"
+        :loading="running"
         chevron="leading"
         unmount-on-hide
         :ui="{
@@ -62,15 +71,16 @@ const json = (l: LogLine | undefined) => (l ? parseJson(l.text) : undefined);
         }"
       >
         <div class="grid gap-2 py-1">
-          <Markdown
-            v-if="command"
-            :value="command"
-            :plugins="markdownPlugins"
-          />
+          <Markdown v-if="input" :value="input" :plugins="markdownPlugins" />
           <Markdown v-if="diff" :value="diff" :plugins="markdownPlugins" />
           <template v-else-if="result">
+            <Markdown
+              v-if="jsonResultMarkdown(result.text)"
+              :value="jsonResultMarkdown(result.text) ?? ''"
+              :plugins="markdownPlugins"
+            />
             <JsonNode
-              v-if="json(result) !== undefined"
+              v-else-if="json(result) !== undefined"
               :value="json(result) ?? null"
             />
             <pre
@@ -81,7 +91,7 @@ const json = (l: LogLine | undefined) => (l ? parseJson(l.text) : undefined);
               ]"
               >{{ result.text }}</pre>
           </template>
-          <span v-else class="text-dimmed">Running…</span>
+          <span v-else-if="running" class="text-dimmed">Running…</span>
         </div>
       </UChatTool>
 
@@ -123,8 +133,13 @@ const json = (l: LogLine | undefined) => (l ? parseJson(l.text) : undefined);
           :label="line.kind === 'error' ? 'error output' : 'output'"
         />
         <template #content>
+          <Markdown
+            v-if="jsonResultMarkdown(line.text)"
+            :value="jsonResultMarkdown(line.text) ?? ''"
+            :plugins="markdownPlugins"
+          />
           <JsonNode
-            v-if="json(line) !== undefined"
+            v-else-if="json(line) !== undefined"
             :value="json(line) ?? null"
           />
           <pre v-else class="whitespace-pre-wrap break-all text-muted">{{

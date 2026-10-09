@@ -341,7 +341,7 @@ export function streamLines(raw: string, issue: number, t: number): LogLine[] {
           return [
             line("tool", `→ ${str(b.name)}  ${toolInput(b.input)}`, {
               call: str(b.id),
-              detail: commandDetail(str(b.name), b.input),
+              detail: inputDetail(str(b.name), b.input),
             }),
           ];
         return [];
@@ -405,11 +405,22 @@ const MAX_COMMAND = 8000;
 const MAX_PATCH_LINES = 400;
 const MAX_PATCH_LINE = 500;
 
-function commandDetail(name: string, input: unknown): LogDetail | undefined {
+/** Tools whose input the monitor shows another way (their diff). */
+const INPUT_SHOWN_ELSEWHERE = new Set(["Edit", "Write", "NotebookEdit"]);
+
+/**
+ * The structured input behind a tool line: a Bash call's command, or any other
+ * tool's input as compacted JSON so the monitor can highlight it.
+ */
+function inputDetail(name: string, input: unknown): LogDetail | undefined {
   const command = str(asRecord(input).command);
-  return name === "Bash" && command
-    ? { type: "command", command: clip(command, MAX_COMMAND) }
-    : undefined;
+  if (name === "Bash" && command)
+    return { type: "command", command: clip(command, MAX_COMMAND) };
+  if (INPUT_SHOWN_ELSEWHERE.has(name)) return undefined;
+  const rec = asRecord(input);
+  if (Object.keys(rec).length === 0) return undefined;
+  const json = compactJson(JSON.stringify(rec));
+  return json === undefined ? undefined : { type: "input", json };
 }
 
 /**

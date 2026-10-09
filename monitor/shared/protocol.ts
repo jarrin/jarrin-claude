@@ -46,6 +46,8 @@ export interface PatchHunk {
 export type LogDetail =
   /** A Bash call's full command. */
   | { readonly type: "command"; readonly command: string }
+  /** Any other tool's input, as (size-capped) JSON text. */
+  | { readonly type: "input"; readonly json: string }
   /** What an Edit or Write did to a file; a new file is one all-"+" hunk. */
   | {
       readonly type: "patch";

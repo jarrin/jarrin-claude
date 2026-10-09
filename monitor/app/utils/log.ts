@@ -1,4 +1,6 @@
 import type { LogDetail, LogLine } from "#shared/protocol";
+import { isProse, parseJson, type JsonValue } from "./json";
+import { fence } from "./markdown";
 
 /** One row of the log: a line, plus — for a tool call — the result answering it. */
 export interface LogItem {
@@ -78,4 +80,86 @@ export function patchText(
 
 export function basename(path: string): string {
   return path.split("/").pop() ?? path;
+}
+
+/** Input keys whose (multi-line) string value is code, and its language. */
+const CODE_KEYS: Readonly<Record<string, string>> = {
+  command: "bash",
+  script: "bash",
+  function: "javascript",
+  expression: "javascript",
+  code: "javascript",
+  js: "javascript",
+  sql: "sql",
+};
+
+/** A Shiki language for a file, by extension; `text` when unknown. */
+const EXT_LANGS: Readonly<Record<string, string>> = {
+  ts: "typescript",
+  mts: "typescript",
+  tsx: "tsx",
+  js: "javascript",
+  mjs: "javascript",
+  vue: "vue",
+  json: "json",
+  md: "markdown",
+  py: "python",
+  php: "php",
+  rs: "rust",
+  go: "go",
+  sql: "sql",
+  sh: "bash",
+  yml: "yaml",
+  yaml: "yaml",
+  toml: "toml",
+  css: "css",
+  html: "html",
+};
+
+function langForFile(path: string): string {
+  return EXT_LANGS[path.split(".").pop()?.toLowerCase() ?? ""] ?? "text";
+}
+
+/**
+ * A tool's input as Markdown: the JSON highlighted, with each multi-line string
+ * (a script, a query, file content) lifted out into a block of its own language
+ * — escaped inside JSON it is unreadable.
+ */
+export function inputMarkdown(json: string): string {
+  const input = parseJson(json);
+  if (input === undefined || Array.isArray(input) || input === null)
+    return fence("json", json);
+  if (typeof input !== "object") return fence("json", json);
+  const file = typeof input.file_path === "string" ? input.file_path : "";
+  const rest: Record<string, JsonValue> = {};
+  const blocks: string[] = [];
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value === "string" && value.includes("\n")) {
+      const lang = CODE_KEYS[key] ?? (file ? langForFile(file) : "text");
+      blocks.push(fence(lang, value, `[${key}]`));
+    } else rest[key] = value;
+  }
+  const head =
+    Object.keys(rest).length > 0
+      ? [fence("json", JSON.stringify(rest, null, 2))]
+      : [];
+  return [...head, ...blocks].join("\n\n");
+}
+
+/**
+ * A JSON tool result as a highlighted block; `undefined` when the result is not
+ * JSON, or carries prose (an issue body, a page) better read rendered.
+ */
+export function jsonResultMarkdown(text: string): string | undefined {
+  const value = parseJson(text);
+  if (value === undefined || hasProse(value)) return undefined;
+  return fence("json", JSON.stringify(value, null, 2));
+}
+
+function hasProse(value: JsonValue): boolean {
+  if (typeof value === "string") return isProse(value);
+  if (Array.isArray(value)) return value.some(hasProse);
+  if (value !== null && typeof value === "object")
+    return Object.values(value).some(hasProse);
+  return false;
 }

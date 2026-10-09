@@ -366,6 +366,23 @@ describe("streamLines", () => {
     });
   });
 
+  it("attaches any other tool's input as JSON, but not Edit/Write's", () => {
+    const call = (name: string, input: unknown) =>
+      feed({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id: "tu_9", name, input }],
+        },
+      })[0]?.detail;
+    const input = { pageId: 1, function: "() => {\n  return 1;\n}" };
+    expect(call("mcp__chrome__evaluate_script", input)).toEqual({
+      type: "input",
+      json: JSON.stringify(input),
+    });
+    expect(call("Edit", { file_path: "a.ts" })).toBeUndefined();
+    expect(call("TodoWrite", {})).toBeUndefined();
+  });
+
   it("attaches Edit and Write diffs from tool_use_result", () => {
     const result = (tool_use_result: unknown) =>
       feed({

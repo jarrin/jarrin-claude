@@ -32,6 +32,7 @@ const clipped = z.string().transform((s) => s.slice(0, MAX_TEXT));
 
 const logDetail = z.discriminatedUnion("type", [
   z.object({ type: z.literal("command"), command: clipped }),
+  z.object({ type: z.literal("input"), json: clipped }),
   z.object({
     type: z.literal("patch"),
     file: clipped,
