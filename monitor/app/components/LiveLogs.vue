@@ -30,6 +30,9 @@ const text = computed(() =>
   current.value ? terminalText(current.value.text).replace(/\n$/, "") : "",
 );
 
+/** The command line is clipped to one line until the reader clicks it. */
+const commandOpen = ref(false);
+
 const box = ref<HTMLElement | null>(null);
 /** Follow the end while the reader has not scrolled up. */
 const follow = ref(true);
@@ -47,6 +50,7 @@ watch(
   () => current.value?.id,
   () => {
     follow.value = true;
+    commandOpen.value = false;
     void toEnd();
   },
 );
@@ -142,9 +146,20 @@ const where = (log: LiveLog): string =>
             {{ where(current) }} · {{ current.source.session.slice(0, 8) }}
           </span>
         </span>
-        <code v-if="current.command" class="truncate" :title="current.command">
-          $ {{ current.command }}
-        </code>
+        <button
+          v-if="current.command"
+          type="button"
+          :class="[
+            'cursor-pointer text-left font-mono hover:text-default',
+            commandOpen
+              ? 'max-h-60 overflow-y-auto whitespace-pre-wrap break-all'
+              : 'truncate',
+          ]"
+          :title="commandOpen ? 'Collapse' : 'Show the full command'"
+          :aria-expanded="commandOpen"
+          @click="commandOpen = !commandOpen"
+          v-text="`$ ${current.command}`"
+        />
       </header>
       <pre
         ref="box"
