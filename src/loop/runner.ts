@@ -9,6 +9,12 @@ import { userMessage, withNotes } from "./input.js";
 import type { InputBox } from "./input.js";
 import { StreamTracker } from "./stream.js";
 
+/**
+ * Set on every session the loop spawns. The loop tails those sessions' output
+ * files itself, so the `claudjar api live-log` hook stands down for them.
+ */
+export const LOOP_ENV = "CLAUDJAR_LOOP";
+
 export interface RunnerOptions {
   readonly cwd: string;
   readonly logDir: string;
@@ -53,6 +59,8 @@ export function claudeRunner(opts: RunnerOptions): RunClaude {
       );
       const child = spawn(opts.claudeBin, args, {
         cwd: opts.cwd,
+        // The loop tails this session's output files itself; the hook stands down.
+        env: { ...process.env, [LOOP_ENV]: "1" },
         stdio: ["pipe", "pipe", "pipe"],
       });
       // The process may exit before a late write lands; that is not an error.

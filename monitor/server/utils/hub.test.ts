@@ -7,7 +7,7 @@ import type {
   WatchMessage,
 } from "#shared/protocol";
 
-import { Hub, MAX_LINES, OFFLINE_TTL_MS } from "./hub";
+import { Hub, MAX_LINES, MAX_LIVE, OFFLINE_TTL_MS } from "./hub";
 import type { Saved } from "./hub";
 
 const M1 = { id: 7, title: "M1" };
@@ -227,6 +227,80 @@ describe("Hub as the loop store", () => {
       instances: [{ id: "a", online: false, lines: [] }],
       boards: [{ milestone: M1 }],
       questions: [{ id: "q1" }],
+    });
+  });
+
+  describe("live logs", () => {
+    const post = (chunk: string, done = false, id = "toolu_1") => ({
+      id,
+      file: "/tmp/check.log",
+      command: "task check > /tmp/check.log",
+      source: {
+        kind: "session" as const,
+        host: "h",
+        where: "/r",
+        session: "s",
+      },
+      startedAt: 5,
+      chunk,
+      done,
+    });
+
+    it("accumulates posted chunks, broadcasts them, and ignores late ones", () => {
+      const hub = new Hub(() => 9);
+      const got = watched(hub);
+      hub.livePost({ ...post("a\n"), token: "secret" });
+      hub.livePost(post("b\n", true));
+      hub.livePost(post("late\n"));
+      expect(got.filter((m) => m.type === "live")).toHaveLength(2);
+      expect(JSON.stringify(got)).not.toContain("secret");
+      const [snap] = watched(hub);
+      expect(snap).toMatchObject({
+        type: "snapshot",
+        live: [{ id: "toolu_1", text: "a\nb\n", done: true, updatedAt: 9 }],
+      });
+    });
+
+    it("mirrors a loop's tail lines, with the command of their call", () => {
+      const hub = new Hub(() => 1);
+      hub.hello(info(), () => {});
+      hub.log("a", [
+        {
+          t: 1,
+          kind: "tool",
+          text: "Bash",
+          call: "c1",
+          detail: { type: "command", command: "make > out.log" },
+        },
+        {
+          t: 2,
+          kind: "tail",
+          text: "built\n",
+          call: "c1",
+          detail: { type: "tail", file: "/r/out.log", done: true },
+        },
+      ]);
+      const [snap] = watched(hub);
+      expect(snap).toMatchObject({
+        live: [
+          {
+            id: "c1",
+            file: "/r/out.log",
+            command: "make > out.log",
+            source: { kind: "loop", where: "jarrin/x", session: "a" },
+            text: "built\n",
+            done: true,
+          },
+        ],
+      });
+    });
+
+    it("drops the least recently active log beyond the cap", () => {
+      const hub = new Hub(() => 1);
+      const got = watched(hub);
+      for (let i = 0; i <= MAX_LIVE; i++)
+        hub.livePost(post("x", false, `c${String(i)}`));
+      expect(got).toContainEqual({ type: "live-removed", id: "c0" });
     });
   });
 });

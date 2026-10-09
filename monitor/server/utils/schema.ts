@@ -7,6 +7,7 @@ import type {
   EntryStatus,
   InstanceSummary,
   LogDetail,
+  LivePost,
   LogKind,
   Question,
   WatcherMessage,
@@ -147,6 +148,22 @@ const watcherMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("input"), id: z.string(), text: questionText }),
 ]) satisfies z.ZodType<WatcherMessage>;
 
+const livePost = z.object({
+  token: z.string().optional(),
+  id: z.string().min(1).max(128),
+  file: z.string().min(1).max(4096),
+  command: clipped,
+  source: z.object({
+    kind: z.enum(["session", "loop"]),
+    host: z.string().max(128),
+    where: z.string().max(4096),
+    session: z.string().max(128),
+  }),
+  startedAt: z.number(),
+  chunk: z.string().max(256 * 1024),
+  done: z.boolean(),
+}) satisfies z.ZodType<LivePost>;
+
 const board = z.object({
   repo: z.string(),
   milestone: milestoneRef,
@@ -195,5 +212,8 @@ export const parseAgentMessage = (raw: string): AgentMessage | null =>
 
 export const parseWatcherMessage = (raw: string): WatcherMessage | null =>
   parseWith(watcherMessage, raw);
+
+export const parseLivePost = (raw: string): LivePost | null =>
+  parseWith(livePost, raw);
 
 export const parseSaved = (raw: string): Saved | null => parseWith(saved, raw);

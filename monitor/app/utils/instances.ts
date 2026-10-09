@@ -2,24 +2,30 @@ import { covers, instanceLabel } from "#shared/protocol";
 import type {
   Board,
   InstanceView,
+  LiveLog,
   Question,
   WatchMessage,
 } from "#shared/protocol";
 
 /** Mirrors the server's per-instance cap, so a long-open tab stays bounded. */
 export const MAX_VIEW_LINES = 5000;
+/** Mirrors the server's per-log cap on live log text. */
+export const MAX_LIVE_TEXT = 256 * 1024;
 
 /** Everything the page shows, as the watch stream builds it. */
 export interface MonitorState {
   readonly instances: readonly InstanceView[];
   readonly boards: readonly Board[];
   readonly questions: readonly Question[];
+  /** Live logs, least recently active first. */
+  readonly live: readonly LiveLog[];
 }
 
 export const emptyState: MonitorState = {
   instances: [],
   boards: [],
   questions: [],
+  live: [],
 };
 
 /** Fold one server message into the state (pure, for testing). */
@@ -33,6 +39,7 @@ export function applyWatchMessage(
         instances: [...msg.instances],
         boards: [...msg.boards],
         questions: [...msg.questions],
+        live: [...msg.live],
       };
     case "instance": {
       const known = state.instances.some((x) => x.id === msg.instance.id);
@@ -88,6 +95,19 @@ export function applyWatchMessage(
         ...state,
         questions: state.questions.filter((q) => q.id !== msg.id),
       };
+    case "live": {
+      const prev = state.live.find((l) => l.id === msg.log.id);
+      const log: LiveLog = {
+        ...msg.log,
+        text: ((prev?.text ?? "") + msg.chunk).slice(-MAX_LIVE_TEXT),
+      };
+      return {
+        ...state,
+        live: [...state.live.filter((l) => l.id !== log.id), log],
+      };
+    }
+    case "live-removed":
+      return { ...state, live: state.live.filter((l) => l.id !== msg.id) };
   }
 }
 

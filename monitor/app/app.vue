@@ -3,6 +3,9 @@ import { instanceLabel } from "#shared/protocol";
 import { boardsOf, questionsOf } from "~/utils/instances";
 import type { Notice } from "~/utils/instances";
 
+/** The tab value of the live logs view; never a loop instance id. */
+const LIVE_TAB = "live-logs";
+
 const activeId = ref<string | null>(null);
 
 const openNotice = (notice: Notice): void => {
@@ -38,21 +41,28 @@ provideForge(
 watch(
   instances,
   (list) => {
-    if (!list.some((i) => i.id === activeId.value))
-      activeId.value = list[0]?.id ?? null;
+    if (
+      activeId.value !== LIVE_TAB &&
+      !list.some((i) => i.id === activeId.value)
+    )
+      activeId.value = list[0]?.id ?? LIVE_TAB;
     const a = active.value;
     if (a) seen.value[a.id] = a.lines.length;
   },
   { immediate: true },
 );
 
-const tabs = computed(() =>
-  instances.value.map((inst) => ({
+const runningLive = computed(
+  () => state.value.live.filter((l) => !l.done).length,
+);
+const tabs = computed(() => [
+  { label: "live logs", value: LIVE_TAB, inst: undefined },
+  ...instances.value.map((inst) => ({
     label: instanceLabel(inst),
     value: inst.id,
     inst,
   })),
-);
+]);
 const selected = computed({
   get: () => activeId.value ?? undefined,
   set: (id: string | number | undefined) => {
@@ -103,34 +113,52 @@ const openQuestions = (id: string): number => {
           }"
         >
           <template #leading="{ item }">
-            <span :class="['size-2 rounded-full', dotClass(item.inst)]" />
+            <UIcon
+              v-if="!item.inst"
+              name="i-lucide-scroll-text"
+              class="size-3.5"
+            />
+            <span
+              v-else
+              :class="['size-2 rounded-full', dotClass(item.inst)]"
+            />
           </template>
           <template #trailing="{ item }">
             <UBadge
-              v-if="openQuestions(item.inst.id)"
-              :label="`? ${openQuestions(item.inst.id)}`"
-              color="warning"
+              v-if="!item.inst"
+              :label="String(runningLive)"
+              color="info"
               size="sm"
-              title="Open questions"
+              :class="['min-w-6 justify-center', !runningLive && 'invisible']"
+              title="Running"
             />
-            <!-- Always laid out, so it appearing never shifts the tabs beside it. -->
-            <UBadge
-              :label="unreadLabel(item.inst.id, item.inst.lines.length)"
-              size="sm"
-              :class="[
-                'min-w-9 justify-center',
-                (item.inst.id === activeId ||
-                  !unread(item.inst.id, item.inst.lines.length)) &&
-                  'invisible',
-              ]"
-            />
-            <UIcon
-              v-if="!item.inst.online && !openQuestions(item.inst.id)"
-              name="i-lucide-x"
-              class="size-3.5 text-dimmed hover:text-default"
-              title="Dismiss"
-              @click.stop="dismiss(item.inst.id)"
-            />
+            <template v-else>
+              <UBadge
+                v-if="openQuestions(item.inst.id)"
+                :label="`? ${openQuestions(item.inst.id)}`"
+                color="warning"
+                size="sm"
+                title="Open questions"
+              />
+              <!-- Always laid out, so it appearing never shifts the tabs beside it. -->
+              <UBadge
+                :label="unreadLabel(item.inst.id, item.inst.lines.length)"
+                size="sm"
+                :class="[
+                  'min-w-9 justify-center',
+                  (item.inst.id === activeId ||
+                    !unread(item.inst.id, item.inst.lines.length)) &&
+                    'invisible',
+                ]"
+              />
+              <UIcon
+                v-if="!item.inst.online && !openQuestions(item.inst.id)"
+                name="i-lucide-x"
+                class="size-3.5 text-dimmed hover:text-default"
+                title="Dismiss"
+                @click.stop="dismiss(item.inst.id)"
+              />
+            </template>
           </template>
         </UTabs>
         <UButton
@@ -152,7 +180,10 @@ const openQuestions = (id: string): number => {
           size="sm"
         />
       </header>
-      <main v-if="active" class="flex min-h-0 flex-1 flex-col">
+      <main v-if="activeId === LIVE_TAB" class="flex min-h-0 flex-1 flex-col">
+        <LiveLogs :logs="state.live" />
+      </main>
+      <main v-else-if="active" class="flex min-h-0 flex-1 flex-col">
         <div
           class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-default px-3 py-1.5 text-xs text-muted"
         >

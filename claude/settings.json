@@ -10,6 +10,18 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/bin/claudjar api live-log",
+            "async": true
+          }
+        ]
+      }
     ]
   },
   "statusLine": {

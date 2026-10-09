@@ -111,12 +111,41 @@ describe("applyWatchMessage", () => {
         instances: [view],
         boards: [board("open")],
         questions: [question],
+        live: [],
       }),
     ).toEqual({
       instances: [view],
       boards: [board("open")],
       questions: [question],
+      live: [],
     });
+  });
+
+  it("appends live log chunks and drops removed logs", () => {
+    const log = {
+      id: "toolu_1",
+      file: "/tmp/check.log",
+      command: "task check > /tmp/check.log",
+      source: {
+        kind: "session" as const,
+        host: "h",
+        where: "/r",
+        session: "s",
+      },
+      startedAt: 1,
+      updatedAt: 1,
+      done: false,
+    };
+    let s = applyWatchMessage(emptyState, { type: "live", log, chunk: "a\n" });
+    s = applyWatchMessage(s, {
+      type: "live",
+      log: { ...log, done: true },
+      chunk: "b\n",
+    });
+    expect(s.live).toEqual([{ ...log, done: true, text: "a\nb\n" }]);
+    expect(
+      applyWatchMessage(s, { type: "live-removed", id: "toolu_1" }).live,
+    ).toEqual([]);
   });
 
   it("replaces a board by milestone and tracks questions until closed", () => {
@@ -139,6 +168,7 @@ describe("applyWatchMessage", () => {
   it("selects an instance's boards in milestone order and its questions", () => {
     const s: MonitorState = {
       instances: [view],
+      live: [],
       boards: [
         board("open"),
         { ...board("open"), milestone: S2 },
@@ -192,6 +222,7 @@ describe("noticesFor", () => {
         instances: [view],
         boards: [],
         questions: [question],
+        live: [],
       }),
     ).toEqual([]);
   });

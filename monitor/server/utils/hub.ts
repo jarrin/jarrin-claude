@@ -7,6 +7,9 @@ import type {
   InstanceInfo,
   InstanceSummary,
   InstanceView,
+  LiveLog,
+  LiveLogInfo,
+  LivePost,
   LogLine,
   MilestoneRef,
   Question,
@@ -18,6 +21,13 @@ import type {
 export const MAX_LINES = 5000;
 /** An offline instance is forgotten after this long — unless a question still needs it. */
 export const OFFLINE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Live logs kept; the oldest finished one goes first. */
+export const MAX_LIVE = 50;
+/** Characters kept per live log; older content scrolls off. */
+export const MAX_LIVE_TEXT = 256 * 1024;
+/** A live log that has not grown for this long is closed, whatever its follower said. */
+export const LIVE_STALE_MS = 2 * 60 * 60 * 1000;
 
 interface Instance {
   info: InstanceInfo;
@@ -50,6 +60,7 @@ export class Hub {
   private readonly questions = new Map<string, Question>();
   private readonly watchers = new Set<Send>();
   private readonly agents = new Map<string, SendAgent>();
+  private readonly live = new Map<string, LiveLog>();
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -82,6 +93,7 @@ export class Hub {
       instances: [...this.instances.values()].map(view),
       boards: [...this.boards.values()],
       questions: [...this.questions.values()],
+      live: [...this.live.values()],
     });
     return () => this.watchers.delete(send);
   }
@@ -119,6 +131,73 @@ export class Hub {
       inst.lines.splice(0, inst.lines.length - MAX_LINES);
     inst.lastSeen = this.now();
     this.broadcast({ type: "log", id, lines });
+    for (const l of lines)
+      if (l.detail?.type === "tail" && l.call)
+        this.liveAppend(
+          {
+            id: l.call,
+            file: l.detail.file,
+            command: commandOf(inst.lines, l.call),
+            source: {
+              kind: "loop",
+              host: inst.info.host,
+              where: inst.info.repo,
+              session: id,
+            },
+            startedAt: l.t,
+          },
+          l.text,
+          l.detail.done,
+        );
+  }
+
+  /** A hook follower sent the next chunk of a file a session's Bash call writes. */
+  livePost(post: LivePost): void {
+    const { token: _token, chunk, done, ...meta } = post;
+    this.liveAppend(meta, chunk, done);
+  }
+
+  private liveAppend(
+    meta: Omit<LiveLogInfo, "updatedAt" | "done">,
+    chunk: string,
+    done: boolean,
+  ): void {
+    const prev = this.live.get(meta.id);
+    // A late chunk after the end (a retried post) changes nothing.
+    if (prev?.done) return;
+    const text = ((prev?.text ?? "") + chunk).slice(-MAX_LIVE_TEXT);
+    const log: LiveLog = {
+      ...meta,
+      ...(prev
+        ? { startedAt: prev.startedAt, command: prev.command || meta.command }
+        : {}),
+      updatedAt: this.now(),
+      done,
+      text,
+    };
+    // Re-inserted, so the map stays in order of last activity.
+    this.live.delete(meta.id);
+    this.live.set(meta.id, log);
+    const { text: _text, ...info } = log;
+    this.broadcast({ type: "live", log: info, chunk });
+    this.pruneLive();
+  }
+
+  /** Close stale logs, then drop the least recently active beyond the cap. */
+  private pruneLive(): void {
+    const cutoff = this.now() - LIVE_STALE_MS;
+    for (const log of this.live.values())
+      if (!log.done && log.updatedAt < cutoff) {
+        const closed = { ...log, done: true };
+        this.live.set(log.id, closed);
+        const { text: _text, ...info } = closed;
+        this.broadcast({ type: "live", log: info, chunk: "" });
+      }
+    for (const id of this.live.keys()) {
+      if (this.live.size <= MAX_LIVE) break;
+      this.live.delete(id);
+      this.broadcast({ type: "live-removed", id });
+    }
   }
 
   status(id: string, status: string, paused: boolean): void {
@@ -246,6 +325,16 @@ export class Hub {
   private broadcast(msg: WatchMessage): void {
     for (const send of this.watchers) send(msg);
   }
+}
+
+/** The command of the Bash call a loop's `tail` line belongs to. */
+function commandOf(lines: readonly LogLine[], call: string): string {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    if (l?.kind === "tool" && l.call === call && l.detail?.type === "command")
+      return l.detail.command;
+  }
+  return "";
 }
 
 function summary(inst: Instance): InstanceSummary {

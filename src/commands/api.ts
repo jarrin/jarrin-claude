@@ -1,5 +1,6 @@
 import { buildRouteMap } from "@stricli/core";
 
+import { liveLogCommand } from "./live-log.js";
 import { sessionStartCommand } from "./session-start.js";
 import { statuslineCommand } from "./statusline.js";
 
@@ -23,6 +24,7 @@ export const apiRoutes = buildRouteMap({
   routes: {
     "session-start": sessionStartCommand,
     statusline: statuslineCommand,
+    "live-log": liveLogCommand,
   },
   docs: {
     brief: `${INTERNAL_WARNING} Hook entrypoints invoked by Claude Code — not for manual use`,
@@ -30,7 +32,8 @@ export const apiRoutes = buildRouteMap({
       "INTERNAL — do not run these by hand.\n\n" +
       "These are the entrypoints Claude Code itself invokes, through the standalone " +
       "binary on PATH (~/.local/bin/claudjar, registered in claude/settings.json as " +
-      "`claudjar api statusline` and `claudjar api session-start`). Each one reads a " +
+      "`claudjar api statusline`, `claudjar api session-start` and " +
+      "`claudjar api live-log`). Each one reads a " +
       "JSON payload on stdin and writes a format its caller parses — a hook " +
       "contract, not a user interface.\n\n" +
       "Run by hand they see an empty payload and fall back to defaults, which is " +

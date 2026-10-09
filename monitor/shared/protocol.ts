@@ -126,6 +126,50 @@ export interface InstanceInfo {
 
 export type ControlAction = "pause" | "resume";
 
+/** Where a live log comes from: a plain Claude Code session's hook, or a loop. */
+export interface LiveLogSource {
+  readonly kind: "session" | "loop";
+  readonly host: string;
+  /** The session's working directory, or the loop's repo. */
+  readonly where: string;
+  /** The Claude session id, or the loop instance id. */
+  readonly session: string;
+}
+
+/**
+ * A file a Bash call writes its output to (`cmd > file`, `| tee file`),
+ * followed live while the command runs. Keyed by the call's tool_use id.
+ */
+export interface LiveLogInfo {
+  readonly id: string;
+  readonly file: string;
+  readonly command: string;
+  readonly source: LiveLogSource;
+  readonly startedAt: number;
+  readonly updatedAt: number;
+  readonly done: boolean;
+}
+
+export interface LiveLog extends LiveLogInfo {
+  /** The file's content since the call started; only its end is kept. */
+  readonly text: string;
+}
+
+/**
+ * Hook follower → server, POSTed as JSON to {@link LIVE_PATH}: the next chunk of
+ * one live log. The first post for an id creates it; `done` ends it.
+ */
+export interface LivePost {
+  readonly token?: string;
+  readonly id: string;
+  readonly file: string;
+  readonly command: string;
+  readonly source: LiveLogSource;
+  readonly startedAt: number;
+  readonly chunk: string;
+  readonly done: boolean;
+}
+
 /** Agent → server. */
 export type AgentMessage =
   | {
@@ -188,6 +232,7 @@ export type WatchMessage =
       readonly instances: readonly InstanceView[];
       readonly boards: readonly Board[];
       readonly questions: readonly Question[];
+      readonly live: readonly LiveLog[];
     }
   | { readonly type: "instance"; readonly instance: InstanceSummary }
   | {
@@ -198,7 +243,10 @@ export type WatchMessage =
   | { readonly type: "removed"; readonly id: string }
   | { readonly type: "board"; readonly board: Board }
   | { readonly type: "question"; readonly question: Question }
-  | { readonly type: "question-closed"; readonly id: string };
+  | { readonly type: "question-closed"; readonly id: string }
+  /** New content of a live log (created on first sight); `chunk` is appended. */
+  | { readonly type: "live"; readonly log: LiveLogInfo; readonly chunk: string }
+  | { readonly type: "live-removed"; readonly id: string };
 
 /** Watcher → server. */
 export type WatcherMessage =
@@ -241,3 +289,4 @@ export function instanceLabel(info: InstanceInfo): string {
 
 export const AGENT_PATH = "/ws/agent";
 export const WATCH_PATH = "/ws/watch";
+export const LIVE_PATH = "/api/live";
