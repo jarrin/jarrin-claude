@@ -349,9 +349,18 @@ are worked too.
   answered issue is resumed first, in its **own** session (`--resume`), told to pop its
   stash. Once only questions remain the loop polls every `--poll-seconds` (default 60)
   until they are answered or you Ctrl-C. The ticket is closed when the loop ends with
-  nothing waiting, and reopened by the next question. Parked state lives in the loop's
-  memory: after a restart, an unanswered issue starts a fresh session, which is pointed at
-  the ticket to read earlier answers.
+  nothing waiting, and reopened by the next question.
+- **Progress is a ticket too, and it is what makes a restart safe.** On start the loop finds
+  or files each milestone's **Loop progress** ticket (marker `<!-- claudjar-loop:progress -->`)
+  listing the open issues as a checklist; issues filed later are appended, and closed ones
+  ticked. Each session prints its plan as a `<<<STEPS … STEPS>>>` checklist and reprints it as
+  it ticks steps; the loop reads that live from the stream and nests it under the issue, next
+  to a status (working / waiting for an answer / blocked). The description is the loop's —
+  hand edits are overwritten — because it also carries the loop's state in a hidden comment
+  (each issue's session id, waiting questions, stashes, answers already delivered). A
+  restarted loop reads it back: an issue it was **working** on resumes its own session first,
+  and issues **waiting** on an answer keep waiting rather than starting over. The ticket is
+  closed once every issue on it is.
 - **Usage limits are waited out, not lost.** The session's `stream-json` carries a
   `rate_limit_event` whose `status: rejected` names `resetsAt` (epoch seconds). The loop sleeps
   until then plus a minute and `--resume`s the **same** session, so a half-done issue keeps its

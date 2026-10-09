@@ -22,7 +22,7 @@ export interface RunnerOptions {
  */
 export function claudeRunner(opts: RunnerOptions): RunClaude {
   mkdirSync(opts.logDir, { recursive: true });
-  return (prompt, resume, issue) =>
+  return (prompt, resume, issue, watch) =>
     new Promise((resolve, reject) => {
       const args = [
         "-p",
@@ -44,7 +44,7 @@ export function claudeRunner(opts: RunnerOptions): RunClaude {
         cwd: opts.cwd,
         stdio: ["ignore", "pipe", "pipe"],
       });
-      const tracker = new StreamTracker();
+      const tracker = new StreamTracker(watch);
       createInterface({ input: child.stdout }).on("line", (line) => {
         log.write(`${line}\n`);
         const shown = tracker.feed(line);

@@ -115,7 +115,9 @@ inside a session. It clears context between issues, waits out usage limits and r
 same session, and skips an issue left open. A session that needs a decision ends on a
 `<<<QUESTION … QUESTION>>>` block; the loop posts it on the milestone's single
 open-questions ticket, notifies the desktop, and resumes that session when the user
-replies there. Details in the jarrin-claude README, *Looping a
+replies there. Each milestone also gets a **Loop progress** ticket (checklist of
+issues, each with the session's `<<<STEPS` sub-checklist) that holds the loop's state, so a
+restarted loop resumes where it stopped. Details in the jarrin-claude README, *Looping a
 milestone*.
 
 **`release` refuses more than it does.** It runs only on `main` with a clean tree, and

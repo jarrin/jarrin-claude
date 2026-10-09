@@ -1,19 +1,16 @@
 import { workOrder } from "./gitea.js";
-import type {
-  Comment,
-  GiteaClient,
-  Issue,
-  Milestone,
-  QuestionsIssue,
-} from "./gitea.js";
+import type { Comment, GiteaClient, Issue, Milestone } from "./gitea.js";
+import { ProgressBoard, parseSteps } from "./progress.js";
+import type { Entry } from "./progress.js";
 import { limitWaitMs } from "./stream.js";
-import type { RunOutcome } from "./stream.js";
+import type { RunOutcome, RunWatch } from "./stream.js";
 
-/** One Claude run: a fresh session, or a resume of `resume` after a limit lifted. */
+/** One Claude run: a fresh session, or a resume of `resume` (limit, answer, restart). */
 export type RunClaude = (
   prompt: string,
   resume: string | null,
   issue: Issue,
+  watch: RunWatch,
 ) => Promise<RunOutcome>;
 
 export interface LoopDeps {
@@ -68,7 +65,7 @@ const stashLabel = (issue: Issue): string =>
 export function issuePrompt(
   repo: string,
   issue: Issue,
-  questions: QuestionsIssue | null,
+  questions: number | null,
 ): string {
   return [
     `Continue ${String(issue.number)}`,
@@ -80,6 +77,15 @@ export function issuePrompt(
     "",
     `- Work issue #${String(issue.number)} ("${issue.title}") and ONLY that issue, following the`,
     '  staged-planning "Continue <number>" rules (or the todo rules for a todo ticket).',
+    "- First, before any change, print your plan for the issue as a block the loop mirrors",
+    "  onto the milestone's progress ticket. Print the whole block again, ticked, each time",
+    "  a step is done (and when the plan changes):",
+    "",
+    "  <<<STEPS",
+    "  - [ ] <step>",
+    "  - [ ] <step>",
+    "  STEPS>>>",
+    "",
     "- Finished and the repo's gate is green: commit per the standing rules, comment the",
     "  outcome on the issue, then close it. Closing is how the loop knows it is done.",
     "- A choice the standing rules give to the user (a surprising commit sweep, a destructive",
@@ -96,7 +102,7 @@ export function issuePrompt(
     "  issue what is needed and why, leave it OPEN, and stop. The loop then skips it.",
     ...(questions
       ? [
-          `- Earlier answers may already be on the open-questions ticket #${String(questions.number)};`,
+          `- Earlier answers may already be on the open-questions ticket #${String(questions)};`,
           "  read it for anything about this issue before asking again.",
         ]
       : []),
@@ -109,6 +115,15 @@ export function resumePrompt(issue: Issue): string {
     `The usage limit has reset. Carry on with issue #${String(issue.number)} exactly where ` +
     "you left off, under the same unattended rules: close it when done, end on a " +
     "<<<QUESTION block to ask, or comment and leave it open when blocked."
+  );
+}
+
+export function restartPrompt(issue: Issue): string {
+  return (
+    `\`claudjar loop\` was restarted while you worked issue #${String(issue.number)}. ` +
+    "The working tree is as you left it. Carry on where you stopped, under the same " +
+    "unattended rules: keep the <<<STEPS block current, close the issue when done, end " +
+    "on a <<<QUESTION block to ask, or comment and leave it open when blocked."
   );
 }
 
@@ -135,50 +150,48 @@ export function answerPrompt(
   ].join("\n");
 }
 
-/** An issue whose session ended on a question, set aside until it is answered. */
-interface Parked {
-  readonly issue: Issue;
-  readonly milestone: Milestone;
-  readonly sessionId: string;
-  readonly questions: QuestionsIssue;
-  /** Comments after this one may answer it. */
-  readonly askedAt: number;
-  readonly stashed: boolean;
-}
-
 const LEADING_REF = /^\s*#(\d+)\b/;
 
+interface Waiting {
+  readonly entry: Entry;
+  readonly milestone: Milestone;
+}
+
 /**
- * Hand each new non-loop comment on the questions tickets to one parked issue: the
- * one its leading `#<n>` names, else the oldest question on that ticket. Comments
- * are consumed once, so an answer is never delivered twice.
+ * Hand each new non-loop comment on a questions ticket to one waiting issue: the one
+ * its leading `#<n>` names, else the oldest question on that ticket. Delivered
+ * comments are recorded on the progress ticket, so an answer is never delivered
+ * twice — not even across a restart.
  */
 async function collectAnswers(
   gitea: GiteaClient,
-  parked: readonly Parked[],
-  consumed: Set<number>,
+  board: ProgressBoard,
+  waiting: readonly Waiting[],
 ): Promise<Map<number, string[]>> {
   const answers = new Map<number, string[]>();
-  const byTicket = new Map<number, Parked[]>();
-  for (const p of parked) {
-    byTicket.set(p.questions.number, [
-      ...(byTicket.get(p.questions.number) ?? []),
-      p,
-    ]);
+  const byTicket = new Map<number, Waiting[]>();
+  for (const w of waiting) {
+    const ticket = board.questionsNumber(w.milestone);
+    if (ticket === null) continue;
+    byTicket.set(ticket, [...(byTicket.get(ticket) ?? []), w]);
   }
-  for (const [ticket, waiting] of byTicket) {
-    const oldestFirst = [...waiting].sort((a, b) => a.askedAt - b.askedAt);
+  for (const [ticket, group] of byTicket) {
+    const oldestFirst = [...group].sort(
+      (a, b) => (a.entry.askedAt ?? 0) - (b.entry.askedAt ?? 0),
+    );
     for (const c of await gitea.comments(ticket)) {
-      if (consumed.has(c.id) || isLoopComment(c) || !c.body.trim()) continue;
+      if (isLoopComment(c) || !c.body.trim()) continue;
       const ref = LEADING_REF.exec(c.body);
       const named = ref
-        ? oldestFirst.find((p) => p.issue.number === Number(ref[1]))
+        ? oldestFirst.find((w) => w.entry.number === Number(ref[1]))
         : undefined;
-      const target = named ?? oldestFirst.find((p) => c.id > p.askedAt);
-      if (!target || c.id <= target.askedAt) continue;
-      consumed.add(c.id);
-      answers.set(target.issue.number, [
-        ...(answers.get(target.issue.number) ?? []),
+      const target =
+        named ?? oldestFirst.find((w) => c.id > (w.entry.askedAt ?? 0));
+      if (!target || c.id <= (target.entry.askedAt ?? 0)) continue;
+      if (board.isConsumed(target.milestone, c.id)) continue;
+      await board.consume(target.milestone, c.id);
+      answers.set(target.entry.number, [
+        ...(answers.get(target.entry.number) ?? []),
         c.body.trim(),
       ]);
     }
@@ -186,60 +199,63 @@ async function collectAnswers(
   return answers;
 }
 
-async function pickNext(
-  deps: LoopDeps,
-  milestones: readonly Milestone[],
-  attempted: ReadonlySet<number>,
-): Promise<{ issue: Issue; milestone: Milestone } | null> {
-  for (const milestone of milestones) {
-    const open = workOrder(await deps.gitea.openIssues(milestone));
-    const issue = open.find((i) => !attempted.has(i.number));
-    if (issue) return { issue, milestone };
-  }
-  return null;
-}
-
 /**
  * Work every open issue of `milestones`, in the order given, one fresh Claude
  * session per issue. Issues are re-listed before each pick, so follow-ups filed
  * mid-run (caveat / cleanup tickets) are picked up too. A usage limit pauses the
  * run until it resets and RESUMES the same session. A session that ends on a
- * question is parked: the question goes to the milestone's open-questions ticket,
+ * question waits: the question goes to the milestone's open-questions ticket,
  * other issues are worked meanwhile, and the user's reply resumes that session.
+ *
+ * All of it is tracked on each milestone's progress ticket, which is also what a
+ * restarted loop reads back: interrupted sessions are resumed first, and issues
+ * still waiting on an answer keep waiting instead of starting over.
  */
 export async function runLoop(
   deps: LoopDeps,
   opts: LoopOptions,
 ): Promise<LoopSummary> {
+  const board = new ProgressBoard(deps.gitea, deps.log);
+  for (const m of opts.milestones) {
+    await board.load(m);
+    await board.sync(m, await deps.gitea.openIssues(m));
+  }
   const closed: Issue[] = [];
   const leftOpen: Issue[] = [];
   const attempted = new Set<number>();
-  const parked = new Map<number, Parked>();
-  const consumed = new Set<number>();
-  const questionsByMilestone = new Map<number, QuestionsIssue>();
   let failuresInRow = 0;
   let announcedWait = false;
 
   const summary = async (stopReason: string): Promise<LoopSummary> => {
-    // Nothing left to answer: the ticket would only hold the milestone open.
-    if (parked.size === 0) {
-      for (const q of questionsByMilestone.values())
-        await deps.gitea.closeIssue(q.number);
-    }
+    await board.finish();
     return {
       closed,
       leftOpen,
-      awaiting: [...parked.values()].map((p) => p.issue),
+      awaiting: board.inStatus("waiting").map(({ entry }) => asIssue(entry)),
       stopReason,
     };
   };
 
-  const finish = async (
+  /** Run one session to its end — through any limit pauses — and record the result. */
+  const work = async (
     issue: Issue,
     milestone: Milestone,
-    first: Promise<RunOutcome>,
+    prompt: string,
+    resume: string | null,
   ): Promise<string | null> => {
-    let outcome = await first;
+    const watch: RunWatch = {
+      session: (id) => void board.update(milestone, issue, { sessionId: id }),
+      text: (text) => {
+        const steps = parseSteps(text);
+        if (steps) void board.update(milestone, issue, { steps });
+      },
+    };
+    await board.update(milestone, issue, {
+      status: "working",
+      askedAt: null,
+      stashed: false,
+    });
+    let outcome = await deps.run(prompt, resume, issue, watch);
     while (outcome.limited) {
       const waitMs = limitWaitMs(outcome.resetsAt, deps.now());
       const until = new Date(deps.now() + waitMs).toLocaleString();
@@ -248,29 +264,26 @@ export async function runLoop(
       );
       await deps.sleep(waitMs);
       outcome = outcome.sessionId
-        ? await deps.run(resumePrompt(issue), outcome.sessionId, issue)
+        ? await deps.run(resumePrompt(issue), outcome.sessionId, issue, watch)
         : await deps.run(
-            issuePrompt(
-              opts.repo,
-              issue,
-              questionsByMilestone.get(milestone.id) ?? null,
-            ),
+            issuePrompt(opts.repo, issue, board.questionsNumber(milestone)),
             null,
             issue,
+            watch,
           );
     }
 
     if (await deps.gitea.isClosed(issue.number)) {
       closed.push(issue);
       failuresInRow = 0;
+      await board.update(milestone, issue, { status: "closed" });
       deps.log(`=== #${String(issue.number)} closed`);
       return null;
     }
 
     const question = parseQuestion(outcome.resultText);
     if (question && outcome.sessionId) {
-      const questions = await deps.gitea.ensureQuestionsIssue(milestone);
-      questionsByMilestone.set(milestone.id, questions);
+      const questions = await board.questionsTicket(milestone);
       const posted = await deps.gitea.comment(
         questions.number,
         [
@@ -283,18 +296,16 @@ export async function runLoop(
         ].join("\n"),
       );
       const stashed = await deps.stash(stashLabel(issue));
-      parked.set(issue.number, {
-        issue,
-        milestone,
+      await board.update(milestone, issue, {
+        status: "waiting",
         sessionId: outcome.sessionId,
-        questions,
         askedAt: posted.id,
         stashed,
       });
       failuresInRow = 0;
       announcedWait = false;
       deps.log(
-        `=== #${String(issue.number)} asked a question — parked until answered on #${String(questions.number)}` +
+        `=== #${String(issue.number)} asked a question — waiting for an answer on #${String(questions.number)}` +
           (stashed ? " (uncommitted work stashed)" : ""),
       );
       deps.notify(
@@ -307,6 +318,7 @@ export async function runLoop(
 
     leftOpen.push(issue);
     failuresInRow++;
+    await board.update(milestone, issue, { status: "blocked" });
     deps.log(
       `=== #${String(issue.number)} left open — skipping it` +
         (outcome.isError && outcome.resultText
@@ -318,34 +330,42 @@ export async function runLoop(
     return null;
   };
 
+  // A previous loop died mid-session: pick those sessions up where they stopped.
+  for (const { entry, milestone } of board.inStatus("working")) {
+    const issue = asIssue(entry);
+    attempted.add(issue.number);
+    deps.log(
+      `\n=== #${String(issue.number)} was interrupted — ` +
+        (entry.sessionId ? "resuming its session" : "starting it again"),
+    );
+    const stop = entry.sessionId
+      ? await work(issue, milestone, restartPrompt(issue), entry.sessionId)
+      : await work(
+          issue,
+          milestone,
+          issuePrompt(opts.repo, issue, board.questionsNumber(milestone)),
+          null,
+        );
+    if (stop) return summary(stop);
+  }
+
   for (;;) {
-    if (parked.size > 0) {
-      const answers = await collectAnswers(
-        deps.gitea,
-        [...parked.values()],
-        consumed,
-      );
-      const answered = [...parked.values()].find((p) =>
-        answers.has(p.issue.number),
-      );
+    const waiting = board.inStatus("waiting");
+    for (const w of waiting) attempted.add(w.entry.number);
+    if (waiting.length > 0) {
+      const answers = await collectAnswers(deps.gitea, board, waiting);
+      const answered = waiting.find((w) => answers.has(w.entry.number));
       if (answered) {
-        const { issue, milestone } = answered;
-        parked.delete(issue.number);
+        const { entry, milestone } = answered;
+        const issue = asIssue(entry);
         deps.log(
           `\n=== #${String(issue.number)} answered — resuming its session`,
         );
-        const stop = await finish(
+        const stop = await work(
           issue,
           milestone,
-          deps.run(
-            answerPrompt(
-              issue,
-              answers.get(issue.number) ?? [],
-              answered.stashed,
-            ),
-            answered.sessionId,
-            issue,
-          ),
+          answerPrompt(issue, answers.get(issue.number) ?? [], entry.stashed),
+          entry.sessionId,
         );
         if (stop) return summary(stop);
         continue;
@@ -353,27 +373,29 @@ export async function runLoop(
     }
 
     const capped = opts.maxIssues > 0 && attempted.size >= opts.maxIssues;
-    const next = capped
-      ? null
-      : await pickNext(deps, opts.milestones, attempted);
+    let next: { issue: Issue; milestone: Milestone } | null = null;
+    if (!capped) {
+      for (const milestone of opts.milestones) {
+        const open = workOrder(await deps.gitea.openIssues(milestone));
+        await board.sync(milestone, open);
+        const issue = open.find((i) => !attempted.has(i.number));
+        if (issue) {
+          next = { issue, milestone };
+          break;
+        }
+      }
+    }
     if (next) {
       const { issue, milestone } = next;
       attempted.add(issue.number);
       deps.log(
         `\n=== #${String(issue.number)} ${issue.title}  [${milestone.title}]`,
       );
-      const stop = await finish(
+      const stop = await work(
         issue,
         milestone,
-        deps.run(
-          issuePrompt(
-            opts.repo,
-            issue,
-            questionsByMilestone.get(milestone.id) ?? null,
-          ),
-          null,
-          issue,
-        ),
+        issuePrompt(opts.repo, issue, board.questionsNumber(milestone)),
+        null,
       );
       if (stop) return summary(stop);
       continue;
@@ -382,14 +404,18 @@ export async function runLoop(
     const reason = capped
       ? `reached --max-issues ${String(opts.maxIssues)}`
       : "no open issues left";
-    if (parked.size === 0) return summary(reason);
+    if (waiting.length === 0) return summary(reason);
     if (!announcedWait) {
-      const waiting = [...parked.keys()].map((n) => `#${String(n)}`).join(" ");
+      const list = waiting.map((w) => `#${String(w.entry.number)}`).join(" ");
       deps.log(
-        `--- ${reason}; waiting for answers to ${waiting} (Ctrl-C to stop)`,
+        `--- ${reason}; waiting for answers to ${list} (Ctrl-C to stop)`,
       );
       announcedWait = true;
     }
     await deps.sleep(opts.pollMs);
   }
+}
+
+function asIssue(entry: Entry): Issue {
+  return { number: entry.number, title: entry.title };
 }

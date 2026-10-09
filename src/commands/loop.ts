@@ -323,7 +323,10 @@ export const loopCommand = buildCommand({
       "that ends on a question parks its issue: the question is posted on the " +
       "milestone's single open-questions ticket (with a desktop notification linking " +
       "to it), other issues are worked meanwhile, and a reply there resumes that " +
-      "session. Once only questions are left the loop polls for answers. An issue " +
+      "session. Once only questions are left the loop polls for answers. Each " +
+      "milestone's Loop progress ticket lists its issues with the sessions' steps as " +
+      "checkboxes and keeps the loop's state, so a restart resumes interrupted " +
+      "sessions and keeps waiting on unanswered questions. An issue " +
       "the session leaves open without a question (blocked) is skipped. Loops may run in parallel as long " +
       "as no two share a worktree or a milestone. Stream logs go to " +
       "~/.claudjar/loop/<owner>__<name>/.",

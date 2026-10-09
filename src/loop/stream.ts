@@ -9,6 +9,14 @@ export interface RunOutcome {
   readonly resultText: string;
 }
 
+/** Live callbacks from a running session, for progress tracking. */
+export interface RunWatch {
+  /** The session id, as soon as the stream names it. */
+  session(id: string): void;
+  /** The full text of each assistant text block. */
+  text(text: string): void;
+}
+
 const LIMIT_TEXT = /usage limit|hit your limit|limit reached|rate.?limit/i;
 /** The older headless form: `Claude AI usage limit reached|<epoch>`. */
 const LIMIT_EPOCH = /limit reached\|(\d{9,13})/i;
@@ -24,6 +32,8 @@ export class StreamTracker {
   private sawRejected = false;
   private result: { isError: boolean; text: string } | null = null;
 
+  constructor(private readonly watch: RunWatch | null = null) {}
+
   /** Consume one line; returns a short human-readable progress line, if any. */
   feed(line: string): string | null {
     let msg: unknown;
@@ -34,7 +44,13 @@ export class StreamTracker {
     }
     if (msg === null || typeof msg !== "object") return null;
     const rec = msg as Record<string, unknown>;
-    if (typeof rec.session_id === "string") this.sessionId = rec.session_id;
+    if (
+      typeof rec.session_id === "string" &&
+      rec.session_id !== this.sessionId
+    ) {
+      this.sessionId = rec.session_id;
+      this.watch?.session(rec.session_id);
+    }
 
     switch (rec.type) {
       case "rate_limit_event":
@@ -46,6 +62,8 @@ export class StreamTracker {
         return null;
       }
       case "assistant":
+        if (this.watch)
+          for (const t of assistantTexts(rec.message)) this.watch.text(t);
         return describeAssistant(rec.message);
       default:
         return null;
@@ -84,6 +102,21 @@ export class StreamTracker {
 
 function toEpochSeconds(value: number): number {
   return value > 1e12 ? Math.round(value / 1000) : value;
+}
+
+function assistantTexts(message: unknown): string[] {
+  const content = asRecordContent(message);
+  return content.flatMap((block) => {
+    if (block === null || typeof block !== "object") return [];
+    const b = block as Record<string, unknown>;
+    return b.type === "text" && typeof b.text === "string" ? [b.text] : [];
+  });
+}
+
+function asRecordContent(message: unknown): unknown[] {
+  if (message === null || typeof message !== "object") return [];
+  const content = (message as Record<string, unknown>).content;
+  return Array.isArray(content) ? (content as unknown[]) : [];
 }
 
 function describeAssistant(message: unknown): string | null {

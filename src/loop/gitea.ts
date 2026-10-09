@@ -25,26 +25,38 @@ export interface Comment {
   readonly url: string;
 }
 
-/** A milestone's open-questions ticket, as `ensureQuestionsIssue` returns it. */
-export interface QuestionsIssue {
+/** One of the loop's own tickets in a milestone (open questions, progress). */
+export interface LoopTicket {
   readonly number: number;
   readonly url: string;
+  readonly body: string;
 }
 
 /**
- * Marks the loop's open-questions ticket in its body. The ticket is found by this
- * marker (never by title, which the user may edit) and is never worked as an issue.
+ * Every ticket the loop files carries a marker of this shape in its body. Tickets are
+ * found by marker (never by title, which the user may edit) and are never worked.
  */
-export const QUESTIONS_MARKER = "<!-- claudjar-loop:questions -->";
+export const LOOP_MARKER_PREFIX = "<!-- claudjar-loop:";
+
+/** What a loop ticket is called, found by, and created with. */
+export interface LoopTicketSpec {
+  readonly marker: string;
+  readonly title: string;
+  readonly body: string;
+}
 
 /** What the loop reads and writes; an interface so the driver tests use a fake. */
 export interface GiteaClient {
   resolveMilestone(ref: string): Promise<Milestone>;
-  /** Open issues of the milestone, minus its open-questions ticket. */
+  /** Open issues of the milestone, minus the loop's own tickets. */
   openIssues(milestone: Milestone): Promise<Issue[]>;
   isClosed(issue: number): Promise<boolean>;
-  /** Find the milestone's open-questions ticket (reopening it) or create it. */
-  ensureQuestionsIssue(milestone: Milestone): Promise<QuestionsIssue>;
+  /** Find the milestone's ticket carrying `spec.marker` (reopening it), or create it. */
+  ensureLoopTicket(
+    milestone: Milestone,
+    spec: LoopTicketSpec,
+  ): Promise<LoopTicket>;
+  editBody(issue: number, body: string): Promise<void>;
   closeIssue(issue: number): Promise<void>;
   comment(issue: number, body: string): Promise<Comment>;
   comments(issue: number): Promise<Comment[]>;
@@ -189,7 +201,7 @@ export function giteaClient(
 
     async openIssues(milestone: Milestone): Promise<Issue[]> {
       return (await milestoneIssues(milestone, "open"))
-        .filter((row) => !isQuestionsRow(row))
+        .filter((row) => !stringField(row, "body").includes(LOOP_MARKER_PREFIX))
         .map(toIssue)
         .filter((i): i is Issue => i !== null);
     },
@@ -198,38 +210,34 @@ export function giteaClient(
       return field(await get(`/issues/${String(issue)}`), "state") === "closed";
     },
 
-    async ensureQuestionsIssue(milestone: Milestone): Promise<QuestionsIssue> {
-      const found = (await milestoneIssues(milestone, "all")).find(
-        isQuestionsRow,
+    async ensureLoopTicket(
+      milestone: Milestone,
+      spec: LoopTicketSpec,
+    ): Promise<LoopTicket> {
+      const found = (await milestoneIssues(milestone, "all")).find((row) =>
+        stringField(row, "body").includes(spec.marker),
       );
-      if (found !== undefined) {
-        const number = field(found, "number");
-        if (typeof number !== "number")
-          throw new Error("open-questions ticket: unexpected response");
-        if (field(found, "state") !== "open")
-          await request("PATCH", `/issues/${String(number)}`, {
-            state: "open",
-          });
-        return { number, url: stringField(found, "html_url") };
-      }
-      const created = await request("POST", "/issues", {
-        title: `Open questions — ${milestone.title}`,
-        milestone: milestone.id,
-        body: [
-          QUESTIONS_MARKER,
-          "",
-          `Questions \`claudjar loop\` sessions ask while working milestone **${milestone.title}**.`,
-          "",
-          "Answer by commenting here. Start the reply with the issue number (`#12 …`) when",
-          "more than one question is waiting; otherwise it answers the oldest one. The loop",
-          "resumes that issue's session with your answer, and closes this ticket when it",
-          "finishes with nothing left to ask.",
-        ].join("\n"),
-      });
-      const number = field(created, "number");
+      const row =
+        found ??
+        (await request("POST", "/issues", {
+          title: spec.title,
+          milestone: milestone.id,
+          body: spec.body,
+        }));
+      const number = field(row, "number");
       if (typeof number !== "number")
-        throw new Error("creating the open-questions ticket failed");
-      return { number, url: stringField(created, "html_url") };
+        throw new Error(`"${spec.title}" ticket: unexpected response`);
+      if (found !== undefined && field(found, "state") !== "open")
+        await request("PATCH", `/issues/${String(number)}`, { state: "open" });
+      return {
+        number,
+        url: stringField(row, "html_url"),
+        body: stringField(row, "body"),
+      };
+    },
+
+    async editBody(issue: number, body: string): Promise<void> {
+      await request("PATCH", `/issues/${String(issue)}`, { body });
     },
 
     async closeIssue(issue: number): Promise<void> {
@@ -267,10 +275,6 @@ function toMilestone(value: unknown): Milestone | null {
 function stringField(value: unknown, key: string): string {
   const v = field(value, key);
   return typeof v === "string" ? v : "";
-}
-
-function isQuestionsRow(row: unknown): boolean {
-  return stringField(row, "body").includes(QUESTIONS_MARKER);
 }
 
 function toComment(value: unknown): Comment | null {
