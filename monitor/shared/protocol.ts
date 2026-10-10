@@ -134,6 +134,8 @@ export interface LiveLogSource {
   readonly where: string;
   /** The Claude session id, or the loop instance id. */
   readonly session: string;
+  /** A loop's milestone: the one the call's issue is in, else all it works. */
+  readonly milestone?: string;
 }
 
 /**

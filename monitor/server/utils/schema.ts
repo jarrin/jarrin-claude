@@ -159,6 +159,7 @@ const livePost = z.object({
     host: z.string().max(128),
     where: z.string().max(4096),
     session: z.string().max(128),
+    milestone: z.string().max(256).optional(),
   }),
   startedAt: z.number(),
   chunk: z.string().max(256 * 1024),

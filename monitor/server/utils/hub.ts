@@ -144,12 +144,26 @@ export class Hub {
               host: inst.info.host,
               where: inst.info.repo,
               session: id,
+              milestone: this.milestoneOf(inst.info, l.issue),
             },
             startedAt: l.t,
           },
           l.text,
           l.detail.done,
         );
+  }
+
+  /** The milestone a loop's issue is on, or every milestone the loop works. */
+  private milestoneOf(info: InstanceInfo, issue: number | undefined): string {
+    const own =
+      issue === undefined
+        ? undefined
+        : info.milestones.find((m) =>
+            this.boards
+              .get(boardKey(info.repo, m.id))
+              ?.entries.some((e) => e.number === issue),
+          );
+    return own ? own.title : info.milestones.map((m) => m.title).join(", ");
   }
 
   /** A hook follower sent the next chunk of a file a session's Bash call writes. */
