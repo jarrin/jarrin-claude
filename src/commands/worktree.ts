@@ -25,6 +25,7 @@ function cliDeps(ctx: LocalContext): WorktreeDeps {
     log: (msg) => void proc.stdout.write(msg),
     warn: (msg) => void proc.stderr.write(msg),
     caddyDir: ctx.caddyDir,
+    claudeConfig: ctx.claudeConfig,
   };
 }
 

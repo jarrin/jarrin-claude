@@ -15,6 +15,8 @@ import { scanProjectsDir } from "../service/discover.js";
 import { connectHost } from "../service/link.js";
 import { runService } from "../service/run.js";
 import { readState, serviceDir, statePath } from "../service/state.js";
+import type { SessionBackend, SessionLauncher } from "../session/launcher.js";
+import { isTrusted, requireTrust } from "../session/trust.js";
 import {
   launcherCache,
   scopeAvailable,
@@ -113,7 +115,15 @@ async function runServiceRun(
     log: (msg) => void proc.stdout.write(msg),
     warn: (msg) => void proc.stderr.write(msg),
     caddyDir: this.caddyDir,
+    claudeConfig: this.claudeConfig,
   };
+  // Every session the service starts refuses an untrusted workspace with a
+  // clear "run `claude` there once"; a worktree it creates inherits trust.
+  const launchers = launcherCache();
+  const trustedLaunchers = (backend: SessionBackend): SessionLauncher =>
+    requireTrust(launchers(backend), (cwd) =>
+      isTrusted(this.claudeConfig, cwd),
+    );
   proc.once("SIGTERM", stop);
   proc.once("SIGINT", stop);
   try {
@@ -126,7 +136,7 @@ async function runServiceRun(
       log,
       scan: scanProjectsDir,
       backend: "bg",
-      launcherFor: launcherCache(),
+      launcherFor: trustedLaunchers,
       detail: {
         worktreeList: worktreeListPorcelain,
         identity: readIdentity,

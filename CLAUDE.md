@@ -354,7 +354,8 @@ fails to parse, rather than starting a session that silently lost all its rules.
   ```
 
   `create` runs `git worktree add` (new branch unless it exists), copies the `copy:` files
-  across, assigns the next **`PROJECT_PORT`** (one past the highest already handed to a
+  across, carries Claude Code's workspace trust over from the source checkout (if it has
+  any), assigns the next **`PROJECT_PORT`** (one past the highest already handed to a
   sibling worktree, never below `project.port`), **stamps `worktree.name` + `worktree.port`**
   into the new worktree's `.jarrin.local.yml`, then runs `setup:` in order (stopping on the
   first failure; `--no-setup` skips them). `create` does not launch the stack — nothing does
@@ -438,6 +439,15 @@ re-adopted, gone is marked `stopped` — and leaves the `active` flags alone, wh
 survives a restart. Session names follow `src/session/names.ts`: label `<project>` or
 `<project>/<worktree>`, launcher name with `/` → `--` (neither backend accepts `/`).
 `claudjar attach` reads the same state file and resolves either spelling.
+
+**Workspace trust** (`src/session/trust.ts`). A background session needs its cwd trusted
+by Claude Code (`projects["<path>"].hasTrustDialogAccepted` in `~/.claude.json`, inherited
+from any ancestor), or `claude --bg` fails at once. claudjar never trusts a checkout nobody
+trusted: the service wraps its launchers in `requireTrust`, so starting in an untrusted
+workspace fails up front with "run `claude` there once". The one write is inheritance:
+`createWorktree` marks a new worktree trusted when the checkout it was cut from is, since a
+sibling path inherits nothing. That write is a read-modify-write under `proper-lockfile`
+with a temp-file rename, because live sessions write the same file.
 
 `service install` renders a **system** unit with `User=` (`src/service/unit.ts`) and keeps
 the default `KillMode` on purpose: the session launcher already puts every spawn in its own

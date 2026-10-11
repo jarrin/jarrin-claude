@@ -79,6 +79,7 @@ beforeEach(() => {
     log: (msg) => void log.push(msg),
     warn: (msg) => void log.push(msg),
     caddyDir: join(parent, "caddy"),
+    claudeConfig: join(parent, ".claude.json"),
   };
 });
 
@@ -115,6 +116,38 @@ describe("createWorktree", () => {
       milestone: "plan-claudjar-service",
     });
     expect(log.join("")).toContain("linked milestone: plan-claudjar-service");
+  });
+
+  it("inherits workspace trust from a trusted source checkout", async () => {
+    const config = join(parent, ".claude.json");
+    writeFileSync(
+      config,
+      JSON.stringify({
+        projects: { [repo]: { hasTrustDialogAccepted: true } },
+      }),
+    );
+
+    await createWorktree(repo, { name: "dev" }, deps);
+
+    const path = join(parent, "proj-worktrees", "dev");
+    const saved = JSON.parse(readFileSync(config, "utf8")) as {
+      projects: Record<string, { hasTrustDialogAccepted?: boolean }>;
+    };
+    expect(saved.projects[path]?.hasTrustDialogAccepted).toBe(true);
+    expect(log.join("")).toContain(
+      `trusted the workspace (inherited from ${repo})`,
+    );
+  });
+
+  it("does not trust a worktree cut from an untrusted checkout", async () => {
+    const config = join(parent, ".claude.json");
+    const before = JSON.stringify({ projects: {} });
+    writeFileSync(config, before);
+
+    const result = await createWorktree(repo, { name: "dev" }, deps);
+
+    expect(result.ok).toBe(true);
+    expect(readFileSync(config, "utf8")).toBe(before);
   });
 
   it("prefixes from the source worktree and does not inherit its milestone", async () => {

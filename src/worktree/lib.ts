@@ -24,6 +24,7 @@ import {
 } from "../git.js";
 import type { HookIO } from "../hooks/run.js";
 import { runHooks, worktreeHookEnv } from "../hooks/run.js";
+import { isTrusted, trustWorkspace } from "../session/trust.js";
 import { worktreePathForBranch } from "./merge.js";
 import { nextPort, planWorktree, validateWorktreeName } from "./plan.js";
 import { retireWorktree } from "./remove.js";
@@ -46,6 +47,8 @@ export interface WorktreeDeps extends HookIO {
   readonly run: CommandRunner;
   /** Machine-wide caddy state dir (registry + Caddyfile). */
   readonly caddyDir: string;
+  /** Claude Code's `~/.claude.json`, where a new worktree inherits workspace trust. */
+  readonly claudeConfig: string;
 }
 
 export interface CreateOptions {
@@ -168,6 +171,23 @@ export async function createWorktree(
     mkdirSync(dirname(dest), { recursive: true });
     cpSync(src, dest, { recursive: true });
     out(`  copied ${rel}\n`);
+  }
+
+  //    Inherit Claude Code's workspace trust from the current worktree: the new
+  //    path is a sibling, not a child, so it starts untrusted and a background
+  //    session there would fail. A checkout nobody trusted passes nothing on.
+  if (
+    isTrusted(deps.claudeConfig, currentRoot) &&
+    !isTrusted(deps.claudeConfig, plan.path)
+  ) {
+    try {
+      if (await trustWorkspace(deps.claudeConfig, plan.path))
+        out(`  trusted the workspace (inherited from ${currentRoot})\n`);
+    } catch (err) {
+      deps.warn(
+        `  ! could not mark the workspace trusted: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
   }
 
   // 3. Assign this worktree a PROJECT_PORT: one past the highest already handed

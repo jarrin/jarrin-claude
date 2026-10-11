@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import type { CommandContext } from "@stricli/core";
 
+import { claudeConfigPath } from "./session/trust.js";
+
 /**
  * Application context injected into every command. stricli binds this as `this`
  * inside a command's `func`, so all process/stdout/env access flows through it —
@@ -32,6 +34,11 @@ export interface LocalContext extends CommandContext {
    * Claude config, and nothing here is symlinked from the repo.
    */
   readonly caddyDir: string;
+  /**
+   * Claude Code's own config, which holds workspace trust —
+   * `$CLAUDE_CONFIG_DIR/.claude.json` or `~/.claude.json`.
+   */
+  readonly claudeConfig: string;
 }
 
 export function buildContext(proc: NodeJS.Process): LocalContext {
@@ -41,5 +48,11 @@ export function buildContext(proc: NodeJS.Process): LocalContext {
     proc.env.JARRIN_SKILLS_DIR ?? join(homedir(), ".claude", "skills");
   const caddyDir =
     proc.env.JARRIN_CADDY_DIR ?? join(homedir(), ".claudjar", "caddy");
-  return { process: proc, rulesDir, skillsDir, caddyDir };
+  return {
+    process: proc,
+    rulesDir,
+    skillsDir,
+    caddyDir,
+    claudeConfig: claudeConfigPath(proc.env),
+  };
 }

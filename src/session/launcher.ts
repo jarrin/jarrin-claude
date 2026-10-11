@@ -23,6 +23,8 @@ import { spawnSync } from "node:child_process";
  *
  * Workspace trust is not handled here: `claude --bg` in an untrusted directory
  * fails fast with "Workspace not trusted", which surfaces as a start error.
+ * `requireTrust` (`./trust.ts`) wraps a launcher to refuse such a start up
+ * front with instructions; the service uses that wrapper.
  */
 
 export interface ProcResult {
