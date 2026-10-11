@@ -430,6 +430,15 @@ is a direct child whose `.git` is a **directory**; linked worktrees (`.git` is a
 `~/.claudjar/service/state.json` (`JARRIN_SERVICE_DIR` overrides); a rescan re-derives the
 project list from disk and carries over only what disk cannot tell (`active`, `sessions`).
 
+`open-project` / `close-project` drive the session state machine in `src/service/sessions.ts`:
+open marks the project active and starts (or adopts) its session through the launcher; close
+stops it and clears the flag; a failed start or stop leaves the state untouched. On start the
+service reconciles recorded sessions against the launcher's list — still running is
+re-adopted, gone is marked `stopped` — and leaves the `active` flags alone, which is what
+survives a restart. Session names follow `src/session/names.ts`: label `<project>` or
+`<project>/<worktree>`, launcher name with `/` → `--` (neither backend accepts `/`).
+`claudjar attach` reads the same state file and resolves either spelling.
+
 `service install` renders a **system** unit with `User=` (`src/service/unit.ts`) and keeps
 the default `KillMode` on purpose: the session launcher already puts every spawn in its own
 `systemd-run --user --scope`, so sessions survive a unit restart. That scope needs the

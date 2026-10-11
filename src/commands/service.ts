@@ -12,6 +12,7 @@ import { scanProjectsDir } from "../service/discover.js";
 import { connectHost } from "../service/link.js";
 import { runService } from "../service/run.js";
 import { readState, serviceDir, statePath } from "../service/state.js";
+import { launcherCache } from "../session/launcher.js";
 import type { Passwd } from "../service/unit.js";
 import {
   parsePasswd,
@@ -86,6 +87,8 @@ async function runServiceRun(
       signal: controller.signal,
       log,
       scan: scanProjectsDir,
+      backend: "bg",
+      launcherFor: launcherCache(),
       ...(monitor
         ? {
             connect: (handlers) =>
@@ -299,7 +302,14 @@ const runCommand = buildCommand({
       "dials the web interface (/ws/host, authenticated by monitor.token), " +
       "publishes the projects and re-publishes them when a rescan changes them, " +
       "and runs the open / close commands sent from there; the link reconnects " +
-      "on its own and never stops the service.",
+      "on its own and never stops the service.\n\n" +
+      "Opening a project marks it active and starts a background Claude session " +
+      "in its root (`claude --bg`, Remote Control on, named after the project); " +
+      "closing it stops that session. Both are recorded in the state file. On " +
+      "start the service reconciles the recorded sessions with `claude agents`: " +
+      "one still running is re-adopted, one that is gone is marked stopped, and " +
+      "the active flags survive. Bring a session to the terminal with " +
+      "`claudjar attach <project>`.",
   },
 });
 

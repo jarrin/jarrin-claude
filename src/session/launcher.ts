@@ -328,3 +328,21 @@ function tmuxLauncher(
     },
   };
 }
+
+/**
+ * One launcher per backend, created on first use — so the `systemd-run` scope
+ * probe runs once per process, not once per command.
+ */
+export function launcherCache(
+  opts: Omit<LauncherOptions, "backend"> = {},
+): (backend: SessionBackend) => SessionLauncher {
+  const made = new Map<SessionBackend, SessionLauncher>();
+  return (backend) => {
+    let launcher = made.get(backend);
+    if (!launcher) {
+      launcher = createLauncher({ ...opts, backend });
+      made.set(backend, launcher);
+    }
+    return launcher;
+  };
+}

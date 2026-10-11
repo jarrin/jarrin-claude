@@ -2,18 +2,14 @@ import { renameSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { HostCommand } from "../../monitor/shared/protocol.js";
+import type { SessionBackend, SessionLauncher } from "../session/launcher.js";
 import type { ServiceConf } from "./conf.js";
 import type { DirEntry, Project } from "./discover.js";
 import { discoverProjects } from "./discover.js";
 import type { CommandOutcome, HostLink } from "./link.js";
+import { closeProject, openProject, reconcileSessions } from "./sessions.js";
 import type { ProjectState, ServiceState } from "./state.js";
-import {
-  emptyState,
-  mergeDiscovery,
-  readState,
-  setActive,
-  writeState,
-} from "./state.js";
+import { emptyState, mergeDiscovery, readState, writeState } from "./state.js";
 
 /**
  * The service's foreground loop: discover the projects, record them in the state
@@ -38,6 +34,9 @@ export interface RunOptions {
   readonly log: (line: string) => void;
   readonly scan: (projectsDir: string) => DirEntry[];
   readonly now?: () => Date;
+  /** Backend for the sessions an `open-project` starts. */
+  readonly backend: SessionBackend;
+  readonly launcherFor: (backend: SessionBackend) => SessionLauncher;
   /** Dial the web interface; absent when the conf has no `monitor:`. */
   readonly connect?: (handlers: LinkHandlers) => HostLink;
 }
@@ -93,20 +92,40 @@ export async function runService(opts: RunOptions): Promise<void> {
   let state = loadState(opts.stateFile, log);
   let previous: Project[] | null = null;
 
+  // Re-adopt what survived the restart before anything can act on it.
+  const reconciled = reconcileSessions(state, opts.launcherFor);
+  state = reconciled.state;
+  for (const note of reconciled.notes) log(note);
+  const running = state.sessions.filter((s) => s.status === "running");
+  if (running.length > 0)
+    log(
+      `${String(running.length)} session(s) running: ${running.map((s) => s.label).join(", ")}`,
+    );
+
   // Commands and scans share `state`; both run on this one event loop, and
   // neither awaits between reading and writing it, so they cannot interleave.
+  // The launcher is synchronous for the same reason (a `claude --bg` returns
+  // once the daemon has the session, in about a second).
   const handle = (command: HostCommand): Promise<CommandOutcome> => {
-    const active = command.type === "open-project";
-    const changed = setActive(state, command.project, active, now());
-    if (!changed)
-      return Promise.resolve({
-        ok: false,
-        error: `no project named '${command.project}'`,
-      });
-    state = changed.state;
+    const open = command.type === "open-project";
+    const deps = {
+      backend: opts.backend,
+      launcherFor: opts.launcherFor,
+      now: now(),
+    };
+    const res = open
+      ? openProject(state, command.project, deps)
+      : closeProject(state, command.project, deps);
+    if (!res.ok) {
+      log(`${command.type} ${command.project}: ${res.error}`);
+      return Promise.resolve(res);
+    }
+    state = res.state;
     writeState(opts.stateFile, state);
-    log(`project ${active ? "opened" : "closed"}: ${command.project}`);
-    link?.projectState(changed.project);
+    log(
+      `project ${open ? "opened" : "closed"}: ${command.project} (${res.note})`,
+    );
+    link?.projectState(res.project);
     return Promise.resolve({ ok: true });
   };
   const link = opts.connect?.({

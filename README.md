@@ -179,6 +179,7 @@ subcommands:
 | `claudjar worktree remove <n>`  | Remove a worktree: stop its stack, delete the directory, safely delete the branch (`--no-teardown` skips the stop)                               |
 | `claudjar worktree list`        | List this repo's git worktrees                                                                                                                   |
 | `claudjar goto <n>`             | Switch to a worktree by starting `claude` there; `main` goes back to the original checkout                                                       |
+| `claudjar attach <n>`           | Bring a background session the service started to this terminal (`--list` shows them all with their status)                                      |
 | `claudjar start` / `stop`       | Bring this worktree's `project:` stack up / down (`PROJECT_PORT` set) — no-op in the main checkout                                               |
 | `claudjar caddy up` / `down`    | Start / stop the machine-wide caddy on host ports 80 + 443 (one container serves every registered project)                                       |
 | `claudjar caddy join` / `leave` | Register / deregister this checkout's `<slug>.localhost` route (worktrees register themselves on create)                                         |
@@ -468,9 +469,21 @@ exits.
 With `monitor:` set, the service dials the web interface at `/ws/host` — outbound, like the
 loops, so no port opens on this machine. It publishes its projects, re-publishes them when a
 rescan changes them, and runs the commands sent from the UI's **hosts** tab (`open-project` /
-`close-project`, which set the project's `active` flag in `state.json`). The link reconnects on
-its own and never stops the service; each reconnect's hello carries the current project list,
-so nothing sent while it was down is lost.
+`close-project`). The link reconnects on its own and never stops the service; each reconnect's
+hello carries the current project list, so nothing sent while it was down is lost.
+
+**Opening a project** marks it active and starts a background Claude session in its root —
+`claude --bg` with Remote Control on, so it shows up in the Claude app — named after the
+project; a session already running under that name is adopted, not started twice. **Closing**
+stops it and clears the flag. Both are recorded in `state.json`, and on start the service
+reconciles them with the launcher: a session that is still running is re-adopted, one that is
+gone is marked stopped, and the active flags survive the restart. A failed start (an untrusted
+workspace, say) fails the command and leaves the project closed.
+
+`claudjar attach --list` lists those sessions with their live status; `claudjar attach <name>`
+brings one to the terminal (`claude attach …`, or `tmux attach-session` for the tmux fallback).
+Names are `<project>` and `<project>/<worktree>`; the launcher sees `/` as `--`, since neither
+backend accepts `/` in a session name, and `attach` takes either spelling.
 
 `sudo claudjar service install` writes `/etc/systemd/system/claudjar.service`, a system unit
 with `User=` from the conf, then enables and restarts it, printing every privileged command

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { ProjectInfo } from "../../monitor/shared/protocol.js";
+import { fakeLauncher } from "../session/fake-launcher.js";
 import type { Project } from "./discover.js";
 import type { HostLink } from "./link.js";
 import { runService } from "./run.js";
@@ -82,6 +83,8 @@ describe("runService", () => {
       intervalMs: 1000,
       once: true,
       signal: new AbortController().signal,
+      backend: "bg",
+      launcherFor: () => fakeLauncher(),
       log: (l) => lines.push(l),
       scan: () => [
         {
@@ -117,6 +120,8 @@ describe("runService", () => {
       intervalMs: 1000,
       once: true,
       signal: new AbortController().signal,
+      backend: "bg",
+      launcherFor: () => fakeLauncher(),
       log: (l) => lines.push(l),
       scan: () => [],
     });
@@ -139,7 +144,10 @@ describe("runService", () => {
       },
     };
     const controller = new AbortController();
+    const launcher = fakeLauncher();
     const run = runService({
+      backend: "bg",
+      launcherFor: () => launcher,
       conf: { projectsDir: "/p", user: "u", monitor: null },
       stateFile,
       intervalMs: 60_000,
@@ -165,11 +173,17 @@ describe("runService", () => {
     expect(changed.at(-1)).toMatchObject({ name: "a", active: true });
     expect(readState(stateFile).projects[0]?.active).toBe(true);
     expect(h.projects()[0]?.active).toBe(true);
+    expect(launcher.calls).toEqual(["start a /p/a"]);
+    expect(readState(stateFile).sessions).toMatchObject([
+      { label: "a", name: "a", status: "running" },
+    ]);
 
     expect(await h.onCommand({ type: "close-project", project: "a" })).toEqual({
       ok: true,
     });
     expect(readState(stateFile).projects[0]?.active).toBe(false);
+    expect(readState(stateFile).sessions).toEqual([]);
+    expect(launcher.calls).toEqual(["start a /p/a", "stop a"]);
 
     expect(
       await h.onCommand({ type: "open-project", project: "nope" }),

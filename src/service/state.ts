@@ -15,13 +15,21 @@ import type { Project } from "./discover.js";
 
 export const STATE_VERSION = 1;
 
+export type SessionRecordStatus = "running" | "stopped";
+
 export interface SessionRecord {
   /** The launcher's session name (see `src/session/launcher.ts`). */
   readonly name: string;
+  /** The name people use: `<project>` or `<project>/<worktree>` (`src/session/names.ts`). */
+  readonly label: string;
   readonly project: string;
+  /** The worktree's name; empty for the project's main checkout. */
+  readonly worktree: string;
   readonly cwd: string;
   readonly backend: "bg" | "tmux";
   readonly startedAt: string;
+  /** Last known liveness; reconciled against the launcher on service start. */
+  readonly status: SessionRecordStatus;
 }
 
 export interface ProjectState {
@@ -78,10 +86,13 @@ function toSession(v: unknown): SessionRecord | null {
     return null;
   return {
     name: v.name,
+    label: typeof v.label === "string" ? v.label : v.name,
     project: v.project,
+    worktree: typeof v.worktree === "string" ? v.worktree : "",
     cwd: v.cwd,
     backend: v.backend,
     startedAt: typeof v.startedAt === "string" ? v.startedAt : "",
+    status: v.status === "stopped" ? "stopped" : "running",
   };
 }
 
@@ -130,7 +141,7 @@ export function writeState(path: string, state: ServiceState): void {
 /**
  * Fold a fresh discovery into the previous state: the project list follows disk,
  * a project's `active` flag carries over by name, and sessions are kept as-is
- * (reconciling them against the launcher is the session stage's job).
+ * (`src/service/sessions.ts` reconciles them against the launcher).
  */
 export function mergeDiscovery(
   prev: ServiceState,

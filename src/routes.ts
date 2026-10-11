@@ -2,6 +2,7 @@ import { buildApplication, buildRouteMap } from "@stricli/core";
 import type { Application, CommandContext } from "@stricli/core";
 
 import { apiRoutes } from "./commands/api.js";
+import { attachCommand } from "./commands/attach.js";
 import { caddyRoutes } from "./commands/caddy.js";
 import type { LocalContext } from "./context.js";
 import { gotoCommand } from "./commands/goto.js";
@@ -44,6 +45,7 @@ export function buildRoutes(hideInternal: boolean) {
       install: installCommand,
       worktree: worktreeRoutes,
       goto: gotoCommand,
+      attach: attachCommand,
       start: startCommand,
       stop: stopCommand,
       caddy: caddyRoutes,

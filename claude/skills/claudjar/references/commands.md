@@ -154,6 +154,23 @@ ARGUMENTS
   name  Worktree name (branch or directory), or 'main' for the original checkout
 ```
 
+### claudjar attach
+
+```
+USAGE
+  claudjar attach [--list] [<name>]
+  claudjar attach --help
+
+Reads the sessions the claudjar service recorded (~/.claudjar/service/state.json; JARRIN_SERVICE_DIR overrides) and runs the launcher's attach command for the named one — `claude attach <id>` for a background session, `tmux attach-session` for the tmux fallback. Names are `<project>` for a project's session and `<project>/<worktree>` for a worktree's; the launcher's own name (`<project>--<worktree>`) is accepted too. Without a name, or with --list, it lists the sessions and whether each is running. An unknown or stopped name fails and lists the running ones.
+
+FLAGS
+     [--list]  List the service's sessions with their status [default = false]
+  -h  --help   Print help information and exit
+
+ARGUMENTS
+  [name]  Session name: <project> or <project>/<worktree>
+```
+
 ### claudjar start
 
 ```
@@ -327,6 +344,8 @@ USAGE
   claudjar service run --help
 
 Reads /etc/claudjar.conf (CLAUDJAR_CONF overrides), logs the projects found under projects_dir — direct children that are a git repo's main checkout; linked worktrees and <repo>-worktrees/ folders are excluded — records them in ~/.claudjar/service/state.json, and rescans until SIGTERM / SIGINT. Must run as the conf's `user`. With `monitor:` set, it dials the web interface (/ws/host, authenticated by monitor.token), publishes the projects and re-publishes them when a rescan changes them, and runs the open / close commands sent from there; the link reconnects on its own and never stops the service.
+
+Opening a project marks it active and starts a background Claude session in its root (`claude --bg`, Remote Control on, named after the project); closing it stops that session. Both are recorded in the state file. On start the service reconciles the recorded sessions with `claude agents`: one still running is re-adopted, one that is gone is marked stopped, and the active flags survive. Bring a session to the terminal with `claudjar attach <project>`.
 
 FLAGS
      [--once]      Scan once, log the projects, and exit [default = false]
