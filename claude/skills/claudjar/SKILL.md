@@ -120,7 +120,9 @@ also keeps each milestone's progress (issues, each with the session's `<<<STEPS`
 so a restarted loop resumes where it stopped, and can pause the loop or send input into
 the running session. Loop sessions only ever **commit** — never release,
 tag, bump, or push. The loop `git push`es the branch itself only when it finishes cleanly
-(every issue closed; `--no-push` opts out); otherwise the push is the user's. Details in the jarrin-claude README, *Looping a
+(every issue closed; `--no-push` opts out); otherwise the push is the user's.
+`--allow-prod` lets that run's sessions release, deploy, use `sudo` and edit prod's `.env`
+when an issue calls for it — still the user's flag to pass, never one to add yourself. Details in the jarrin-claude README, *Looping a
 milestone*.
 
 **`release` refuses more than it does.** It runs only on `main` with a clean tree, and

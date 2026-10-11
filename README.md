@@ -342,7 +342,13 @@ are worked too.
   asks for one. The loop's output is a run of local commits. When it **finishes cleanly**
   — every milestone drained, no issue blocked or awaiting an answer, not stopped by
   `--max-issues` — the loop itself runs `git push` for the checked-out branch (`--no-push`
-  opts out). Otherwise it pushes nothing and leaves that to you; releasing is always yours.
+  opts out). Otherwise it pushes nothing and leaves that to you; releasing is yours.
+- **`--allow-prod` lifts that, per run.** Sessions are then told they may release (the repo's
+  own release command, with whatever tag, bump and push it does), deploy, use `sudo`, and
+  edit the production host's `.env` — when the issue or the repo's standing rules call for
+  it, after a green gate and a commit, with the evidence in the issue comment. It is not a
+  blanket licence: no force-push, no push outside a release, and anything destructive the
+  issue does not name is still asked on the monitor. Off by default; opt in per run.
 - **The loop needs the monitor.** Its progress and questions live on the claudjar monitor
   (below), so `--monitor <url>` or `CLAUDJAR_MONITOR_URL` is required, and the loop waits for
   the monitor's `welcome` — the stored state of its milestones — before it starts anything.

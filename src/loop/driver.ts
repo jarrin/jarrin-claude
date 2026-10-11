@@ -55,6 +55,8 @@ export interface LoopOptions {
   readonly maxFailures: number;
   /** Longest wait between checks while paused or waiting on answers. */
   readonly pollMs: number;
+  /** `--allow-prod`: sessions may release, deploy, use sudo and edit prod's `.env`. */
+  readonly allowProd?: boolean;
 }
 
 export interface LoopSummary {
@@ -79,7 +81,27 @@ export function parseQuestion(resultText: string): string | null {
 const stashLabel = (issue: Issue): string =>
   `claudjar loop #${String(issue.number)}`;
 
-export function issuePrompt(repo: string, issue: Issue): string {
+const LOCAL_ONLY = [
+  "- Keep everything local: commit only. Never release (`claudjar release`, a version bump,",
+  "  a tag, a forge release), never push — even if the issue asks for it. Pushing the result",
+  "  is the loop's job once every issue is done; say in your issue comment if a release is due.",
+];
+
+const PROD_ALLOWED = [
+  "- PRODUCTION IS ALLOWED for this run (`claudjar loop --allow-prod`): when the issue or the",
+  "  repo's standing rules call for it, release (the repo's own release command, which may tag,",
+  "  bump and push as part of it), deploy, use sudo, and edit the production host's `.env`.",
+  "  Do it only for what the issue needs, after the gate is green and the work is committed,",
+  "  and put the evidence (the version live, what changed in `.env`) in the issue comment.",
+  "  Never force-push, never push a branch outside a release, and still ASK before anything",
+  "  destructive or irreversible the issue does not name (deleting data, dropping volumes).",
+];
+
+export function issuePrompt(
+  repo: string,
+  issue: Issue,
+  allowProd = false,
+): string {
   return [
     `Continue ${String(issue.number)}`,
     "",
@@ -101,9 +123,7 @@ export function issuePrompt(repo: string, issue: Issue): string {
     "",
     "- Finished and the repo's gate is green: commit per the standing rules, comment the",
     "  outcome on the issue, then close it. Closing is how the loop knows it is done.",
-    "- Keep everything local: commit only. Never release (`claudjar release`, a version bump,",
-    "  a tag, a forge release), never push — even if the issue asks for it. Pushing the result",
-    "  is the loop's job once every issue is done; say in your issue comment if a release is due.",
+    ...(allowProd ? PROD_ALLOWED : LOCAL_ONLY),
     "- A choice the standing rules give to the user (a surprising commit sweep, a destructive",
     "  step, a decision only the user can make): ask it. Ask as early as you can, leave the",
     "  issue OPEN, and make your final message end with exactly this block, then stop:",
@@ -250,7 +270,12 @@ export async function runLoop(
       await deps.sleep(waitMs);
       outcome = outcome.sessionId
         ? await deps.run(resumePrompt(issue), outcome.sessionId, issue, watch)
-        : await deps.run(issuePrompt(opts.repo, issue), null, issue, watch);
+        : await deps.run(
+            issuePrompt(opts.repo, issue, opts.allowProd),
+            null,
+            issue,
+            watch,
+          );
     }
 
     if (await deps.gitea.isClosed(issue.number)) {
@@ -305,7 +330,12 @@ export async function runLoop(
     );
     const stop = entry.sessionId
       ? await work(issue, milestone, restartPrompt(issue), entry.sessionId)
-      : await work(issue, milestone, issuePrompt(opts.repo, issue), null);
+      : await work(
+          issue,
+          milestone,
+          issuePrompt(opts.repo, issue, opts.allowProd),
+          null,
+        );
     if (stop) return summary(stop);
   }
 
@@ -366,7 +396,7 @@ export async function runLoop(
       const stop = await work(
         issue,
         milestone,
-        issuePrompt(opts.repo, issue),
+        issuePrompt(opts.repo, issue, opts.allowProd),
         null,
       );
       if (stop) return summary(stop);

@@ -33,6 +33,7 @@ interface LoopFlags {
   readonly model?: string;
   readonly permissionMode: string;
   readonly push: boolean;
+  readonly allowProd: boolean;
   readonly monitor?: string;
 }
 
@@ -267,6 +268,7 @@ async function runLoopCommand(
         maxIssues: flags.maxIssues,
         maxFailures: flags.maxFailures,
         pollMs: 60_000,
+        allowProd: flags.allowProd,
       },
     );
     log(`\nloop finished: ${summary.stopReason}`);
@@ -362,6 +364,12 @@ export const loopCommand = buildCommand({
           "`git push` when the loop finishes cleanly (every issue closed, none blocked or awaiting)",
         default: true,
       },
+      allowProd: {
+        kind: "boolean",
+        brief:
+          "Let sessions release, deploy, use sudo and edit prod's .env when the issue calls for it (default: commit only)",
+        default: false,
+      },
       monitor: {
         kind: "parsed",
         parse: String,
@@ -388,7 +396,8 @@ export const loopCommand = buildCommand({
       "there resumes that session. From the monitor the loop can also be paused (the " +
       "current session finishes, no new one starts) and sent input, which reaches the " +
       "running session as a user message. An issue the session leaves open without a " +
-      "question (blocked) is skipped. Sessions only commit, never release or push; a " +
+      "question (blocked) is skipped. Sessions only commit, never release or push — unless " +
+      "--allow-prod, which lets them release, deploy, use sudo and edit prod's .env; a " +
       "clean finish (every issue closed) pushes the checked-out branch unless --no-push. " +
       "Loops may run in parallel as long as no two share a worktree or a milestone. " +
       "Stream logs go to ~/.claudjar/loop/<owner>__<name>/.",

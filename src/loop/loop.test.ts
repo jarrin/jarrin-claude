@@ -11,7 +11,7 @@ import {
   backlogRepo,
   loopLocks,
 } from "../commands/loop.js";
-import { parseQuestion, runLoop } from "./driver.js";
+import { issuePrompt, parseQuestion, runLoop } from "./driver.js";
 import type { LoopStore, RunClaude } from "./driver.js";
 import {
   LOOP_MARKER_PREFIX,
@@ -126,6 +126,21 @@ describe("giteaClient", () => {
     );
     const issues = await client.openIssues({ id: 5, title: "m" });
     expect(issues.map((i) => i.number)).toEqual([1]);
+  });
+});
+
+describe("issuePrompt", () => {
+  it("keeps a session local unless --allow-prod", () => {
+    const local = issuePrompt("o/r", issue(7));
+    expect(local).toContain("commit only. Never release");
+    expect(local).not.toContain("PRODUCTION IS ALLOWED");
+  });
+
+  it("lets a session release, deploy, sudo and edit .env with --allow-prod", () => {
+    const prod = issuePrompt("o/r", issue(7), true);
+    expect(prod).toContain("PRODUCTION IS ALLOWED");
+    expect(prod).toMatch(/release.*deploy, use sudo.*`\.env`/s);
+    expect(prod).not.toContain("commit only. Never release");
   });
 });
 
