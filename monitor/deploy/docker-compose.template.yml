@@ -17,6 +17,9 @@ services:
       # CLAUDJAR_MONITOR_TOKEN, services set it as monitor.token in /etc/claudjar.conf.
       # Empty = every loop, service and live-log follower is turned away.
       NUXT_AGENT_TOKEN: ${CLAUDJAR_MONITOR_TOKEN:-}
+      # Secret Gitea signs webhook deliveries to /api/webhook/gitea with; set the
+      # same value as the webhook's secret. Empty = every delivery is refused.
+      NUXT_WEBHOOK_SECRET: ${CLAUDJAR_WEBHOOK_SECRET:-}
       # Browser login: OIDC code flow against the homeserver auth app (auth.jarrin.nl).
       # The client is registered by the `auth:` block below; its secret is the same
       # AUTH_CLAUDJAR_SECRET the auth container reads. Both live in ~/.server.env.

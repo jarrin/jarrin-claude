@@ -9,6 +9,7 @@ import type { LocalContext } from "../context.js";
 import type { ServiceConf } from "../service/conf.js";
 import { ConfError, confPath, readConf } from "../service/conf.js";
 import { statusPorcelain, worktreeListPorcelain } from "../git.js";
+import { runStackAt } from "../project/stack.js";
 import { giteaClient, resolveAuth } from "../loop/gitea.js";
 import { readIdentity } from "../service/detail.js";
 import { scanProjectsDir } from "../service/discover.js";
@@ -179,6 +180,29 @@ async function runServiceRun(
           );
         },
       },
+      // The todo watcher needs the forge, and its loops need the monitor.
+      ...(auth && monitor
+        ? {
+            todo: {
+              milestones: (repo) => giteaClient(auth, repo).openMilestones(),
+              createMilestone: (repo, title, description) =>
+                giteaClient(auth, repo).createMilestone(title, description),
+              openIssues: (repo, milestone) =>
+                giteaClient(auth, repo).openIssues(milestone),
+              stack: async (cwd, which) => {
+                const ran = await runStackAt(
+                  cwd,
+                  which,
+                  wtDeps.run,
+                  wtDeps.warn,
+                );
+                return ran && ran.status !== 0
+                  ? `\`${ran.command}\` exited ${String(ran.status)}`
+                  : null;
+              },
+            },
+          }
+        : {}),
       ...(monitor
         ? {
             connect: (handlers) =>

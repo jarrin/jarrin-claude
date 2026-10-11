@@ -522,6 +522,20 @@ before anything changes:
 - `resume-loop` takes the milestone id from the loop record, else looks the stamped title up
   in the open milestones.
 
+**The todo watcher** (`src/service/todo.ts`, pure over `TodoDeps`). For every active
+project with a backlog repo, `tickTodo` makes sure the `todo` milestone exists. With open
+tickets and no live loop on it, it creates the `todo` worktree if needed, runs the stack's
+`start` (`runStackAt` in `src/project/stack.ts`) and spawns a loop through the same
+`startLoop` as `create-worktree`. It starts a loop only for **new** work: a ticket the last
+loop was not given, or a forge event since. Otherwise a blocked ticket would restart a loop
+on every rescan. After `TODO_IDLE_MS` (15 min) with nothing to do, it runs the stack's
+`exit`. The per-project `TodoMemory` is in-memory only, so a restart checks every project
+once. `run.ts` ticks on every rescan, on `open-project`, and on a `forge-event`. It never
+runs two ticks for one project at once: a poke that arrives mid-tick runs one more tick
+afterwards. Forge events come from Gitea webhooks: `/api/webhook/gitea` on the monitor
+checks `X-Gitea-Signature` (HMAC-SHA256 under `NUXT_WEBHOOK_SECRET`, `utils/webhook.ts`),
+and `Hub.forgeEvent` relays the gist to every online host with a project on that repo.
+
 **Loop abort.** `ControlAction` has `stop`. The loop, and a first SIGINT / SIGTERM, abort
 the same way:
 

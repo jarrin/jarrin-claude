@@ -45,6 +45,11 @@ export interface MilestoneSource {
   openMilestones(): Promise<MilestoneCounts[]>;
 }
 
+/** Creating a milestone: the service's todo watcher makes its own. */
+export interface MilestoneWriter {
+  createMilestone(title: string, description: string): Promise<Milestone>;
+}
+
 type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
 
 const PAGE = 50;
@@ -97,7 +102,7 @@ export function giteaClient(
   auth: GiteaAuth,
   repo: string,
   fetchImpl: FetchFn = fetch,
-): GiteaClient & MilestoneSource {
+): GiteaClient & MilestoneSource & MilestoneWriter {
   trustSystemCAs();
   const base = `${auth.host}/api/v1/repos/${repo}`;
 
@@ -139,6 +144,17 @@ export function giteaClient(
   }
 
   return {
+    async createMilestone(
+      title: string,
+      description: string,
+    ): Promise<Milestone> {
+      const m = toMilestone(
+        await request("POST", "/milestones", { title, description }),
+      );
+      if (!m) throw new Error(`milestone "${title}": unexpected response`);
+      return m;
+    },
+
     async resolveMilestone(ref: string): Promise<Milestone> {
       if (/^\d+$/.test(ref)) {
         const m = toMilestone(await get(`/milestones/${ref}`));

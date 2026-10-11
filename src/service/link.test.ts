@@ -165,6 +165,18 @@ describe("connectHost", () => {
     });
   });
 
+  it("hands a relayed forge event to its handler, sending nothing back", () => {
+    const onForgeEvent = vi.fn();
+    const { sockets } = setup({ onForgeEvent });
+    const s = sockets[0];
+    s?.accept();
+    const sent = s?.sent.length;
+    const event = { repo: "o/r", event: "issues", action: "opened" };
+    s?.receive({ type: "forge-event", event });
+    expect(onForgeEvent).toHaveBeenCalledWith(event);
+    expect(s?.sent.length).toBe(sent);
+  });
+
   it("turns a throwing handler into a failed result", async () => {
     const { sockets } = setup({
       onCommand: () => Promise.reject(new Error("boom")),

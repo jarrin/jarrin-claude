@@ -525,6 +525,22 @@ enabled by its state. The destructive ones ask for confirmation first:
   is still dirty, then runs `claudjar worktree remove` (stack teardown, remove hooks, caddy
   route) and forgets the worktree's records. An unmerged branch is kept.
 
+**The todo worktree.** Every open project with a Gitea backlog repo gets a `todo` milestone,
+created if missing. Each ticket filed there is a single-run instruction. Once one is open, the
+service creates a `todo` worktree (stamped with that milestone), starts its stack
+(`project.commands.start`) and runs `claudjar loop` on the milestone. The loop works each
+ticket in a fresh session and closes it when done. The work lands on the `todo` branch;
+merge it back from the worktree row as usual. A ticket the loop left open (blocked) is not
+retried until a new ticket or a webhook arrives. After 15 minutes with nothing to do, the
+stack is stopped (`project.commands.exit`); the next ticket starts it again.
+
+The service checks on every rescan, but a **Gitea webhook** makes it immediate. On the
+backlog repo, add a webhook: target `https://claudjar.jarrin.nl/api/webhook/gitea`, content
+type `application/json`, the secret from the server's `CLAUDJAR_WEBHOOK_SECRET` (the
+monitor's `NUXT_WEBHOOK_SECRET`), with _Issues_ events. The monitor checks the signature and
+relays a `forge-event` to every host with a project on that repo. It carries only the repo,
+event and action, and the host reads the forge itself.
+
 `claudjar attach --list` lists those sessions with their live status; `claudjar attach <name>`
 brings one to the terminal (`claude attach …`, or `tmux attach-session` for the tmux fallback).
 Names are `<project>` and `<project>/<worktree>`; the launcher sees `/` as `--`, since neither

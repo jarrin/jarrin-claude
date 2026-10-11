@@ -20,6 +20,9 @@ export default defineNuxtConfig({
     // NUXT_AGENT_TOKEN: loops, services and live-log followers must present it.
     // Mandatory: left empty, every one of them is rejected.
     agentToken: "",
+    // NUXT_WEBHOOK_SECRET: the secret Gitea signs webhook deliveries with.
+    // Left empty, /api/webhook/gitea refuses every delivery.
+    webhookSecret: "",
     // NUXT_OIDC_*: the browser login against the homeserver auth app. The
     // callback is fixed at /auth/callback, the redirect_uri registered there.
     oidc: {

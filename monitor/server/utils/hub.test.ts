@@ -412,6 +412,23 @@ describe("Hub hosts", () => {
     });
   });
 
+  it("relays a forge event only to online hosts with that backlog repo", () => {
+    const hub = new Hub(() => 1);
+    const desk: ServerHostMessage[] = [];
+    const laptop: ServerHostMessage[] = [];
+    const away: ServerHostMessage[] = [];
+    const withRepo = { ...proj("a"), backlogRepo: "Jarrin/Repo" };
+    hub.hostHello(hostInfo("desk"), [withRepo], (m) => desk.push(m));
+    hub.hostHello(hostInfo("laptop"), [proj("b")], (m) => laptop.push(m));
+    hub.hostHello(hostInfo("away"), [withRepo], (m) => away.push(m));
+    hub.hostDisconnect("away");
+    const event = { repo: "jarrin/repo", event: "issues", action: "opened" };
+    expect(hub.forgeEvent(event)).toBe(1);
+    expect(desk.at(-1)).toEqual({ type: "forge-event", event });
+    expect(laptop).toEqual([{ type: "host-welcome" }]);
+    expect(away).toEqual([{ type: "host-welcome" }]);
+  });
+
   it("routes a command to the named host only, and its result to every watcher", () => {
     const hub = new Hub(() => 1);
     const desk: ServerHostMessage[] = [];

@@ -29,6 +29,7 @@ describe("isPublicPath", () => {
   it("leaves health, login and the token-authenticated channels public", () => {
     for (const p of [
       "/healthz",
+      "/api/webhook/gitea",
       "/auth/login",
       "/auth/callback?code=x&state=y",
       "/auth/logout",

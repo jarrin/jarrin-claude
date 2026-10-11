@@ -1,5 +1,6 @@
 import { HOST_PATH } from "../../monitor/shared/protocol.js";
 import type {
+  ForgeEvent,
   HostCommand,
   HostInfo,
   HostMessage,
@@ -44,6 +45,8 @@ export interface HostLinkOptions {
   /** The current project list, for the hello on every (re)connect. */
   readonly projects: () => readonly ProjectInfo[];
   readonly onCommand: (command: HostCommand) => Promise<CommandOutcome>;
+  /** A forge webhook the monitor relayed; optional for hosts that ignore them. */
+  readonly onForgeEvent?: (event: ForgeEvent) => void;
   readonly log: (line: string) => void;
   readonly open?: (url: string) => SocketLike;
   readonly reconnectMs?: number;
@@ -110,6 +113,9 @@ export function connectHost(opts: HostLinkOptions): HostLink {
         return;
       case "command":
         void run(msg.id, msg.command);
+        return;
+      case "forge-event":
+        opts.onForgeEvent?.(msg.event);
         return;
     }
   };

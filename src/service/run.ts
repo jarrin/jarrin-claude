@@ -1,7 +1,7 @@
 import { renameSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import type { HostCommand } from "../../monitor/shared/protocol.js";
+import type { ForgeEvent, HostCommand } from "../../monitor/shared/protocol.js";
 import type { SessionBackend, SessionLauncher } from "../session/launcher.js";
 import type { ServiceConf } from "./conf.js";
 import type { DetailDeps } from "./detail.js";
@@ -14,6 +14,8 @@ import type { ProjectState, ServiceState } from "./state.js";
 import { emptyState, mergeDiscovery, readState, writeState } from "./state.js";
 import type { ManageCommand, ManageDeps } from "./manage.js";
 import { manage } from "./manage.js";
+import type { TodoDeps, TodoMemory } from "./todo.js";
+import { freshMemory, tickTodo } from "./todo.js";
 import type { CreateDeps, CreateWorktreeCommand } from "./worktrees.js";
 import { createWorktreeFor, pruneLoops, withCreated } from "./worktrees.js";
 
@@ -28,6 +30,8 @@ import { createWorktreeFor, pruneLoops, withCreated } from "./worktrees.js";
 export interface LinkHandlers {
   readonly projects: () => readonly ProjectState[];
   readonly onCommand: (command: HostCommand) => Promise<CommandOutcome>;
+  /** The monitor relayed a forge webhook for one of this host's backlog repos. */
+  readonly onForgeEvent: (event: ForgeEvent) => void;
 }
 
 export interface RunOptions {
@@ -54,6 +58,14 @@ export interface RunOptions {
       ManageDeps,
       "merge" | "remove" | "dirty" | "worktreeLoopHolder" | "stopLoop"
     >;
+  /**
+   * The todo watcher's forge and stack access (see `todo.ts`); absent when the
+   * host has no Gitea credentials or no monitor for its loops to report to.
+   */
+  readonly todo?: Pick<
+    TodoDeps,
+    "milestones" | "createMilestone" | "openIssues" | "stack"
+  >;
   /** Dial the web interface; absent when the conf has no `monitor:`. */
   readonly connect?: (handlers: LinkHandlers) => HostLink;
 }
@@ -208,6 +220,80 @@ export async function runService(opts: RunOptions): Promise<void> {
     return res.ok ? { ok: true } : res;
   };
 
+  /** Per-project todo watcher memory, and the projects with a tick in flight. */
+  const todoMemory = new Map<string, TodoMemory>();
+  const todoBusy = new Set<string>();
+  /** Pokes that arrived mid-tick; each gets one more tick once it ends. */
+  const todoPending = new Set<string>();
+
+  /**
+   * One todo tick for an open project with a backlog repo. A tick may create a
+   * worktree (minutes), so one already in flight is not doubled: a poke during
+   * it runs another tick once it ends.
+   */
+  const runTodo = (name: string, poke = false): void => {
+    const todo = opts.todo;
+    if (!todo) return;
+    const project = state.projects.find((p) => p.name === name);
+    if (!project?.active || !project.backlogRepo) return;
+    if (todoBusy.has(name)) {
+      if (poke) todoPending.add(name);
+      return;
+    }
+    const memory = todoMemory.get(name) ?? freshMemory;
+    if (poke) todoMemory.set(name, { ...memory, poked: true });
+    todoBusy.add(name);
+    void tickTodo(state, project, todoMemory.get(name) ?? freshMemory, {
+      ...todo,
+      checkouts: (p) => collectWorktrees(p, state, opts.detail),
+      create: opts.worktrees.create,
+      startLoop: opts.worktrees.startLoop,
+      loopHolder: opts.worktrees.loopHolder,
+      isAlive: opts.detail.isAlive,
+      now: () => now().getTime(),
+    })
+      .then((tick) => {
+        todoMemory.set(name, tick.memory);
+        for (const note of tick.notes) log(note);
+        const { loop } = tick;
+        if (loop) {
+          state = {
+            ...state,
+            updatedAt: now().toISOString(),
+            loops: [
+              ...state.loops.filter(
+                (l) =>
+                  !(l.project === loop.project && l.worktree === loop.worktree),
+              ),
+              loop,
+            ],
+          };
+          writeState(opts.stateFile, state);
+        }
+        if (tick.notes.length > 0) return publishDetail(name);
+        return undefined;
+      })
+      .catch((err: unknown) => {
+        log(
+          `todo ${name}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      })
+      .finally(() => {
+        todoBusy.delete(name);
+        if (todoPending.delete(name)) runTodo(name, true);
+      });
+  };
+
+  /** A webhook for `event.repo`: tick every open project whose backlog it is. */
+  const onForgeEvent = (event: ForgeEvent): void => {
+    const repo = event.repo.toLowerCase();
+    for (const p of state.projects)
+      if (p.active && p.backlogRepo.toLowerCase() === repo) {
+        log(`forge event ${event.event}/${event.action} for ${p.name}`);
+        runTodo(p.name, true);
+      }
+  };
+
   const handle = (command: HostCommand): Promise<CommandOutcome> => {
     if (command.type === "refresh-project")
       return publishDetail(command.project);
@@ -238,6 +324,7 @@ export async function runService(opts: RunOptions): Promise<void> {
       `project ${open ? "opened" : "closed"}: ${command.project} (${res.note})`,
     );
     link?.projectState(res.project);
+    if (open) runTodo(command.project);
     // The tab opens on the project-state; its content follows once collected.
     if (open)
       void publishDetail(command.project).catch((err: unknown) => {
@@ -250,6 +337,7 @@ export async function runService(opts: RunOptions): Promise<void> {
   const link = opts.connect?.({
     projects: () => state.projects,
     onCommand: handle,
+    onForgeEvent,
   });
 
   try {
@@ -282,6 +370,7 @@ export async function runService(opts: RunOptions): Promise<void> {
       writeState(opts.stateFile, state);
       link?.publish(state.projects);
       previous = projects;
+      if (!opts.once) for (const p of state.projects) runTodo(p.name);
 
       if (opts.once || opts.signal.aborted) return;
       try {

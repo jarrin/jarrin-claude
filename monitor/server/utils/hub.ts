@@ -6,6 +6,7 @@ import {
 } from "#shared/protocol";
 import type {
   AgentMessage,
+  ForgeEvent,
   Board,
   CommandResult,
   ControlAction,
@@ -208,6 +209,23 @@ export class Hub {
         this.broadcastResult({ id, ok: false, error: "host disconnected" }, p);
       }
     if (h) this.setHost({ ...h, online: false, lastSeen: this.now() });
+  }
+
+  /**
+   * A forge webhook: relay it to every online host with a project whose
+   * backlog repo it names. Returns how many hosts got it.
+   */
+  forgeEvent(event: ForgeEvent): number {
+    const repo = event.repo.toLowerCase();
+    let sent = 0;
+    for (const [host, send] of this.hostSends) {
+      const h = this.hosts.get(host);
+      if (!h?.projects.some((p) => p.backlogRepo.toLowerCase() === repo))
+        continue;
+      send({ type: "forge-event", event });
+      sent++;
+    }
+    return sent;
   }
 
   /** A host collected a project's detail; kept while the project is active. */

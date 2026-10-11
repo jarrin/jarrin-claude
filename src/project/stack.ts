@@ -97,17 +97,32 @@ export interface StackTeardown {
  * usable port, or no `exit` command configured) — deleting a worktree that never
  * ran a stack is not an error.
  */
-export async function stopStackAt(
+export function stopStackAt(
   worktreeRoot: string,
+  run: CommandRunner,
+  warn: (msg: string) => void,
+): Promise<StackTeardown | null> {
+  return runStackAt(worktreeRoot, "exit", run, warn);
+}
+
+/**
+ * Run the worktree's `start` or `exit` command, the way {@link stopStackAt}
+ * describes: from its own stamped config, with its own port. `null` when the
+ * worktree has no stack or no such command.
+ */
+export async function runStackAt(
+  worktreeRoot: string,
+  which: "start" | "exit",
   run: CommandRunner,
   warn: (msg: string) => void,
 ): Promise<StackTeardown | null> {
   const cfg = loadEffectiveConfig(join(worktreeRoot, ".claude")).merged;
   const stack = resolveStack(cfg);
-  if (!stack.active || !stack.exit) return null;
+  const command = stack[which];
+  if (!stack.active || !command) return null;
   // Output goes to stderr, matching runStackCommand.
   const res = await run({
-    command: stack.exit,
+    command,
     cwd: worktreeRoot,
     env: { [PORT_ENV]: String(stack.port) },
     output: "stderr",
@@ -116,7 +131,7 @@ export async function stopStackAt(
   return {
     name: stack.name,
     port: stack.port,
-    command: stack.exit,
+    command,
     status: res.status,
   };
 }

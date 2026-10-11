@@ -9,6 +9,8 @@ import { timingSafeEqual } from "node:crypto";
  *   followers on `/api/live`) cannot do a browser login, so they present the
  *   shared `NUXT_AGENT_TOKEN` instead. The token is mandatory: with none
  *   configured, every process is turned away rather than every process let in.
+ * - **Gitea webhooks** (`/api/webhook/gitea`) are signed with
+ *   `NUXT_WEBHOOK_SECRET` instead (`utils/webhook.ts`).
  */
 
 /** Paths that authenticate themselves (by token) or must stay reachable without a login. */
@@ -17,6 +19,7 @@ const PUBLIC_PATHS = new Set([
   "/ws/agent",
   "/ws/host",
   "/api/live",
+  "/api/webhook/gitea",
 ]);
 
 export function isPublicPath(path: string): boolean {

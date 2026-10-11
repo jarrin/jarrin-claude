@@ -119,6 +119,23 @@ describe("giteaClient", () => {
     expect(urls[1]).toContain("page=2");
   });
 
+  it("creates a milestone with a POST", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const client = giteaClient(auth, "o/r", (url, init) => {
+      calls.push({ url, init });
+      return respond({ id: 9, title: "todo" });
+    });
+    await expect(client.createMilestone("todo", "why")).resolves.toEqual({
+      id: 9,
+      title: "todo",
+    });
+    expect(calls[0]?.url).toMatch(/\/repos\/o\/r\/milestones$/);
+    expect(calls[0]?.init.method).toBe("POST");
+    expect(calls[0]?.init.body).toBe(
+      JSON.stringify({ title: "todo", description: "why" }),
+    );
+  });
+
   it("lists open milestones with their issue counts", async () => {
     const urls: string[] = [];
     const client = giteaClient(auth, "o/r", (url) => {

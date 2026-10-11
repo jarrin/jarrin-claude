@@ -68,6 +68,7 @@ side, because the CLI and the server share one wire protocol.
 | WebSocket routes: `/ws/agent` (loops), `/ws/host` (services) and `/ws/watch` (browsers) | `monitor/server/routes/ws/` |
 | Auth: path policy, token check, browser gate (pure, tested); the OIDC flow; the HTTP middleware | `monitor/server/utils/auth.ts`, `monitor/server/utils/oidc.ts`, `monitor/server/middleware/auth.ts`, `monitor/server/routes/auth/` |
 | Service-side host client (project publishing, commands) | `src/service/link.ts`, wired in `src/service/run.ts` |
+| Gitea webhooks: `/api/webhook/gitea` (signature check, `NUXT_WEBHOOK_SECRET`) → `Hub.forgeEvent` → `forge-event` to hosts on that backlog repo → the service's todo watcher | `monitor/server/routes/api/webhook/gitea.post.ts`, `monitor/server/utils/webhook.ts`, `src/service/todo.ts` |
 | UI state folding + notification rules (pure, tested) | `monitor/app/utils/instances.ts` |
 | UI | `monitor/app/app.vue`, `monitor/app/components/` |
 | Log entries: one component per tool / line kind, all rendering through the base `log/LogRow.vue` (time, issue, icon, action, title, `inline-result` slot, collapsible body). `log/registry.ts` maps a route from `utils/tools.ts` (`routeTool`: built-in kind, `mcp/<server>/<resource>/<verb>`, then `mcp/gitea`, `mcp`, `default`) to its component — add a tool by adding a route and a component | `monitor/app/components/log/` |

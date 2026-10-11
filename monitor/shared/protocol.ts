@@ -420,6 +420,20 @@ export type HostMessage =
   | { readonly type: "project-detail"; readonly detail: ProjectDetail }
   | { readonly type: "command-result"; readonly result: CommandResult };
 
+/**
+ * A forge webhook the monitor received (`/api/webhook/gitea`), relayed to the
+ * hosts with a project whose backlog repo it names. Deliberately thin: the host
+ * re-reads the forge itself, so the event only says *something changed*.
+ */
+export interface ForgeEvent {
+  /** `owner/name`. */
+  readonly repo: string;
+  /** The forge's event name (`X-Gitea-Event`): `issues`, `issue_comment`, … */
+  readonly event: string;
+  /** The payload's `action` (`opened`, `milestoned`, …); empty when it has none. */
+  readonly action: string;
+}
+
 /** Server → host. */
 export type ServerHostMessage =
   | { readonly type: "host-welcome" }
@@ -427,7 +441,8 @@ export type ServerHostMessage =
       readonly type: "command";
       readonly id: string;
       readonly command: HostCommand;
-    };
+    }
+  | { readonly type: "forge-event"; readonly event: ForgeEvent };
 
 /** A host as watchers see it; an offline host keeps its last project list. */
 export interface HostView extends HostInfo {
@@ -561,3 +576,4 @@ export const AGENT_PATH = "/ws/agent";
 export const WATCH_PATH = "/ws/watch";
 export const HOST_PATH = "/ws/host";
 export const LIVE_PATH = "/api/live";
+export const WEBHOOK_PATH = "/api/webhook/gitea";
