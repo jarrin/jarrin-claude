@@ -28,7 +28,11 @@ side, because the CLI and the server share one wire protocol.
   sends it `open-project` / `close-project`. Each active project gets its own tab: open
   milestones of its backlog repo and its worktrees (port, linked milestone, session, linked
   loop), sent by the host as `project-detail` on open and on `refresh-project` (sent each time
-  the tab is shown). Closing the project removes the tab.
+  the tab is shown). Closing the project removes the tab. From the tab, `create-worktree`
+  makes a worktree on the host. **New worktree + loop** on a milestone starts a detached
+  `claudjar loop` for that milestone, and the worktree is pinned to it by `loopPid`. **New
+  worktree**, with a name and an optional milestone, starts a background session
+  `<project>/<worktree>`. A milestone that already has a loop is refused.
 - The UI has one tab per loop process. The log is on the left. On the right, the progress tree
   sits above the open questions, and each question has its own answer box. Below them are
   **Pause/Resume** and **send input**. Browser desktop notifications have to be enabled once

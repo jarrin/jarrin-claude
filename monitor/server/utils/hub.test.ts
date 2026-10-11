@@ -492,6 +492,32 @@ describe("Hub hosts", () => {
     );
   });
 
+  it("gives create-worktree longer before expiring it", () => {
+    let t = 0;
+    const hub = new Hub(() => t);
+    hub.hostHello(hostInfo("desk"), [], () => {});
+    const got = watched(hub);
+    hub.command("c1", "desk", {
+      type: "create-worktree",
+      project: "x",
+      name: "dev",
+      mode: "session",
+    });
+    t = COMMAND_TIMEOUT_MS + 1;
+    hub.command("c2", "desk", { type: "open-project", project: "y" });
+    const expired = (id: string): boolean =>
+      got.some(
+        (m) =>
+          m.type === "command-result" &&
+          m.result.id === id &&
+          m.result.error === "host did not answer",
+      );
+    expect(expired("c1")).toBe(false);
+    t = 15 * 60 * 1000 + 1;
+    hub.command("c3", "desk", { type: "open-project", project: "z" });
+    expect(expired("c1")).toBe(true);
+  });
+
   it("persists hosts and restores them offline with their projects", () => {
     let saved: Saved | null = null;
     const hub = new Hub(
@@ -521,6 +547,7 @@ describe("Hub hosts", () => {
         port: 0,
         milestone: "",
         session: "running" as const,
+        loopPid: 0,
       },
     ],
     error: "",

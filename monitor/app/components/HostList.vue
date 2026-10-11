@@ -12,8 +12,14 @@ const props = defineProps<{
 }>();
 defineEmits<{ command: [host: string, command: HostCommand] }>();
 
-const describe = (o: CommandOutcome): string =>
-  `${o.command.type} ${o.command.project} @ ${o.host}: ${o.ok ? "ok" : o.error}`;
+const describe = (o: CommandOutcome): string => {
+  const c = o.command;
+  const what =
+    c.type === "create-worktree"
+      ? `${c.project}/${c.name ?? c.milestone?.title ?? "?"} (${c.mode})`
+      : c.project;
+  return `${c.type} ${what} @ ${o.host}: ${o.ok ? "ok" : o.error}`;
+};
 
 /** Newest first; a successful refresh (sent on every tab switch) is noise. */
 const shown = computed(() =>

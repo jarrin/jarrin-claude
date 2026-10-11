@@ -63,6 +63,34 @@ export function backlogRepo(yamlText: string): string {
   return "";
 }
 
+/** Where a repo's loops keep their logs and locks: `~/.claudjar/loop/<owner>__<name>`. */
+export function loopStateDir(home: string, repo: string): string {
+  return join(home, ".claudjar", "loop", repo.replace("/", "__"));
+}
+
+/** The milestone lock a loop holds while it works that milestone. */
+export function milestoneLockPath(
+  stateDir: string,
+  milestoneId: number,
+): string {
+  return join(stateDir, "locks", `milestone-${String(milestoneId)}.lock`);
+}
+
+/**
+ * The pid holding a lock file, when that process is still alive; null for no
+ * lock or a stale one (its loop died without releasing it).
+ */
+export function lockHolder(path: string): number | null {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+  const pid = Number(text.trim());
+  return pid > 0 && isAlive(pid) ? pid : null;
+}
+
 /**
  * Two loops may run side by side, but never on the same milestone (one issue worked
  * twice) nor in the same checkout (two sessions editing one working tree).
@@ -79,7 +107,7 @@ export function loopLocks(
       what: `worktree ${repoRoot}`,
     },
     ...milestones.map((m) => ({
-      path: join(dir, `milestone-${String(m.id)}.lock`),
+      path: milestoneLockPath(stateDir, m.id),
       what: `milestone "${m.title}"`,
     })),
   ];
@@ -113,8 +141,8 @@ export function acquireLock(path: string, what: string): (() => void) | string {
     closeSync(fd);
   } catch (err) {
     if (!isErrnoException(err) || err.code !== "EEXIST") throw err;
-    const pid = Number(readFileSync(path, "utf8").trim());
-    if (pid > 0 && isAlive(pid))
+    const pid = lockHolder(path);
+    if (pid !== null)
       return `${what} is already being worked by another loop (pid ${String(pid)})`;
     writeFileSync(path, String(process.pid));
   }
@@ -125,7 +153,7 @@ function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && "code" in err;
 }
 
-function isAlive(pid: number): boolean {
+export function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -194,12 +222,7 @@ async function runLoopCommand(
         "pass --monitor <url> or set CLAUDJAR_MONITOR_URL (e.g. wss://claudjar.jarrin.nl).",
     );
 
-  const stateDir = join(
-    homedir(),
-    ".claudjar",
-    "loop",
-    repo.replace("/", "__"),
-  );
+  const stateDir = loopStateDir(homedir(), repo);
   const release = acquireLocks(loopLocks(stateDir, repoRoot, milestones));
   if (typeof release === "string") return fail(release);
   const inputs = new InputBox();

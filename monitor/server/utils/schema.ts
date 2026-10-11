@@ -178,6 +178,8 @@ const projectDetail = z.object({
         port: z.number().int().nonnegative(),
         milestone: z.string().max(256),
         session: z.enum(["running", "stopped", "none"]),
+        // Absent from a host older than the field: no loop pinned.
+        loopPid: z.number().int().nonnegative().default(0),
       }),
     )
     .max(1000),
@@ -191,6 +193,13 @@ const hostCommand = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("refresh-project"),
     project: z.string().max(256),
+  }),
+  z.object({
+    type: z.literal("create-worktree"),
+    project: z.string().max(256),
+    name: z.string().max(128).optional(),
+    milestone: milestoneRef.optional(),
+    mode: z.enum(["loop", "session"]),
   }),
 ]) satisfies z.ZodType<HostCommand>;
 

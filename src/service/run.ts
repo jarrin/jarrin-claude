@@ -12,6 +12,8 @@ import type { CommandOutcome, HostLink } from "./link.js";
 import { closeProject, openProject, reconcileSessions } from "./sessions.js";
 import type { ProjectState, ServiceState } from "./state.js";
 import { emptyState, mergeDiscovery, readState, writeState } from "./state.js";
+import type { CreateDeps, CreateWorktreeCommand } from "./worktrees.js";
+import { createWorktreeFor, pruneLoops, withCreated } from "./worktrees.js";
 
 /**
  * The service's foreground loop: discover the projects, record them in the state
@@ -41,6 +43,8 @@ export interface RunOptions {
   readonly launcherFor: (backend: SessionBackend) => SessionLauncher;
   /** How a project's detail (milestones, worktrees) is collected for the web interface. */
   readonly detail: DetailDeps;
+  /** How `create-worktree` makes a worktree and starts its loop (sessions use `launcherFor`). */
+  readonly worktrees: Omit<CreateDeps, "session" | "isAlive">;
   /** Dial the web interface; absent when the conf has no `monitor:`. */
   readonly connect?: (handlers: LinkHandlers) => HostLink;
 }
@@ -100,6 +104,9 @@ export async function runService(opts: RunOptions): Promise<void> {
   const reconciled = reconcileSessions(state, opts.launcherFor);
   state = reconciled.state;
   for (const note of reconciled.notes) log(note);
+  const pruned = pruneLoops(state, opts.detail.isAlive);
+  state = pruned.state;
+  for (const note of pruned.notes) log(note);
   const running = state.sessions.filter((s) => s.status === "running");
   if (running.length > 0)
     log(
@@ -114,14 +121,49 @@ export async function runService(opts: RunOptions): Promise<void> {
   const publishDetail = async (name: string): Promise<CommandOutcome> => {
     const project = state.projects.find((p) => p.name === name);
     if (!project) return { ok: false, error: `no project named '${name}'` };
-    const detail = await collectDetail(project, state.sessions, opts.detail);
+    const detail = await collectDetail(project, state, opts.detail);
     link?.detail(detail);
     return { ok: true };
+  };
+
+  /**
+   * Create a worktree and start its loop or session. It awaits the worktree's
+   * setup, so `state` is re-read after it rather than captured before.
+   */
+  const createWorktree = async (
+    command: CreateWorktreeCommand,
+  ): Promise<CommandOutcome> => {
+    const what = `create-worktree ${command.project}`;
+    log(
+      `${what}: ${command.mode}${command.milestone ? ` on "${command.milestone.title}"` : ""}…`,
+    );
+    const res = await createWorktreeFor(() => state, command, {
+      ...opts.worktrees,
+      isAlive: opts.detail.isAlive,
+      session: {
+        backend: opts.backend,
+        launcherFor: opts.launcherFor,
+        now: now(),
+      },
+    });
+    if (res.ok) {
+      state = withCreated(state, res, now());
+      writeState(opts.stateFile, state);
+    }
+    log(`${what}: ${res.ok ? res.note : res.error}`);
+    // Even a failure may have left a worktree behind: show what is there.
+    void publishDetail(command.project).catch((err: unknown) => {
+      log(
+        `detail ${command.project}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    return res.ok ? { ok: true } : res;
   };
 
   const handle = (command: HostCommand): Promise<CommandOutcome> => {
     if (command.type === "refresh-project")
       return publishDetail(command.project);
+    if (command.type === "create-worktree") return createWorktree(command);
     const open = command.type === "open-project";
     const deps = {
       backend: opts.backend,

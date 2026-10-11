@@ -72,7 +72,13 @@ export function useMonitor(onNotice: (notice: Notice) => void) {
       send({ type: "control", id, action }),
     input: (id: string, text: string) => send({ type: "input", id, text }),
     dismissLive: (id: string) => send({ type: "dismiss-live", id }),
-    command: (host: string, command: HostCommand) =>
-      send({ type: "command", id: crypto.randomUUID(), host, command }),
+    /**
+     * Send a command to a host; its `command-result` comes back under the
+     * returned id. Null when the socket is down and nothing was sent.
+     */
+    command: (host: string, command: HostCommand): string | null => {
+      const id = crypto.randomUUID();
+      return send({ type: "command", id, host, command }) ? id : null;
+    },
   };
 }

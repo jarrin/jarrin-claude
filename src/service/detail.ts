@@ -8,7 +8,8 @@ import type {
 import { loadEffectiveConfig } from "../config/load.js";
 import type { MilestoneSource } from "../loop/gitea.js";
 import { parseWorktreeList } from "../worktree/merge.js";
-import type { ProjectState, SessionRecord } from "./state.js";
+import type { ProjectState, ServiceState, SessionRecord } from "./state.js";
+import { loopPidFor } from "./worktrees.js";
 
 /**
  * What a project tab in the web interface shows: the open milestones of the
@@ -36,7 +37,12 @@ export interface DetailDeps {
   /** The forge's web root, for milestone links; empty when unknown. */
   readonly forgeUrl: string;
   readonly now: () => number;
+  /** Whether a recorded loop's process still runs. */
+  readonly isAlive: (pid: number) => boolean;
 }
+
+/** The service's records a detail reads: its sessions and the loops it started. */
+export type DetailRecords = Pick<ServiceState, "sessions" | "loops">;
 
 const message = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
@@ -55,8 +61,8 @@ function sessionStatus(
 /** The project's checkouts; the main checkout alone when git cannot list them. */
 export function collectWorktrees(
   project: ProjectState,
-  sessions: readonly SessionRecord[],
-  deps: Pick<DetailDeps, "worktreeList" | "identity">,
+  records: DetailRecords,
+  deps: Pick<DetailDeps, "worktreeList" | "identity" | "isAlive">,
 ): WorktreeDetail[] {
   const porcelain = deps.worktreeList(project.path);
   const entries = porcelain === null ? [] : parseWorktreeList(porcelain);
@@ -74,17 +80,20 @@ export function collectWorktrees(
       path: e.path,
       port: id.port,
       milestone: id.milestone,
-      session: sessionStatus(sessions, project.name, name),
+      session: sessionStatus(records.sessions, project.name, name),
+      loopPid: main
+        ? 0
+        : loopPidFor(records.loops, project.name, name, deps.isAlive),
     };
   });
 }
 
 export async function collectDetail(
   project: ProjectState,
-  sessions: readonly SessionRecord[],
+  records: DetailRecords,
   deps: DetailDeps,
 ): Promise<ProjectDetail> {
-  const worktrees = collectWorktrees(project, sessions, deps);
+  const worktrees = collectWorktrees(project, records, deps);
   const repo = project.backlogRepo;
   let milestones: ProjectDetail["milestones"] = [];
   let error = "";

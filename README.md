@@ -483,6 +483,20 @@ reconciles them with the launcher: a session that is still running is re-adopted
 gone is marked stopped, and the active flags survive the restart. A failed start (an untrusted
 workspace, say) fails the command and leaves the project closed.
 
+**Creating a worktree** from an open project's tab runs `claudjar worktree create` on the
+host, from the project's main checkout, and then starts one of two things in it:
+
+- **new worktree + loop** (on a milestone) stamps the milestone and starts
+  `claudjar loop <milestone>` there. The loop runs detached in a `systemd-run --user --scope`
+  of its own, so it outlives a service restart, and logs to
+  `~/.claudjar/service/loops/<project>--<worktree>.log`. The worktree is named after the
+  milestone. A milestone that a loop already works is refused before anything is created.
+- **new worktree** (a name, optionally a milestone) starts a background Claude session there,
+  named `<project>/<worktree>`.
+
+The tab shows the worktree's loop and links to the loop's own tab. A failure is shown in the
+tab, including when the worktree was made but its loop or session did not start.
+
 `claudjar attach --list` lists those sessions with their live status; `claudjar attach <name>`
 brings one to the terminal (`claude attach …`, or `tmux attach-session` for the tmux fallback).
 Names are `<project>` and `<project>/<worktree>`; the launcher sees `/` as `--`, since neither

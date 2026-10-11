@@ -13,6 +13,8 @@ export interface FakeDetail {
   readonly milestones?: Readonly<Record<string, MilestoneCounts[] | string>>;
   readonly forge?: boolean;
   readonly now?: number;
+  /** The pids that read as alive. */
+  readonly alive?: readonly number[];
 }
 
 const UNSTAMPED: StampedIdentity = { name: "", port: 0, milestone: "" };
@@ -34,5 +36,6 @@ export function fakeDetailDeps(fake: FakeDetail = {}): DetailDeps {
           }),
     forgeUrl: "https://git.example",
     now: () => fake.now ?? 0,
+    isAlive: (pid) => fake.alive?.includes(pid) ?? false,
   };
 }

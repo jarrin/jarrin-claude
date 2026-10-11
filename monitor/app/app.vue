@@ -258,6 +258,10 @@ const openQuestions = (id: string): number => {
           :key="activeProject.value"
           :tab="activeProject"
           :instances="instances"
+          :outcomes="state.outcomes"
+          :run="
+            (cmd) => (activeProject ? command(activeProject.host, cmd) : null)
+          "
           @refresh="activeProject && refresh(activeProject)"
           @close="
             activeProject &&

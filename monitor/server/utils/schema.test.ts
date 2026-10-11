@@ -135,9 +135,13 @@ describe("parseHostMessage", () => {
       error: "",
       collectedAt: 3,
     };
+    // A host older than `loopPid` sends none: it reads as no pinned loop.
     expect(
       parseHostMessage(JSON.stringify({ type: "project-detail", detail })),
-    ).toEqual({ type: "project-detail", detail });
+    ).toEqual({
+      type: "project-detail",
+      detail: { ...detail, worktrees: [{ ...worktree, loopPid: 0 }] },
+    });
     expect(
       parseHostMessage(
         JSON.stringify({
@@ -191,6 +195,30 @@ describe("parseWatcherMessage command", () => {
           }),
         ),
       ).toMatchObject({ type: "command", command: { type } });
+  });
+
+  it("accepts create-worktree, and rejects a bad mode or milestone", () => {
+    const send = (command: unknown): unknown =>
+      parseWatcherMessage(
+        JSON.stringify({ type: "command", id: "c1", host: "desk", command }),
+      );
+    const loop = {
+      type: "create-worktree",
+      project: "x",
+      milestone: { id: 7, title: "plan-x" },
+      mode: "loop",
+    };
+    expect(send(loop)).toMatchObject({ command: loop });
+    const session = {
+      type: "create-worktree",
+      project: "x",
+      name: "dev",
+      mode: "session",
+    };
+    expect(send(session)).toMatchObject({ command: session });
+    expect(send({ ...loop, mode: "daemon" })).toBeNull();
+    expect(send({ ...loop, milestone: { title: "plan-x" } })).toBeNull();
+    expect(send({ ...session, name: "x".repeat(200) })).toBeNull();
   });
 
   it("rejects an unknown command and a missing id", () => {

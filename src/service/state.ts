@@ -32,6 +32,23 @@ export interface SessionRecord {
   readonly status: SessionRecordStatus;
 }
 
+/**
+ * A `claudjar loop` the service started in a worktree (`create-worktree`,
+ * `mode: "loop"`). It runs detached in a scope of its own, so it outlives a
+ * service restart; the record is what links it back to its worktree.
+ */
+export interface LoopRecord {
+  readonly project: string;
+  /** The worktree's stamped name. */
+  readonly worktree: string;
+  readonly cwd: string;
+  readonly milestone: { readonly id: number; readonly title: string };
+  readonly pid: number;
+  /** Where the loop's own output goes. */
+  readonly log: string;
+  readonly startedAt: string;
+}
+
 export interface ProjectState {
   readonly name: string;
   readonly path: string;
@@ -45,6 +62,7 @@ export interface ServiceState {
   readonly updatedAt: string;
   readonly projects: readonly ProjectState[];
   readonly sessions: readonly SessionRecord[];
+  readonly loops: readonly LoopRecord[];
 }
 
 export function serviceDir(env: NodeJS.ProcessEnv): string {
@@ -56,7 +74,13 @@ export function statePath(dir: string): string {
 }
 
 export function emptyState(): ServiceState {
-  return { version: STATE_VERSION, updatedAt: "", projects: [], sessions: [] };
+  return {
+    version: STATE_VERSION,
+    updatedAt: "",
+    projects: [],
+    sessions: [],
+    loops: [],
+  };
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -96,6 +120,29 @@ function toSession(v: unknown): SessionRecord | null {
   };
 }
 
+function toLoop(v: unknown): LoopRecord | null {
+  if (
+    !isRecord(v) ||
+    typeof v.project !== "string" ||
+    typeof v.worktree !== "string" ||
+    typeof v.cwd !== "string" ||
+    typeof v.pid !== "number" ||
+    !isRecord(v.milestone) ||
+    typeof v.milestone.id !== "number" ||
+    typeof v.milestone.title !== "string"
+  )
+    return null;
+  return {
+    project: v.project,
+    worktree: v.worktree,
+    cwd: v.cwd,
+    milestone: { id: v.milestone.id, title: v.milestone.title },
+    pid: v.pid,
+    log: typeof v.log === "string" ? v.log : "",
+    startedAt: typeof v.startedAt === "string" ? v.startedAt : "",
+  };
+}
+
 /**
  * Parse state JSON. Throws on text that is not JSON or not a state object, so a
  * corrupt file is reported rather than silently forgetting which projects were
@@ -114,6 +161,9 @@ export function parseState(text: string): ServiceState {
     sessions: rows(doc.sessions)
       .map(toSession)
       .filter((s): s is SessionRecord => s !== null),
+    loops: rows(doc.loops)
+      .map(toLoop)
+      .filter((l): l is LoopRecord => l !== null),
   };
 }
 
@@ -156,6 +206,7 @@ export function mergeDiscovery(
     updatedAt: now.toISOString(),
     projects: projects.map((p) => ({ ...p, active: wasActive.has(p.name) })),
     sessions: prev.sessions,
+    loops: prev.loops,
   };
 }
 

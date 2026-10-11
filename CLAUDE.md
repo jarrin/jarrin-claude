@@ -449,7 +449,7 @@ linger.
 `/ws/host` (outbound, so no inbound port) and speaks the `HostMessage` / `ServerHostMessage`
 half of `monitor/shared/protocol.ts`: `host-hello` (token + projects), `projects` after a
 rescan that changed them, `project-state`, `project-detail`, and `command-result` for each
-`command` (`open-project` / `close-project` / `refresh-project`). It keeps no outbound queue on purpose: the monitor
+`command` (`open-project` / `close-project` / `refresh-project` / `create-worktree`). It keeps no outbound queue on purpose: the monitor
 needs the _current_ list, which every reconnect's hello carries, and it fails a command whose
 host dropped itself. `monitor.token` is required by `parseConf`, because the monitor rejects
 every process without `NUXT_AGENT_TOKEN`. On the monitor, browsers authenticate by OIDC
@@ -467,7 +467,30 @@ milestones with issue counts (via `giteaClient(...).openMilestones()`, credentia
 service's session there. A forge failure is carried in `error` rather than failing the
 command, so the worktrees still show. The hub keeps a detail only while its project is active
 (closing or losing the project drops it, with `project-detail-removed`) and persists it like
-hosts. A worktree's loops are matched in `loopsFor` by host + repo + its linked milestone title.
+hosts. A worktree's loops are matched in `loopsFor`: by its `loopPid` (the loop the service
+started there) on the same host, else by host + repo + its linked milestone title.
+
+**Creating worktrees.** `create-worktree { project, name?, milestone?, mode }` is handled by
+`src/service/worktrees.ts`, which is pure over `CreateDeps` (`fakeWorktreeDeps` in tests).
+`planCreate` validates everything before anything is created: the project must be open, a
+loop needs a milestone and a backlog repo, and the name defaults to `worktreeNameFor(title)`
+(shared, so the UI's placeholder matches). A milestone that is already worked is refused at
+this point, whether by a live recorded loop or by a live holder of the loop's own
+`milestone-<id>.lock`. The check runs again after the minutes-long create, because the loop's
+lock alone would only refuse once a worktree had been made for nothing. Then
+`createWorktree` (the Stage 3 library) runs from the main checkout, with the milestone
+stamped, and one of two things starts in the new worktree:
+
+- `mode: "loop"`: `spawnLoop` (`src/service/spawn-loop.ts`) runs `claudjar loop <id> --repo
+--monitor` detached under `systemd-run --user --scope`, with the token in the env. Scope
+  mode execs in place, so the spawned pid _is_ the loop's monitor `pid`, and the
+  `LoopRecord` in `state.json` pins the worktree to that instance via
+  `WorktreeDetail.loopPid`. It waits ~2 s so a loop that dies at once (lock, credentials) is
+  reported with its log's tail, rather than leaving a dead pid behind.
+- `mode: "session"`: a launcher session labelled `<project>/<worktree>`.
+
+Dead loops are pruned on service start. The hub gives this one command 15 minutes instead
+of 60 s (`commandTimeoutMs`), because setup runs inside it.
 
 ### The standalone binary
 

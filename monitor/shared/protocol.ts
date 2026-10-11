@@ -274,6 +274,11 @@ export interface WorktreeDetail {
   /** The stamped `worktree.milestone` title; empty when not linked to one. */
   readonly milestone: string;
   readonly session: SessionStatus;
+  /**
+   * The pid of the `claudjar loop` the service started in this worktree, while
+   * it runs; 0 when none. It pins the worktree to that loop's monitor instance.
+   */
+  readonly loopPid: number;
 }
 
 /**
@@ -304,7 +309,44 @@ export type HostCommand =
   | { readonly type: "open-project"; readonly project: string }
   | { readonly type: "close-project"; readonly project: string }
   /** Collect the project's detail again and publish it. */
-  | { readonly type: "refresh-project"; readonly project: string };
+  | { readonly type: "refresh-project"; readonly project: string }
+  /**
+   * Create a worktree of an open project and start something in it: a
+   * `claudjar loop` working `milestone` (`mode: "loop"`, which needs one), or a
+   * plain background Claude session (`mode: "session"`). `name` defaults to one
+   * derived from the milestone title; one of the two must be given.
+   */
+  | {
+      readonly type: "create-worktree";
+      readonly project: string;
+      readonly name?: string;
+      readonly milestone?: MilestoneRef;
+      readonly mode: WorktreeMode;
+    };
+
+/** What `create-worktree` starts in the new worktree. */
+export type WorktreeMode = "loop" | "session";
+
+/**
+ * The worktree name `create-worktree` derives from a milestone title: lower
+ * case, runs of anything but letters, digits, `_` and `-` folded to one `-`,
+ * trimmed of leading / trailing `-`, at most 48 characters. Empty when nothing
+ * usable is left.
+ */
+export function worktreeNameFor(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .slice(0, 48)
+    .replace(/^[-_]+|[-_]+$/g, "");
+}
+
+/** How long the server waits for a host to answer a command. */
+export function commandTimeoutMs(command: HostCommand): number {
+  // Creating a worktree runs its setup and hooks (`pnpm install`, image builds).
+  return command.type === "create-worktree" ? 15 * 60 * 1000 : 60 * 1000;
+}
 
 /** A host's answer to one command, keyed by the id the watcher chose. */
 export interface CommandResult {
@@ -439,17 +481,25 @@ export function detailKey(host: string, project: string): string {
 }
 
 /**
- * The loop instances working a worktree: on the same host and backlog repo,
- * with the worktree's linked milestone among their milestones.
+ * The loop instances working a worktree. The loop the service started there is
+ * matched by its pid on the same host; failing that (a loop started by hand, or
+ * not connected yet), any loop on the same host and backlog repo with the
+ * worktree's linked milestone among its milestones.
  */
 export function loopsFor<
-  T extends Pick<InstanceInfo, "host" | "repo" | "milestones">,
+  T extends Pick<InstanceInfo, "host" | "repo" | "milestones" | "pid">,
 >(
   instances: readonly T[],
   host: string,
   repo: string,
-  worktree: Pick<WorktreeDetail, "milestone">,
+  worktree: Pick<WorktreeDetail, "milestone" | "loopPid">,
 ): T[] {
+  if (worktree.loopPid > 0) {
+    const pinned = instances.filter(
+      (i) => i.host === host && i.pid === worktree.loopPid,
+    );
+    if (pinned.length > 0) return pinned;
+  }
   if (!worktree.milestone || !repo) return [];
   return instances.filter(
     (i) =>

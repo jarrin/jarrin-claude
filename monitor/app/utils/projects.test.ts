@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type {
+  CommandOutcome,
   HostView,
   InstanceSummary,
   ProjectDetailView,
@@ -9,7 +10,10 @@ import type {
 
 import { emptyState } from "./instances";
 import {
+  createWorktreeCommand,
   isProjectTab,
+  milestoneLoops,
+  outcomeOf,
   projectTabValue,
   projectTabs,
   worktreeLabel,
@@ -40,6 +44,7 @@ const worktree = (over: Partial<WorktreeDetail> = {}): WorktreeDetail => ({
   port: 8001,
   milestone: "plan-x",
   session: "running",
+  loopPid: 0,
   ...over,
 });
 
@@ -114,5 +119,53 @@ describe("worktrees", () => {
     expect(worktreeLoops(loops, detail, worktree({ milestone: "" }))).toEqual(
       [],
     );
+  });
+
+  it("pins a worktree to the loop the service started there, by pid", () => {
+    const loops = [loop({ id: "a", pid: 10 }), loop({ id: "b", pid: 20 })];
+    expect(
+      worktreeLoops(loops, detail, worktree({ loopPid: 20 })).map((l) => l.id),
+    ).toEqual(["b"]);
+  });
+
+  it("finds the online loops working a milestone", () => {
+    const loops = [
+      loop({ id: "hit" }),
+      loop({ id: "offline", online: false }),
+      loop({ id: "other-repo", repo: "o/x" }),
+    ];
+    expect(milestoneLoops(loops, detail, 1).map((l) => l.id)).toEqual(["hit"]);
+    expect(milestoneLoops(loops, detail, 2)).toEqual([]);
+  });
+});
+
+describe("create-worktree", () => {
+  it("builds the command, leaving out a blank name and a missing milestone", () => {
+    const m = { id: 1, title: "plan-x" };
+    expect(createWorktreeCommand("a", "loop", " ", m)).toEqual({
+      type: "create-worktree",
+      project: "a",
+      mode: "loop",
+      milestone: m,
+    });
+    expect(createWorktreeCommand("a", "session", " dev ", null)).toEqual({
+      type: "create-worktree",
+      project: "a",
+      mode: "session",
+      name: "dev",
+    });
+  });
+
+  it("finds a command's outcome by id; null while in flight", () => {
+    const o: CommandOutcome = {
+      id: "c1",
+      ok: false,
+      error: "no",
+      host: "desk",
+      command: { type: "open-project", project: "a" },
+      at: 0,
+    };
+    expect(outcomeOf([o], "c1")).toBe(o);
+    expect(outcomeOf([o], "c2")).toBeNull();
   });
 });

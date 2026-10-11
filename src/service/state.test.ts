@@ -10,6 +10,7 @@ import type {
 } from "../../monitor/shared/protocol.js";
 import { fakeLauncher } from "../session/fake-launcher.js";
 import { fakeDetailDeps } from "./fake-detail.js";
+import { fakeWorktreeDeps } from "./fake-worktrees.js";
 import type { Project } from "./discover.js";
 import type { HostLink } from "./link.js";
 import { runService } from "./run.js";
@@ -89,6 +90,7 @@ describe("runService", () => {
       signal: new AbortController().signal,
       backend: "bg",
       launcherFor: () => fakeLauncher(),
+      worktrees: fakeWorktreeDeps(),
       detail: fakeDetailDeps(),
       log: (l) => lines.push(l),
       scan: () => [
@@ -127,6 +129,7 @@ describe("runService", () => {
       signal: new AbortController().signal,
       backend: "bg",
       launcherFor: () => fakeLauncher(),
+      worktrees: fakeWorktreeDeps(),
       detail: fakeDetailDeps(),
       log: (l) => lines.push(l),
       scan: () => [],
@@ -156,6 +159,7 @@ describe("runService", () => {
     const run = runService({
       backend: "bg",
       launcherFor: () => launcher,
+      worktrees: fakeWorktreeDeps(),
       detail: fakeDetailDeps({
         worktrees: { "/p/a": "worktree /p/a\nbranch refs/heads/main\n" },
       }),

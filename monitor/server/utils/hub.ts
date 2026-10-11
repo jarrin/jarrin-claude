@@ -1,4 +1,9 @@
-import { boardKey, covers, detailKey } from "#shared/protocol";
+import {
+  boardKey,
+  commandTimeoutMs,
+  covers,
+  detailKey,
+} from "#shared/protocol";
 import type {
   AgentMessage,
   Board,
@@ -46,7 +51,10 @@ interface Instance {
   lines: LogLine[];
 }
 
-/** Commands a host has not answered yet are failed after this long. */
+/**
+ * Commands a host has not answered yet are failed after this long — except
+ * `create-worktree`, which gets longer ({@link commandTimeoutMs}).
+ */
 export const COMMAND_TIMEOUT_MS = 60 * 1000;
 
 /** What outlives a restart. Log lines do not: they are a live view only. */
@@ -238,9 +246,8 @@ export class Hub {
 
   /** Fail commands a host never answered, so a watcher is not left waiting. */
   private expireCommands(): void {
-    const cutoff = this.now() - COMMAND_TIMEOUT_MS;
     for (const [id, p] of this.pending)
-      if (p.at < cutoff) {
+      if (p.at < this.now() - commandTimeoutMs(p.command)) {
         this.pending.delete(id);
         this.broadcastResult(
           { id, ok: false, error: "host did not answer" },

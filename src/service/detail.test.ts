@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 
 import { collectDetail, collectWorktrees, readIdentity } from "./detail.js";
 import { fakeDetailDeps } from "./fake-detail.js";
-import type { ProjectState, SessionRecord } from "./state.js";
+import type { DetailRecords } from "./detail.js";
+import type { LoopRecord, ProjectState, SessionRecord } from "./state.js";
 
 const project = (over: Partial<ProjectState> = {}): ProjectState => ({
   name: "web",
@@ -46,7 +47,12 @@ const PORCELAIN = [
   "",
 ].join("\n");
 
-const deps = fakeDetailDeps({
+const records = (
+  sessions: readonly SessionRecord[] = [],
+  loops: readonly LoopRecord[] = [],
+): DetailRecords => ({ sessions, loops });
+
+const fake = {
   worktrees: { "/p/web": PORCELAIN },
   stamps: {
     "/p/web-worktrees/dev": { name: "dev", port: 8001, milestone: "plan-x" },
@@ -58,14 +64,15 @@ const deps = fakeDetailDeps({
     ],
   },
   now: 42,
-});
+};
+const deps = fakeDetailDeps(fake);
 
 describe("collectWorktrees", () => {
   it("lists the main checkout first, then each worktree with its stamp and session", () => {
     expect(
       collectWorktrees(
         project(),
-        [session("", "running"), session("dev", "stopped")],
+        records([session("", "running"), session("dev", "stopped")]),
         deps,
       ),
     ).toEqual([
@@ -76,6 +83,7 @@ describe("collectWorktrees", () => {
         port: 0,
         milestone: "",
         session: "running",
+        loopPid: 0,
       },
       {
         name: "dev",
@@ -84,6 +92,7 @@ describe("collectWorktrees", () => {
         port: 8001,
         milestone: "plan-x",
         session: "stopped",
+        loopPid: 0,
       },
       // Unstamped and detached: named after its directory.
       {
@@ -93,12 +102,15 @@ describe("collectWorktrees", () => {
         port: 0,
         milestone: "",
         session: "none",
+        loopPid: 0,
       },
     ]);
   });
 
   it("falls back to the main checkout alone when git cannot list", () => {
-    expect(collectWorktrees(project({ path: "/p/x" }), [], deps)).toEqual([
+    expect(
+      collectWorktrees(project({ path: "/p/x" }), records(), deps),
+    ).toEqual([
       {
         name: "",
         branch: "",
@@ -106,20 +118,54 @@ describe("collectWorktrees", () => {
         port: 0,
         milestone: "",
         session: "none",
+        loopPid: 0,
       },
     ]);
   });
 
   it("only counts the project's own sessions", () => {
     const other = { ...session("", "running"), project: "api" };
-    const [main] = collectWorktrees(project(), [other], deps);
+    const [main] = collectWorktrees(project(), records([other]), deps);
     expect(main?.session).toBe("none");
+  });
+});
+
+describe("collectWorktrees: loops", () => {
+  const loop = (worktree: string, pid: number): LoopRecord => ({
+    project: "web",
+    worktree,
+    cwd: `/p/web-worktrees/${worktree}`,
+    milestone: { id: 2, title: "plan-x" },
+    pid,
+    log: "",
+    startedAt: "",
+  });
+
+  it("pins a worktree to the live loop the service started there", () => {
+    const live = fakeDetailDeps({ ...fake, alive: [4242] });
+    const [main, dev, loose] = collectWorktrees(
+      project(),
+      records([], [loop("dev", 4242)]),
+      live,
+    );
+    expect(main?.loopPid).toBe(0);
+    expect(dev?.loopPid).toBe(4242);
+    expect(loose?.loopPid).toBe(0);
+  });
+
+  it("drops the pin once the loop is gone", () => {
+    const [, dev] = collectWorktrees(
+      project(),
+      records([], [loop("dev", 4242)]),
+      deps,
+    );
+    expect(dev?.loopPid).toBe(0);
   });
 });
 
 describe("collectDetail", () => {
   it("collects the open milestones by title, and the worktrees", async () => {
-    const d = await collectDetail(project(), [], deps);
+    const d = await collectDetail(project(), records(), deps);
     expect(d).toMatchObject({
       project: "web",
       repo: "o/web",
@@ -136,24 +182,28 @@ describe("collectDetail", () => {
       worktrees: { "/p/web": PORCELAIN },
       milestones: { "o/web": "Gitea GET /milestones failed: HTTP 404" },
     });
-    const d = await collectDetail(project(), [], failing);
+    const d = await collectDetail(project(), records(), failing);
     expect(d.error).toBe("Gitea GET /milestones failed: HTTP 404");
     expect(d.milestones).toEqual([]);
     expect(d.worktrees).toHaveLength(3);
   });
 
   it("explains why there are no milestones", async () => {
-    const noRepo = await collectDetail(project({ backlogRepo: "" }), [], deps);
+    const noRepo = await collectDetail(
+      project({ backlogRepo: "" }),
+      records(),
+      deps,
+    );
     expect(noRepo.error).toBe("no backlog repo configured");
     const bare = await collectDetail(
       project({ backlogRepo: "", configured: false }),
-      [],
+      records(),
       deps,
     );
     expect(bare.error).toBe("not a claudjar project");
     const noAuth = await collectDetail(
       project(),
-      [],
+      records(),
       fakeDetailDeps({ forge: false }),
     );
     expect(noAuth).toMatchObject({

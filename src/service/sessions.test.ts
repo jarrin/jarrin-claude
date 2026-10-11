@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { fakeLauncher } from "../session/fake-launcher.js";
 import { fakeDetailDeps } from "./fake-detail.js";
+import { fakeWorktreeDeps } from "./fake-worktrees.js";
 import type { FakeLauncher } from "../session/fake-launcher.js";
 import {
   launcherName,
@@ -225,6 +226,7 @@ describe("reconcileSessions", () => {
         })),
       backend: "bg",
       launcherFor: () => launcher,
+      worktrees: fakeWorktreeDeps(),
       detail: fakeDetailDeps(),
     });
     const after = readState(file);

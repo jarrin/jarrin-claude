@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { hostname, tmpdir, userInfo } from "node:os";
+import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 
 import { buildCommand, buildRouteMap } from "@stricli/core";
@@ -15,7 +15,20 @@ import { scanProjectsDir } from "../service/discover.js";
 import { connectHost } from "../service/link.js";
 import { runService } from "../service/run.js";
 import { readState, serviceDir, statePath } from "../service/state.js";
-import { launcherCache } from "../session/launcher.js";
+import {
+  launcherCache,
+  scopeAvailable,
+  spawnRunner as procRunner,
+} from "../session/launcher.js";
+import {
+  isAlive,
+  lockHolder,
+  loopStateDir,
+  milestoneLockPath,
+} from "./loop.js";
+import { selfCommand, spawnLoop } from "../service/spawn-loop.js";
+import { createWorktree } from "../worktree/lib.js";
+import { spawnRunner } from "../worktree/runner.js";
 import type { Passwd } from "../service/unit.js";
 import {
   parsePasswd,
@@ -82,6 +95,9 @@ async function runServiceRun(
   // The same credentials `claudjar loop` uses, so the project tab and a loop
   // started from it read the forge as the same user.
   const auth = resolveAuth(proc.env);
+  const home = homedir();
+  const loopLogDir = join(serviceDir(proc.env), "loops");
+  let scope: boolean | undefined;
   proc.once("SIGTERM", stop);
   proc.once("SIGINT", stop);
   try {
@@ -101,6 +117,39 @@ async function runServiceRun(
         forge: auth ? (repo) => giteaClient(auth, repo) : null,
         forgeUrl: auth?.host ?? "",
         now: Date.now,
+        isAlive,
+      },
+      worktrees: {
+        create: (repoRoot, opts) =>
+          createWorktree(repoRoot, opts, {
+            run: spawnRunner(proc.env),
+            log: (msg) => void proc.stdout.write(msg),
+            warn: (msg) => void proc.stderr.write(msg),
+            caddyDir: this.caddyDir,
+          }),
+        loopHolder: (repo, id) =>
+          lockHolder(milestoneLockPath(loopStateDir(home, repo), id)),
+        startLoop: (spec) => {
+          // A loop keeps its progress on the monitor: without one it cannot run.
+          if (!monitor)
+            return Promise.reject(
+              new Error(
+                "no `monitor:` in the service conf for the loop to report to",
+              ),
+            );
+          scope ??= scopeAvailable(procRunner);
+          return spawnLoop(
+            {
+              bin: selfCommand(proc),
+              scope,
+              logDir: loopLogDir,
+              monitorUrl: monitor.url,
+              monitorToken: monitor.token,
+              env: proc.env,
+            },
+            spec,
+          );
+        },
       },
       ...(monitor
         ? {
