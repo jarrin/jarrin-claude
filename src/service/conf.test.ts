@@ -36,12 +36,13 @@ describe("parseConf", () => {
     });
   });
 
-  it("makes monitor optional, and its token optional", () => {
+  it("makes monitor optional, but requires its token", () => {
     expect(parseConf("projects_dir: /p\nuser: u\n").monitor).toBeNull();
     expect(
-      parseConf("projects_dir: /p\nuser: u\nmonitor:\n  url: https://m\n")
-        .monitor,
-    ).toEqual({ url: "https://m", token: "" });
+      problems("projects_dir: /p\nuser: u\nmonitor:\n  url: https://m\n"),
+    ).toEqual([
+      "`monitor.token` is required when `monitor` is set (the monitor's NUXT_AGENT_TOKEN)",
+    ]);
   });
 
   it("rejects invalid YAML and non-mappings", () => {
@@ -69,6 +70,7 @@ describe("parseConf", () => {
       "`user` is not a valid user name: `Bad User`",
       "unknown key `monitor.tokn`",
       "`monitor.url` must be a ws(s):// or http(s):// URL, got `ftp://m`",
+      "`monitor.token` is required when `monitor` is set (the monitor's NUXT_AGENT_TOKEN)",
     ]);
   });
 
@@ -82,7 +84,7 @@ describe("parseConf", () => {
       ),
     ).toEqual(["`monitor.token` must be a string"]);
     expect(problems("projects_dir: /p\nuser: u\nmonitor: wss://m\n")).toEqual([
-      "`monitor` must be a mapping with `url` (and `token`)",
+      "`monitor` must be a mapping with `url` and `token`",
     ]);
   });
 });

@@ -17,8 +17,15 @@ side, because the CLI and the server share one wire protocol.
 - Loops need `CLAUDJAR_MONITOR_URL` (e.g. `wss://claudjar.jarrin.nl`) or `--monitor <url>`.
   Without it, `claudjar loop` refuses to start. Before working anything, it waits for the
   monitor's `welcome`, which carries the stored state.
-- `CLAUDJAR_MONITOR_TOKEN` must match the server's `NUXT_AGENT_TOKEN` when one is set. It
-  comes from `CLAUDJAR_MONITOR_TOKEN` in the homeserver's `~/.server.env`.
+- `CLAUDJAR_MONITOR_TOKEN` must match the server's `NUXT_AGENT_TOKEN`, which comes from
+  `CLAUDJAR_MONITOR_TOKEN` in the homeserver's `~/.server.env`. It is **mandatory**: with no
+  token configured, the monitor rejects every loop (`/ws/agent`), service (`/ws/host`, token
+  in `/etc/claudjar.conf` as `monitor.token`) and live-log post (`/api/live`).
+- Browsers log in via OIDC against auth.jarrin.nl (client `claudjar`, callback fixed at
+  `/auth/callback`; changing it means changing `redirect_uris` in the stack template). The
+  whole UI and `/ws/watch` need the session; `/healthz` and `/auth/*` are public.
+- The **hosts** tab lists every machine running `claudjar service` with its projects, and
+  sends it `open-project` / `close-project`.
 - The UI has one tab per loop process. The log is on the left. On the right, the progress tree
   sits above the open questions, and each question has its own answer box. Below them are
   **Pause/Resume** and **send input**. Browser desktop notifications have to be enabled once
@@ -36,7 +43,9 @@ side, because the CLI and the server share one wire protocol.
 | Server-side validation (zod mirror of the protocol, plus the saved-state schema) | `monitor/server/utils/schema.ts` |
 | Server state: instances, boards, questions, fan-out | `monitor/server/utils/hub.ts` |
 | Persistence (`$NUXT_DATA_DIR/state.json`, debounced and atomic) | `monitor/server/utils/store.ts` |
-| WebSocket routes: `/ws/agent` (loops) and `/ws/watch` (browsers) | `monitor/server/routes/ws/` |
+| WebSocket routes: `/ws/agent` (loops), `/ws/host` (services) and `/ws/watch` (browsers) | `monitor/server/routes/ws/` |
+| Auth: path policy, token check, browser gate (pure, tested); the OIDC flow; the HTTP middleware | `monitor/server/utils/auth.ts`, `monitor/server/utils/oidc.ts`, `monitor/server/middleware/auth.ts`, `monitor/server/routes/auth/` |
+| Service-side host client (project publishing, commands) | `src/service/link.ts`, wired in `src/service/run.ts` |
 | UI state folding + notification rules (pure, tested) | `monitor/app/utils/instances.ts` |
 | UI | `monitor/app/app.vue`, `monitor/app/components/` |
 | Log entries: one component per tool / line kind, all rendering through the base `log/LogRow.vue` (time, issue, icon, action, title, `inline-result` slot, collapsible body). `log/registry.ts` maps a route from `utils/tools.ts` (`routeTool`: built-in kind, `mcp/<server>/<resource>/<verb>`, then `mcp/gitea`, `mcp`, `default`) to its component — add a tool by adding a route and a component | `monitor/app/components/log/` |
@@ -75,7 +84,12 @@ Keep these invariants:
 
 - `pnpm -C monitor check` runs lint, typecheck, Vitest and build. The root `pnpm check` chains it.
 - End-to-end without real Claude sessions: run the built server with
-  `PORT=3911 NUXT_DATA_DIR=<scratch> node monitor/.output/server/index.mjs`. Then drive
+  `PORT=3911 NUXT_DATA_DIR=<scratch> NUXT_AGENT_TOKEN=<t> node monitor/.output/server/index.mjs`
+  (the token is mandatory; add `NUXT_OIDC_*` + `NUXT_SESSION_PASSWORD` to exercise the login,
+  plus `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt`, since auth.jarrin.nl is
+  signed by the Caddy internal CA). A browser-side socket then needs a `nuxt-session` cookie
+  sealed with that password (iron-webcrypto `seal` of `{ id, createdAt, data: { user } }`);
+  `nuxt dev` without `NUXT_OIDC_*` skips the login instead. Then drive
   `connectMonitor` from a `.mts` script with `pnpm exec tsx`, plus a raw `WebSocket` to
   `/ws/watch` acting as the browser. A `.ts` script fails, because tsx compiles it as CJS
   and rejects top-level await.
@@ -93,3 +107,6 @@ After deploying:
 - If the site is new, reload Caddy: `./homeserver restart networking:caddy` on the server.
 - Rebuild and reinstall the CLI if the protocol changed (`pnpm run ensurepath`). A loop
   binary on an older protocol is rejected by the server's validation.
+- The login's server-side calls trust the Caddy internal CA through `mount_host_certs` +
+  `NODE_EXTRA_CA_CERTS` in the template; without them discovery fails with
+  `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`.

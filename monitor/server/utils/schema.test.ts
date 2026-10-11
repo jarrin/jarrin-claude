@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { parseAgentMessage, parseWatcherMessage } from "./schema";
+import {
+  parseAgentMessage,
+  parseHostMessage,
+  parseWatcherMessage,
+} from "./schema";
 
 describe("parseAgentMessage", () => {
   it("accepts a hello", () => {
@@ -79,6 +83,101 @@ describe("parseWatcherMessage", () => {
     ).toBeNull();
     expect(
       parseWatcherMessage('{"type":"input","id":"a","text":""}'),
+    ).toBeNull();
+  });
+});
+
+const project = {
+  name: "x",
+  path: "/p/x",
+  configured: true,
+  backlogRepo: "o/x",
+  active: false,
+};
+
+describe("parseHostMessage", () => {
+  it("accepts a host-hello with its projects", () => {
+    const msg = parseHostMessage(
+      JSON.stringify({
+        type: "host-hello",
+        host: { host: "desk", pid: 1, startedAt: 2 },
+        token: "t",
+        projects: [project],
+      }),
+    );
+    expect(msg).toMatchObject({ type: "host-hello", projects: [project] });
+  });
+
+  it("accepts projects, project-state and command-result", () => {
+    for (const m of [
+      { type: "projects", projects: [project] },
+      { type: "project-state", project: { ...project, active: true } },
+      { type: "command-result", result: { id: "c", ok: false, error: "no" } },
+    ])
+      expect(parseHostMessage(JSON.stringify(m))?.type).toBe(m.type);
+  });
+
+  it("rejects a host without a name and a project missing a field", () => {
+    expect(
+      parseHostMessage(
+        JSON.stringify({
+          type: "host-hello",
+          host: { host: "", pid: 1, startedAt: 2 },
+          projects: [],
+        }),
+      ),
+    ).toBeNull();
+    const { active: _active, ...partial } = project;
+    expect(
+      parseHostMessage(
+        JSON.stringify({ type: "projects", projects: [partial] }),
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects agent messages on the host channel", () => {
+    expect(
+      parseHostMessage(
+        JSON.stringify({ type: "status", status: "x", paused: false }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("parseWatcherMessage command", () => {
+  it("accepts open-project and close-project", () => {
+    for (const type of ["open-project", "close-project"])
+      expect(
+        parseWatcherMessage(
+          JSON.stringify({
+            type: "command",
+            id: "c1",
+            host: "desk",
+            command: { type, project: "x" },
+          }),
+        ),
+      ).toMatchObject({ type: "command", command: { type } });
+  });
+
+  it("rejects an unknown command and a missing id", () => {
+    expect(
+      parseWatcherMessage(
+        JSON.stringify({
+          type: "command",
+          id: "c1",
+          host: "desk",
+          command: { type: "rm-rf", project: "x" },
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseWatcherMessage(
+        JSON.stringify({
+          type: "command",
+          host: "desk",
+          command: { type: "open-project", project: "x" },
+        }),
+      ),
     ).toBeNull();
   });
 });

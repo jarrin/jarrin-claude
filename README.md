@@ -425,9 +425,16 @@ loop's durable store:
   down and is re-sent on reconnect (asks and resolves included, deduplicated by id).
 - The wire protocol is `monitor/shared/protocol.ts` — dependency-free types the CLI imports
   directly; the server validates everything agents and browsers send against its zod mirror.
-- Optional shared secret: set `CLAUDJAR_MONITOR_TOKEN` in the server's `~/.server.env`
-  (passed through as `NUXT_AGENT_TOKEN`) and export the same value where loops run. The
-  browser side has no auth: it is served on the LAN / WireGuard only.
+- **Browsers log in** with OIDC against the homeserver auth app (auth.jarrin.nl, client
+  `claudjar`): the whole UI and `/ws/watch` need a session, `/auth/login` starts the code flow,
+  `/auth/logout` ends it, and only `/healthz` stays public. The login is nuxt-auth-utils'
+  generic OIDC provider (state, PKCE, nonce); the stack supplies `NUXT_OIDC_*` and
+  `NUXT_SESSION_PASSWORD`, and the callback is fixed at `/auth/callback`.
+- **Processes present a token** instead — loops on `/ws/agent`, services on `/ws/host`, and
+  live-log followers on `/api/live`. Set `CLAUDJAR_MONITOR_TOKEN` in the server's
+  `~/.server.env` (passed through as `NUXT_AGENT_TOKEN`), export the same value where loops
+  run, and put it in `/etc/claudjar.conf` as `monitor.token`. It is **mandatory**: with no
+  token configured the monitor turns every process away.
 
 `monitor/` is a standalone pnpm project (own lockfile and `check`, chained from the root
 `pnpm check`). The container config lives in `monitor/Dockerfile` and
@@ -443,9 +450,9 @@ machine-wide config is `/etc/claudjar.conf` (`CLAUDJAR_CONF` overrides, for test
 ```yaml
 projects_dir: /home/jarrin/Projects # absolute; its direct children are the projects
 user: jarrin # the account the unit runs as (never root)
-monitor: # optional for now
+monitor: # optional; without it the service runs unlinked
   url: wss://claudjar.jarrin.nl
-  token: <secret>
+  token: <secret> # the monitor's NUXT_AGENT_TOKEN; required with `monitor:`
 ```
 
 Unlike `.jarrin.yml`, this file **fails loudly**: unknown keys, a relative path, or a bad
@@ -457,6 +464,13 @@ directory). Linked worktrees (`.git` is a file) and `<repo>-worktrees/` folders 
 `claudjar service run` logs what it finds, records it in `~/.claudjar/service/state.json`
 (`JARRIN_SERVICE_DIR` overrides), and rescans every `--interval` seconds; `--once` scans and
 exits.
+
+With `monitor:` set, the service dials the web interface at `/ws/host` — outbound, like the
+loops, so no port opens on this machine. It publishes its projects, re-publishes them when a
+rescan changes them, and runs the commands sent from the UI's **hosts** tab (`open-project` /
+`close-project`, which set the project's `active` flag in `state.json`). The link reconnects on
+its own and never stops the service; each reconnect's hello carries the current project list,
+so nothing sent while it was down is lost.
 
 `sudo claudjar service install` writes `/etc/systemd/system/claudjar.service`, a system unit
 with `User=` from the conf, then enables and restarts it, printing every privileged command

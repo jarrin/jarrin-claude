@@ -9,9 +9,9 @@ import { parse } from "yaml";
  * ```yaml
  * projects_dir: /home/jarrin/Projects   # absolute; its direct children are the projects
  * user: jarrin                          # the account the systemd unit runs as
- * monitor:                              # optional until the service dials the monitor
+ * monitor:                              # optional: without it the service runs unlinked
  *   url: wss://claudjar.jarrin.nl
- *   token: <secret>                     # optional
+ *   token: <secret>                     # the monitor's NUXT_AGENT_TOKEN; required
  * ```
  *
  * Unlike `.jarrin.yml`, which degrades to "nothing selected" so a session never
@@ -25,14 +25,14 @@ export const DEFAULT_CONF_PATH = "/etc/claudjar.conf";
 
 export interface MonitorConf {
   readonly url: string;
-  /** Empty when the monitor needs no token. */
+  /** The monitor's `NUXT_AGENT_TOKEN`; it turns away any host without it. */
   readonly token: string;
 }
 
 export interface ServiceConf {
   readonly projectsDir: string;
   readonly user: string;
-  /** Absent until the service is linked to the web interface. */
+  /** Null when the service runs without the web interface. */
   readonly monitor: MonitorConf | null;
 }
 
@@ -106,7 +106,7 @@ export function parseConf(text: string, path = DEFAULT_CONF_PATH): ServiceConf {
   let monitor: MonitorConf | null = null;
   if (doc.monitor !== undefined && doc.monitor !== null) {
     if (!isMap(doc.monitor)) {
-      problems.push("`monitor` must be a mapping with `url` (and `token`)");
+      problems.push("`monitor` must be a mapping with `url` and `token`");
     } else {
       for (const key of Object.keys(doc.monitor)) {
         if (!MONITOR_KEYS.has(key))
@@ -123,14 +123,25 @@ export function parseConf(text: string, path = DEFAULT_CONF_PATH): ServiceConf {
       } else {
         urlOk = true;
       }
+      // The monitor rejects every host without its token, so a missing one is
+      // caught here rather than as a reconnect loop in the service log.
+      let tokenOk = false;
       if (token !== undefined && token !== null && typeof token !== "string") {
         problems.push("`monitor.token` must be a string");
+      } else if (typeof token !== "string" || !token.trim()) {
+        problems.push(
+          "`monitor.token` is required when `monitor` is set (the monitor's NUXT_AGENT_TOKEN)",
+        );
+      } else {
+        tokenOk = true;
       }
-      if (urlOk && typeof url === "string") {
-        monitor = {
-          url: url.trim(),
-          token: typeof token === "string" ? token.trim() : "",
-        };
+      if (
+        urlOk &&
+        tokenOk &&
+        typeof url === "string" &&
+        typeof token === "string"
+      ) {
+        monitor = { url: url.trim(), token: token.trim() };
       }
     }
   }

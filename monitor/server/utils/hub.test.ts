@@ -3,11 +3,18 @@ import { describe, expect, it } from "vitest";
 import type {
   Entry,
   InstanceInfo,
+  ServerHostMessage,
   ServerMessage,
   WatchMessage,
 } from "#shared/protocol";
 
-import { Hub, MAX_LINES, MAX_LIVE, OFFLINE_TTL_MS } from "./hub";
+import {
+  COMMAND_TIMEOUT_MS,
+  Hub,
+  MAX_LINES,
+  MAX_LIVE,
+  OFFLINE_TTL_MS,
+} from "./hub";
 import type { Saved } from "./hub";
 
 const M1 = { id: 7, title: "M1" };
@@ -335,6 +342,7 @@ describe("Hub as the loop store", () => {
     const restored = new Hub(() => 1);
     restored.restore({
       instances: [],
+      hosts: [],
       boards: [
         {
           repo: "jarrin/x",
@@ -358,5 +366,150 @@ describe("Hub as the loop store", () => {
       ],
     });
     expect(watched(restored)[0]).toMatchObject({ questions: [] });
+  });
+});
+
+describe("Hub hosts", () => {
+  const proj = (name: string, active = false) => ({
+    name,
+    path: `/p/${name}`,
+    configured: true,
+    backlogRepo: "",
+    active,
+  });
+  const hostInfo = (host: string) => ({ host, pid: 1, startedAt: 0 });
+
+  it("welcomes a host and shows it with its projects to watchers", () => {
+    const hub = new Hub(() => 5);
+    const got = watched(hub);
+    const toHost: ServerHostMessage[] = [];
+    hub.hostHello(hostInfo("desk"), [proj("a")], (m) => toHost.push(m));
+    expect(toHost).toEqual([{ type: "host-welcome" }]);
+    expect(got.at(-1)).toEqual({
+      type: "host",
+      host: {
+        ...hostInfo("desk"),
+        online: true,
+        lastSeen: 5,
+        projects: [proj("a")],
+      },
+    });
+    expect(watched(hub)[0]).toMatchObject({
+      type: "snapshot",
+      hosts: [{ host: "desk", projects: [proj("a")] }],
+    });
+  });
+
+  it("replaces the project list and upserts single projects", () => {
+    const hub = new Hub(() => 1);
+    hub.hostHello(hostInfo("desk"), [proj("a")], () => {});
+    hub.hostProjects("desk", [proj("a"), proj("b")]);
+    hub.hostProject("desk", proj("b", true));
+    hub.hostProject("desk", proj("c"));
+    expect(watched(hub)[0]).toMatchObject({
+      hosts: [{ projects: [proj("a"), proj("b", true), proj("c")] }],
+    });
+  });
+
+  it("routes a command to the named host only, and its result to every watcher", () => {
+    const hub = new Hub(() => 1);
+    const desk: ServerHostMessage[] = [];
+    const laptop: ServerHostMessage[] = [];
+    hub.hostHello(hostInfo("desk"), [], (m) => desk.push(m));
+    hub.hostHello(hostInfo("laptop"), [], (m) => laptop.push(m));
+    const a = watched(hub);
+    const b = watched(hub);
+    const command = { type: "open-project" as const, project: "x" };
+    hub.command("c1", "laptop", command);
+    expect(laptop.at(-1)).toEqual({ type: "command", id: "c1", command });
+    expect(desk).toEqual([{ type: "host-welcome" }]);
+
+    // Only the host it was sent to may answer it.
+    hub.hostResult("desk", { id: "c1", ok: true, error: "" });
+    expect(a.some((m) => m.type === "command-result")).toBe(false);
+
+    hub.hostResult("laptop", { id: "c1", ok: true, error: "" });
+    const outcome = {
+      type: "command-result",
+      result: { id: "c1", ok: true, error: "", host: "laptop", command, at: 1 },
+    };
+    expect(a.at(-1)).toEqual(outcome);
+    expect(b.at(-1)).toEqual(outcome);
+    // A duplicate answer changes nothing.
+    hub.hostResult("laptop", { id: "c1", ok: false, error: "late" });
+    expect(a.filter((m) => m.type === "command-result")).toHaveLength(1);
+  });
+
+  it("fails a command to an offline or unknown host at once", () => {
+    const hub = new Hub(() => 1);
+    hub.hostHello(hostInfo("desk"), [], () => {});
+    hub.hostDisconnect("desk");
+    const got = watched(hub);
+    hub.command("c1", "desk", { type: "close-project", project: "x" });
+    hub.command("c2", "nope", { type: "close-project", project: "x" });
+    expect(
+      got.flatMap((m) => (m.type === "command-result" ? [m.result] : [])),
+    ).toMatchObject([
+      { id: "c1", ok: false, error: "host is offline" },
+      { id: "c2", ok: false, error: "host is offline" },
+    ]);
+  });
+
+  it("fails pending commands when their host disconnects", () => {
+    const hub = new Hub(() => 1);
+    hub.hostHello(hostInfo("desk"), [], () => {});
+    const got = watched(hub);
+    hub.command("c1", "desk", { type: "open-project", project: "x" });
+    hub.hostDisconnect("desk");
+    expect(got).toContainEqual(
+      expect.objectContaining({
+        type: "command-result",
+        result: expect.objectContaining({
+          id: "c1",
+          error: "host disconnected",
+        }),
+      }),
+    );
+    expect(got.at(-1)).toMatchObject({ type: "host", host: { online: false } });
+  });
+
+  it("expires a command the host never answered", () => {
+    let t = 0;
+    const hub = new Hub(() => t);
+    hub.hostHello(hostInfo("desk"), [], () => {});
+    const got = watched(hub);
+    hub.command("c1", "desk", { type: "open-project", project: "x" });
+    t = COMMAND_TIMEOUT_MS + 1;
+    hub.command("c2", "desk", { type: "open-project", project: "y" });
+    expect(got).toContainEqual(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          id: "c1",
+          error: "host did not answer",
+        }),
+      }),
+    );
+  });
+
+  it("persists hosts and restores them offline with their projects", () => {
+    let saved: Saved | null = null;
+    const hub = new Hub(
+      () => 1,
+      (s) => (saved = s),
+    );
+    hub.hostHello(hostInfo("desk"), [proj("a", true)], () => {});
+    expect(saved).toMatchObject({ hosts: [{ host: "desk", online: true }] });
+    const restored = new Hub(() => 2);
+    if (!saved) throw new Error("not saved");
+    restored.restore(saved);
+    expect(watched(restored)[0]).toMatchObject({
+      hosts: [{ host: "desk", online: false, projects: [proj("a", true)] }],
+    });
+  });
+
+  it("ignores project updates from a host that is not connected", () => {
+    const hub = new Hub(() => 1);
+    hub.hostProjects("ghost", [proj("a")]);
+    expect(watched(hub)[0]).toMatchObject({ hosts: [] });
   });
 });

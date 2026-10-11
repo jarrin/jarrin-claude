@@ -3,8 +3,10 @@ import { instanceLabel } from "#shared/protocol";
 import { boardsOf, questionsOf } from "~/utils/instances";
 import type { Notice } from "~/utils/instances";
 
-/** The tab value of the live logs view; never a loop instance id. */
+/** The tab values of the fixed views; never a loop instance id. */
 const LIVE_TAB = "live-logs";
+const HOSTS_TAB = "hosts";
+const FIXED_TABS: readonly (string | null)[] = [LIVE_TAB, HOSTS_TAB];
 
 const activeId = ref<string | null>(null);
 
@@ -12,8 +14,16 @@ const openNotice = (notice: Notice): void => {
   if (notice.instanceId) activeId.value = notice.instanceId;
 };
 const notifications = useNotifications(openNotice);
-const { state, connected, dismiss, dismissLive, answer, control, input } =
-  useMonitor(notifications.notify);
+const {
+  state,
+  connected,
+  dismiss,
+  dismissLive,
+  answer,
+  control,
+  input,
+  command,
+} = useMonitor(notifications.notify);
 
 const instances = computed(() => state.value.instances);
 /** Lines seen per tab, for the unread counter on the others. */
@@ -41,7 +51,7 @@ watch(
   instances,
   (list) => {
     if (
-      activeId.value !== LIVE_TAB &&
+      !FIXED_TABS.includes(activeId.value) &&
       !list.some((i) => i.id === activeId.value)
     )
       activeId.value = list[0]?.id ?? LIVE_TAB;
@@ -56,6 +66,7 @@ const runningLive = computed(
 );
 const tabs = computed(() => [
   { label: "live logs", value: LIVE_TAB, inst: undefined },
+  { label: "hosts", value: HOSTS_TAB, inst: undefined },
   ...instances.value.map((inst) => ({
     label: instanceLabel(inst),
     value: inst.id,
@@ -114,7 +125,11 @@ const openQuestions = (id: string): number => {
           <template #leading="{ item }">
             <UIcon
               v-if="!item.inst"
-              name="i-lucide-scroll-text"
+              :name="
+                item.value === HOSTS_TAB
+                  ? 'i-lucide-server'
+                  : 'i-lucide-scroll-text'
+              "
               class="size-3.5"
             />
             <span
@@ -124,14 +139,14 @@ const openQuestions = (id: string): number => {
           </template>
           <template #trailing="{ item }">
             <UBadge
-              v-if="!item.inst"
+              v-if="item.value === LIVE_TAB"
               :label="String(runningLive)"
               color="info"
               size="sm"
               :class="['min-w-6 justify-center', !runningLive && 'invisible']"
               title="Running"
             />
-            <template v-else>
+            <template v-else-if="item.inst">
               <UBadge
                 v-if="openQuestions(item.inst.id)"
                 :label="`? ${openQuestions(item.inst.id)}`"
@@ -178,11 +193,30 @@ const openQuestions = (id: string): number => {
           variant="subtle"
           size="sm"
         />
+        <UButton
+          icon="i-lucide-log-out"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          title="Log out"
+          to="/auth/logout"
+          external
+        />
       </header>
       <main v-if="activeId === LIVE_TAB" class="flex min-h-0 flex-1 flex-col">
         <LiveLogs
           :logs="state.live"
           @dismiss="(ids) => ids.forEach((id) => dismissLive(id))"
+        />
+      </main>
+      <main
+        v-else-if="activeId === HOSTS_TAB"
+        class="flex min-h-0 flex-1 flex-col"
+      >
+        <HostList
+          :hosts="state.hosts"
+          :outcomes="state.outcomes"
+          @command="(host, cmd) => command(host, cmd)"
         />
       </main>
       <main v-else-if="active" class="flex min-h-0 flex-1 flex-col">

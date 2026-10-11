@@ -68,11 +68,16 @@ const RECONNECT_MS = 3000;
 const MAX_QUEUE = 5000;
 const CLOSE_WAIT_MS = 3000;
 
+/** `wss://host` → `wss://host<path>`; an explicit path in `base` is kept. */
+export function endpointUrl(base: string, path: string): string {
+  const url = new URL(base);
+  if (url.pathname === "/" || url.pathname === "") url.pathname = path;
+  return url.toString();
+}
+
 /** `wss://host` → `wss://host/ws/agent`; an explicit path is kept. */
 export function agentUrl(base: string): string {
-  const url = new URL(base);
-  if (url.pathname === "/" || url.pathname === "") url.pathname = AGENT_PATH;
-  return url.toString();
+  return endpointUrl(base, AGENT_PATH);
 }
 
 type Ask = Extract<AgentMessage, { type: "ask" }>["question"];

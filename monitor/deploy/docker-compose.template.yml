@@ -13,8 +13,9 @@ services:
   claudjar:
     image: zot.jarrin.nl/claudjar-monitor:latest
     environment:
-      # Optional shared secret: when set, loops must export the same value as
-      # CLAUDJAR_MONITOR_TOKEN. Empty = any LAN/WireGuard client may report in.
+      # Mandatory shared secret for processes: loops export the same value as
+      # CLAUDJAR_MONITOR_TOKEN, services set it as monitor.token in /etc/claudjar.conf.
+      # Empty = every loop, service and live-log follower is turned away.
       NUXT_AGENT_TOKEN: ${CLAUDJAR_MONITOR_TOKEN:-}
       # Browser login: OIDC code flow against the homeserver auth app (auth.jarrin.nl).
       # The client is registered by the `auth:` block below; its secret is the same
@@ -25,10 +26,14 @@ services:
       NUXT_OIDC_REDIRECT_URI: https://claudjar.jarrin.nl/auth/callback
       # Cookie-sealing secret for the monitor's own session (>= 32 chars).
       NUXT_SESSION_PASSWORD: ${CLAUDJAR_SESSION_SECRET:-}
+      # auth.jarrin.nl is signed by the Caddy internal CA: the login's server-side
+      # calls (discovery, token, userinfo) trust it via the mounted host bundle.
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
     volumes:
       - data:/data
     x-homeserver:
       expose: 3000
+      mount_host_certs: true
       health_check:
         test: wget -qO /dev/null http://127.0.0.1:3000/healthz || exit 1
       auth:

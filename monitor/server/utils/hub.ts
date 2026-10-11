@@ -2,8 +2,12 @@ import { boardKey, covers } from "#shared/protocol";
 import type {
   AgentMessage,
   Board,
+  CommandResult,
   ControlAction,
   Entry,
+  HostCommand,
+  HostInfo,
+  HostView,
   InstanceInfo,
   InstanceSummary,
   InstanceView,
@@ -12,7 +16,9 @@ import type {
   LivePost,
   LogLine,
   MilestoneRef,
+  ProjectInfo,
   Question,
+  ServerHostMessage,
   ServerMessage,
   WatchMessage,
 } from "#shared/protocol";
@@ -38,15 +44,26 @@ interface Instance {
   lines: LogLine[];
 }
 
+/** Commands a host has not answered yet are failed after this long. */
+export const COMMAND_TIMEOUT_MS = 60 * 1000;
+
 /** What outlives a restart. Log lines do not: they are a live view only. */
 export interface Saved {
   readonly instances: readonly InstanceSummary[];
   readonly boards: readonly Board[];
   readonly questions: readonly Question[];
+  readonly hosts: readonly HostView[];
 }
 
 export type Send = (msg: WatchMessage) => void;
 export type SendAgent = (msg: ServerMessage) => void;
+export type SendHost = (msg: ServerHostMessage) => void;
+
+interface Pending {
+  readonly host: string;
+  readonly command: HostCommand;
+  readonly at: number;
+}
 type AskPayload = Extract<AgentMessage, { type: "ask" }>["question"];
 
 /**
@@ -61,6 +78,9 @@ export class Hub {
   private readonly watchers = new Set<Send>();
   private readonly agents = new Map<string, SendAgent>();
   private readonly live = new Map<string, LiveLog>();
+  private readonly hosts = new Map<string, HostView>();
+  private readonly hostSends = new Map<string, SendHost>();
+  private readonly pending = new Map<string, Pending>();
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -83,6 +103,8 @@ export class Hub {
     for (const b of saved.boards)
       this.boards.set(boardKey(b.repo, b.milestone.id), b);
     for (const q of saved.questions) this.questions.set(q.id, q);
+    for (const h of saved.hosts)
+      this.hosts.set(h.host, { ...h, online: false });
     for (const b of this.boards.values()) this.dropOrphans(b);
   }
 
@@ -95,8 +117,107 @@ export class Hub {
       boards: [...this.boards.values()],
       questions: [...this.questions.values()],
       live: [...this.live.values()],
+      hosts: [...this.hosts.values()],
     });
     return () => this.watchers.delete(send);
+  }
+
+  /** A host (re)connected with its project list. */
+  hostHello(
+    info: HostInfo,
+    projects: readonly ProjectInfo[],
+    send: SendHost,
+  ): void {
+    this.hostSends.set(info.host, send);
+    send({ type: "host-welcome" });
+    this.setHost({
+      ...info,
+      online: true,
+      lastSeen: this.now(),
+      projects: [...projects],
+    });
+  }
+
+  /** A rescan changed the host's project list. */
+  hostProjects(host: string, projects: readonly ProjectInfo[]): void {
+    const h = this.hosts.get(host);
+    if (!h?.online) return;
+    this.setHost({ ...h, lastSeen: this.now(), projects: [...projects] });
+  }
+
+  /** One of the host's projects changed; an unknown name is added. */
+  hostProject(host: string, project: ProjectInfo): void {
+    const h = this.hosts.get(host);
+    if (!h?.online) return;
+    const known = h.projects.some((p) => p.name === project.name);
+    const projects = known
+      ? h.projects.map((p) => (p.name === project.name ? project : p))
+      : [...h.projects, project];
+    this.setHost({ ...h, lastSeen: this.now(), projects });
+  }
+
+  /** A watcher asked `host` to run `command`; the outcome reaches every watcher. */
+  command(id: string, host: string, command: HostCommand): void {
+    this.expireCommands();
+    const send = this.hostSends.get(host);
+    if (!send) {
+      this.broadcastResult(
+        { id, ok: false, error: "host is offline" },
+        {
+          host,
+          command,
+          at: this.now(),
+        },
+      );
+      return;
+    }
+    this.pending.set(id, { host, command, at: this.now() });
+    send({ type: "command", id, command });
+  }
+
+  /** A host answered a command; only the host it was sent to may answer it. */
+  hostResult(host: string, result: CommandResult): void {
+    const p = this.pending.get(result.id);
+    if (!p || p.host !== host) return;
+    this.pending.delete(result.id);
+    this.broadcastResult(result, p);
+  }
+
+  hostDisconnect(host: string): void {
+    const h = this.hosts.get(host);
+    this.hostSends.delete(host);
+    for (const [id, p] of this.pending)
+      if (p.host === host) {
+        this.pending.delete(id);
+        this.broadcastResult({ id, ok: false, error: "host disconnected" }, p);
+      }
+    if (h) this.setHost({ ...h, online: false, lastSeen: this.now() });
+  }
+
+  private setHost(h: HostView): void {
+    this.hosts.set(h.host, h);
+    this.broadcast({ type: "host", host: h });
+    this.save();
+  }
+
+  /** Fail commands a host never answered, so a watcher is not left waiting. */
+  private expireCommands(): void {
+    const cutoff = this.now() - COMMAND_TIMEOUT_MS;
+    for (const [id, p] of this.pending)
+      if (p.at < cutoff) {
+        this.pending.delete(id);
+        this.broadcastResult(
+          { id, ok: false, error: "host did not answer" },
+          p,
+        );
+      }
+  }
+
+  private broadcastResult(result: CommandResult, p: Pending): void {
+    this.broadcast({
+      type: "command-result",
+      result: { ...result, host: p.host, command: p.command, at: this.now() },
+    });
   }
 
   /** An agent (re)connected: register it and hand it the stored state of its milestones. */
@@ -358,6 +479,7 @@ export class Hub {
       instances: [...this.instances.values()].map(summary),
       boards: [...this.boards.values()],
       questions: [...this.questions.values()],
+      hosts: [...this.hosts.values()],
     });
   }
 

@@ -147,3 +147,26 @@ export function mergeDiscovery(
     sessions: prev.sessions,
   };
 }
+
+/**
+ * Open or close a project (the web interface's `open-project` / `close-project`).
+ * Null when no project of that name was discovered.
+ */
+export function setActive(
+  prev: ServiceState,
+  name: string,
+  active: boolean,
+  now: Date,
+): { readonly state: ServiceState; readonly project: ProjectState } | null {
+  const project = prev.projects.find((p) => p.name === name);
+  if (!project) return null;
+  const next = { ...project, active };
+  return {
+    state: {
+      ...prev,
+      updatedAt: now.toISOString(),
+      projects: prev.projects.map((p) => (p.name === name ? next : p)),
+    },
+    project: next,
+  };
+}

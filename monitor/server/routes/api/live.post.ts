@@ -7,7 +7,7 @@ export default defineEventHandler(async (event) => {
   const post = parseLivePost((await readRawBody(event)) ?? "");
   if (!post) throw createError({ statusCode: 400, statusMessage: "bad post" });
   const { agentToken } = useRuntimeConfig();
-  if (agentToken && post.token !== agentToken)
+  if (!tokenOk(agentToken, post.token))
     throw createError({ statusCode: 401, statusMessage: "bad token" });
   useHub().livePost(post);
   return "ok";

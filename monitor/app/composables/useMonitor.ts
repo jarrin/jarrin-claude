@@ -1,6 +1,7 @@
 import { WATCH_PATH } from "#shared/protocol";
 import type {
   ControlAction,
+  HostCommand,
   WatchMessage,
   WatcherMessage,
 } from "#shared/protocol";
@@ -13,6 +14,10 @@ const RECONNECT_MS = 2000;
  * The live monitor state, kept in sync over `/ws/watch`, plus the actions a
  * watcher can take. Every (re)connect starts with a full snapshot, so a dropped
  * socket loses nothing. `onNotice` gets what deserves a desktop notification.
+ *
+ * The socket needs a login. When it closes, an expired session is told apart
+ * from a network blip by asking nuxt-auth-utils' session endpoint (which the
+ * auth middleware guards too): a 401 there sends the page through the login.
  */
 export function useMonitor(onNotice: (notice: Notice) => void) {
   const state = shallowRef<MonitorState>(emptyState);
@@ -33,7 +38,14 @@ export function useMonitor(onNotice: (notice: Notice) => void) {
     ws.onclose = () => {
       connected.value = false;
       socket = null;
-      if (!stopped) setTimeout(connect, RECONNECT_MS);
+      if (stopped) return;
+      void fetch("/api/_auth/session").then(
+        (res) => {
+          if (res.status === 401) location.assign("/auth/login");
+          else setTimeout(connect, RECONNECT_MS);
+        },
+        () => setTimeout(connect, RECONNECT_MS),
+      );
     };
   };
 
@@ -60,5 +72,7 @@ export function useMonitor(onNotice: (notice: Notice) => void) {
       send({ type: "control", id, action }),
     input: (id: string, text: string) => send({ type: "input", id, text }),
     dismissLive: (id: string) => send({ type: "dismiss-live", id }),
+    command: (host: string, command: HostCommand) =>
+      send({ type: "command", id: crypto.randomUUID(), host, command }),
   };
 }

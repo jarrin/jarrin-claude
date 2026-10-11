@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 
 import { buildCommand, buildRouteMap } from "@stricli/core";
@@ -9,6 +9,7 @@ import type { LocalContext } from "../context.js";
 import type { ServiceConf } from "../service/conf.js";
 import { ConfError, confPath, readConf } from "../service/conf.js";
 import { scanProjectsDir } from "../service/discover.js";
+import { connectHost } from "../service/link.js";
 import { runService } from "../service/run.js";
 import { readState, serviceDir, statePath } from "../service/state.js";
 import type { Passwd } from "../service/unit.js";
@@ -72,6 +73,8 @@ async function runServiceRun(
   const stop = (): void => {
     controller.abort();
   };
+  const log = (line: string): void => void proc.stdout.write(`${line}\n`);
+  const { monitor } = conf;
   proc.once("SIGTERM", stop);
   proc.once("SIGINT", stop);
   try {
@@ -81,8 +84,24 @@ async function runServiceRun(
       intervalMs: flags.interval * 1000,
       once: flags.once,
       signal: controller.signal,
-      log: (line) => void proc.stdout.write(`${line}\n`),
+      log,
       scan: scanProjectsDir,
+      ...(monitor
+        ? {
+            connect: (handlers) =>
+              connectHost({
+                url: monitor.url,
+                token: monitor.token,
+                host: {
+                  host: hostname(),
+                  pid: proc.pid,
+                  startedAt: Date.now(),
+                },
+                log,
+                ...handlers,
+              }),
+          }
+        : {}),
     });
   } finally {
     proc.off("SIGTERM", stop);
@@ -276,7 +295,11 @@ const runCommand = buildCommand({
       "found under projects_dir — direct children that are a git repo's main " +
       "checkout; linked worktrees and <repo>-worktrees/ folders are excluded — " +
       "records them in ~/.claudjar/service/state.json, and rescans until " +
-      "SIGTERM / SIGINT. Must run as the conf's `user`.",
+      "SIGTERM / SIGINT. Must run as the conf's `user`. With `monitor:` set, it " +
+      "dials the web interface (/ws/host, authenticated by monitor.token), " +
+      "publishes the projects and re-publishes them when a rescan changes them, " +
+      "and runs the open / close commands sent from there; the link reconnects " +
+      "on its own and never stops the service.",
   },
 });
 

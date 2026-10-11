@@ -1,6 +1,8 @@
 import { covers, instanceLabel } from "#shared/protocol";
 import type {
   Board,
+  CommandOutcome,
+  HostView,
   InstanceView,
   LiveLog,
   Question,
@@ -11,6 +13,8 @@ import type {
 export const MAX_VIEW_LINES = 5000;
 /** Mirrors the server's per-log cap on live log text. */
 export const MAX_LIVE_TEXT = 256 * 1024;
+/** Command outcomes kept for display, newest last. */
+export const MAX_OUTCOMES = 50;
 
 /** Everything the page shows, as the watch stream builds it. */
 export interface MonitorState {
@@ -19,6 +23,10 @@ export interface MonitorState {
   readonly questions: readonly Question[];
   /** Live logs, least recently active first. */
   readonly live: readonly LiveLog[];
+  /** Machines running `claudjar service`, by host name. */
+  readonly hosts: readonly HostView[];
+  /** Outcomes of host commands since this page connected, oldest first. */
+  readonly outcomes: readonly CommandOutcome[];
 }
 
 export const emptyState: MonitorState = {
@@ -26,6 +34,8 @@ export const emptyState: MonitorState = {
   boards: [],
   questions: [],
   live: [],
+  hosts: [],
+  outcomes: [],
 };
 
 /** Fold one server message into the state (pure, for testing). */
@@ -40,6 +50,9 @@ export function applyWatchMessage(
         boards: [...msg.boards],
         questions: [...msg.questions],
         live: [...msg.live],
+        hosts: [...msg.hosts],
+        // Outcomes are not part of the server's state; a reconnect keeps ours.
+        outcomes: state.outcomes,
       };
     case "instance": {
       const known = state.instances.some((x) => x.id === msg.instance.id);
@@ -108,6 +121,18 @@ export function applyWatchMessage(
     }
     case "live-removed":
       return { ...state, live: state.live.filter((l) => l.id !== msg.id) };
+    case "host":
+      return {
+        ...state,
+        hosts: state.hosts.some((h) => h.host === msg.host.host)
+          ? state.hosts.map((h) => (h.host === msg.host.host ? msg.host : h))
+          : [...state.hosts, msg.host],
+      };
+    case "command-result":
+      return {
+        ...state,
+        outcomes: [...state.outcomes, msg.result].slice(-MAX_OUTCOMES),
+      };
   }
 }
 

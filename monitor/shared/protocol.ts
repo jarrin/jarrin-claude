@@ -1,8 +1,9 @@
 /**
- * Wire protocol between `claudjar loop` instances (agents), this server, and the
- * browser UI (watchers). Plain types only: the claudjar CLI imports this file
- * directly, so it must not pull in any dependency. The server validates what
- * agents and watchers send against the zod mirror in `server/utils/schema.ts`.
+ * Wire protocol between `claudjar loop` instances (agents), `claudjar service`
+ * instances (hosts), this server, and the browser UI (watchers). Plain types
+ * only: the claudjar CLI imports this file directly, so it must not pull in any
+ * dependency. The server validates what agents, hosts and watchers send against
+ * the zod mirror in `server/utils/schema.ts`.
  *
  * The server is the loop's durable store: each milestone's progress (the issues
  * and their sessions' steps) and the open questions live here, persisted, so a
@@ -227,6 +228,79 @@ export interface InstanceView extends InstanceSummary {
   readonly lines: readonly LogLine[];
 }
 
+/**
+ * A machine running `claudjar service`: it dials {@link HOST_PATH}, publishes the
+ * projects it discovered, and runs the commands watchers send it. Keyed by
+ * hostname, so a restarted service lands on the same entry.
+ */
+export interface HostInfo {
+  readonly host: string;
+  readonly pid: number;
+  readonly startedAt: number;
+}
+
+/** One project a host offers: a direct child of its `projects_dir`. */
+export interface ProjectInfo {
+  readonly name: string;
+  readonly path: string;
+  /** Has `.claude/.jarrin.yml`. */
+  readonly configured: boolean;
+  /** Its backlog repo (`owner/name`), empty when none is configured. */
+  readonly backlogRepo: string;
+  /** Open in the web interface. */
+  readonly active: boolean;
+}
+
+/** What a watcher can ask a host to do. */
+export type HostCommand =
+  | { readonly type: "open-project"; readonly project: string }
+  | { readonly type: "close-project"; readonly project: string };
+
+/** A host's answer to one command, keyed by the id the watcher chose. */
+export interface CommandResult {
+  readonly id: string;
+  readonly ok: boolean;
+  /** Why it failed; empty on success. */
+  readonly error: string;
+}
+
+/** Host → server. The first message must be `host-hello`, carrying the agent token. */
+export type HostMessage =
+  | {
+      readonly type: "host-hello";
+      readonly host: HostInfo;
+      readonly token?: string;
+      readonly projects: readonly ProjectInfo[];
+    }
+  /** The whole project list, after a rescan changed it. */
+  | { readonly type: "projects"; readonly projects: readonly ProjectInfo[] }
+  /** One project changed (opened, closed). */
+  | { readonly type: "project-state"; readonly project: ProjectInfo }
+  | { readonly type: "command-result"; readonly result: CommandResult };
+
+/** Server → host. */
+export type ServerHostMessage =
+  | { readonly type: "host-welcome" }
+  | {
+      readonly type: "command";
+      readonly id: string;
+      readonly command: HostCommand;
+    };
+
+/** A host as watchers see it; an offline host keeps its last project list. */
+export interface HostView extends HostInfo {
+  readonly online: boolean;
+  readonly lastSeen: number;
+  readonly projects: readonly ProjectInfo[];
+}
+
+/** A command's outcome as watchers see it: which host ran what. */
+export interface CommandOutcome extends CommandResult {
+  readonly host: string;
+  readonly command: HostCommand;
+  readonly at: number;
+}
+
 /** Server → watcher. Boards and questions are keyed by repo + milestone, not instance. */
 export type WatchMessage =
   | {
@@ -235,6 +309,7 @@ export type WatchMessage =
       readonly boards: readonly Board[];
       readonly questions: readonly Question[];
       readonly live: readonly LiveLog[];
+      readonly hosts: readonly HostView[];
     }
   | { readonly type: "instance"; readonly instance: InstanceSummary }
   | {
@@ -248,7 +323,9 @@ export type WatchMessage =
   | { readonly type: "question-closed"; readonly id: string }
   /** New content of a live log (created on first sight); `chunk` is appended. */
   | { readonly type: "live"; readonly log: LiveLogInfo; readonly chunk: string }
-  | { readonly type: "live-removed"; readonly id: string };
+  | { readonly type: "live-removed"; readonly id: string }
+  | { readonly type: "host"; readonly host: HostView }
+  | { readonly type: "command-result"; readonly result: CommandOutcome };
 
 /** Watcher → server. */
 export type WatcherMessage =
@@ -264,7 +341,14 @@ export type WatcherMessage =
       readonly action: ControlAction;
     }
   | { readonly type: "input"; readonly id: string; readonly text: string }
-  | { readonly type: "dismiss-live"; readonly id: string };
+  | { readonly type: "dismiss-live"; readonly id: string }
+  /** Run `command` on `host`; `id` comes back on the matching `command-result`. */
+  | {
+      readonly type: "command";
+      readonly id: string;
+      readonly host: string;
+      readonly command: HostCommand;
+    };
 
 /** The key boards are stored under: one per repo + milestone. */
 export function boardKey(repo: string, milestoneId: number): string {
@@ -292,4 +376,5 @@ export function instanceLabel(info: InstanceInfo): string {
 
 export const AGENT_PATH = "/ws/agent";
 export const WATCH_PATH = "/ws/watch";
+export const HOST_PATH = "/ws/host";
 export const LIVE_PATH = "/api/live";

@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { StateFile } from "./store";
 
-const saved = { instances: [], boards: [], questions: [] };
+const saved = { instances: [], boards: [], questions: [], hosts: [] };
 
 describe("StateFile", () => {
   it("round-trips the saved state", () => {
@@ -15,6 +15,15 @@ describe("StateFile", () => {
     expect(file.load()).toBeNull();
     file.save(saved);
     file.flush();
+    expect(new StateFile(dir).load()).toEqual(saved);
+  });
+
+  it("reads a state file from before the host channel as having no hosts", () => {
+    const dir = mkdtempSync(join(tmpdir(), "claudjar-monitor-"));
+    writeFileSync(
+      join(dir, "state.json"),
+      JSON.stringify({ instances: [], boards: [], questions: [] }),
+    );
     expect(new StateFile(dir).load()).toEqual(saved);
   });
 

@@ -422,7 +422,7 @@ The long-lived per-user daemon behind the web interface lives in `src/service/`.
 loudly** — `parseConf` throws a `ConfError` listing every problem, unknown keys included —
 because a service silently running with no projects or as the wrong user is worse than one
 that refuses to start. Keys: `projects_dir` (absolute), `user` (never root), optional
-`monitor.url` / `monitor.token`.
+`monitor.url` + `monitor.token` (both required once `monitor:` is set).
 
 Discovery is IO (`scanProjectsDir`) feeding a pure classifier (`discoverProjects`): a project
 is a direct child whose `.git` is a **directory**; linked worktrees (`.git` is a file) and
@@ -435,6 +435,18 @@ the default `KillMode` on purpose: the session launcher already puts every spawn
 `systemd-run --user --scope`, so sessions survive a unit restart. That scope needs the
 user's systemd manager, so the unit sets `XDG_RUNTIME_DIR`, and `service status` reports
 linger.
+
+**The host channel.** With `monitor:` set, `src/service/link.ts` dials the monitor's
+`/ws/host` (outbound, so no inbound port) and speaks the `HostMessage` / `ServerHostMessage`
+half of `monitor/shared/protocol.ts`: `host-hello` (token + projects), `projects` after a
+rescan that changed them, `project-state`, and `command-result` for each `command`
+(`open-project` / `close-project` today). It keeps no outbound queue on purpose: the monitor
+needs the _current_ list, which every reconnect's hello carries, and it fails a command whose
+host dropped itself. `monitor.token` is required by `parseConf`, because the monitor rejects
+every process without `NUXT_AGENT_TOKEN`. On the monitor, browsers authenticate by OIDC
+(`server/utils/oidc.ts`, nuxt-auth-utils) and processes by that token
+(`server/utils/auth.ts`); `/ws/watch` checks the session in its upgrade hook, since the HTTP
+middleware never sees a WebSocket upgrade.
 
 ### The standalone binary
 

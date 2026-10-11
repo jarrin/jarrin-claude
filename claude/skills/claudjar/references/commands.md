@@ -326,7 +326,7 @@ USAGE
   claudjar service run [--once] [--interval value]
   claudjar service run --help
 
-Reads /etc/claudjar.conf (CLAUDJAR_CONF overrides), logs the projects found under projects_dir — direct children that are a git repo's main checkout; linked worktrees and <repo>-worktrees/ folders are excluded — records them in ~/.claudjar/service/state.json, and rescans until SIGTERM / SIGINT. Must run as the conf's `user`.
+Reads /etc/claudjar.conf (CLAUDJAR_CONF overrides), logs the projects found under projects_dir — direct children that are a git repo's main checkout; linked worktrees and <repo>-worktrees/ folders are excluded — records them in ~/.claudjar/service/state.json, and rescans until SIGTERM / SIGINT. Must run as the conf's `user`. With `monitor:` set, it dials the web interface (/ws/host, authenticated by monitor.token), publishes the projects and re-publishes them when a rescan changes them, and runs the open / close commands sent from there; the link reconnects on its own and never stops the service.
 
 FLAGS
      [--once]      Scan once, log the projects, and exit [default = false]

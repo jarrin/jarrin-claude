@@ -108,6 +108,7 @@ describe("applyWatchMessage", () => {
     expect(
       applyWatchMessage(emptyState, {
         type: "snapshot",
+        hosts: [],
         instances: [view],
         boards: [board("open")],
         questions: [question],
@@ -118,7 +119,45 @@ describe("applyWatchMessage", () => {
       boards: [board("open")],
       questions: [question],
       live: [],
+      hosts: [],
+      outcomes: [],
     });
+  });
+
+  it("upserts hosts and keeps command outcomes across a snapshot", () => {
+    const host = {
+      host: "desk",
+      pid: 1,
+      startedAt: 0,
+      online: true,
+      lastSeen: 0,
+      projects: [],
+    };
+    const outcome = {
+      id: "c1",
+      ok: true,
+      error: "",
+      host: "desk",
+      command: { type: "open-project" as const, project: "x" },
+      at: 0,
+    };
+    let s = applyWatchMessage(emptyState, { type: "host", host });
+    s = applyWatchMessage(s, {
+      type: "host",
+      host: { ...host, online: false },
+    });
+    expect(s.hosts).toEqual([{ ...host, online: false }]);
+    s = applyWatchMessage(s, { type: "command-result", result: outcome });
+    s = applyWatchMessage(s, {
+      type: "snapshot",
+      instances: [],
+      boards: [],
+      questions: [],
+      live: [],
+      hosts: [host],
+    });
+    expect(s.hosts).toEqual([host]);
+    expect(s.outcomes).toEqual([outcome]);
   });
 
   it("appends live log chunks and drops removed logs", () => {
@@ -169,6 +208,8 @@ describe("applyWatchMessage", () => {
     const s: MonitorState = {
       instances: [view],
       live: [],
+      hosts: [],
+      outcomes: [],
       boards: [
         board("open"),
         { ...board("open"), milestone: S2 },
@@ -219,6 +260,7 @@ describe("noticesFor", () => {
     expect(
       noticesFor(emptyState, {
         type: "snapshot",
+        hosts: [],
         instances: [view],
         boards: [],
         questions: [question],

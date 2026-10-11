@@ -1,7 +1,8 @@
 /**
- * `claudjar loop` instances connect here. The first message must be `hello`;
- * when `NUXT_AGENT_TOKEN` is set it must carry that token. The reply is a
- * `welcome` with the stored state of the instance's milestones.
+ * `claudjar loop` instances connect here. The first message must be `hello`,
+ * carrying `NUXT_AGENT_TOKEN` (mandatory: with none configured, every loop is
+ * turned away). The reply is a `welcome` with the stored state of the
+ * instance's milestones.
  */
 const instanceOf = new Map<string, string>(); // peer id → instance id
 const peerOf = new Map<string, string>(); // instance id → its current peer id
@@ -14,7 +15,7 @@ export default defineWebSocketHandler({
     const id = instanceOf.get(peer.id);
     if (msg.type === "hello") {
       const { agentToken } = useRuntimeConfig();
-      if (agentToken && msg.token !== agentToken) {
+      if (!tokenOk(agentToken, msg.token)) {
         peer.close(4401, "bad token");
         return;
       }

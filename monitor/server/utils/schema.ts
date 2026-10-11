@@ -5,10 +5,14 @@ import type {
   Board,
   Entry,
   EntryStatus,
+  HostCommand,
+  HostMessage,
+  HostView,
   InstanceSummary,
   LogDetail,
   LivePost,
   LogKind,
+  ProjectInfo,
   Question,
   WatcherMessage,
 } from "#shared/protocol";
@@ -133,6 +137,48 @@ const agentMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("resolved"), questionId: z.string().max(64) }),
 ]) satisfies z.ZodType<AgentMessage>;
 
+const hostInfo = z.object({
+  host: z.string().min(1).max(128),
+  pid: z.number().int(),
+  startedAt: z.number(),
+});
+
+const projectInfo = z.object({
+  name: z.string().min(1).max(256),
+  path: z.string().max(4096),
+  configured: z.boolean(),
+  backlogRepo: z.string().max(256),
+  active: z.boolean(),
+}) satisfies z.ZodType<ProjectInfo>;
+
+const projectList = z.array(projectInfo).max(1000);
+
+const hostCommand = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("open-project"), project: z.string().max(256) }),
+  z.object({ type: z.literal("close-project"), project: z.string().max(256) }),
+]) satisfies z.ZodType<HostCommand>;
+
+const commandId = z.string().min(1).max(64);
+
+const hostMessage = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("host-hello"),
+    host: hostInfo,
+    token: z.string().optional(),
+    projects: projectList,
+  }),
+  z.object({ type: z.literal("projects"), projects: projectList }),
+  z.object({ type: z.literal("project-state"), project: projectInfo }),
+  z.object({
+    type: z.literal("command-result"),
+    result: z.object({
+      id: commandId,
+      ok: z.boolean(),
+      error: z.string().max(4096),
+    }),
+  }),
+]) satisfies z.ZodType<HostMessage>;
+
 const watcherMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("dismiss"), id: z.string() }),
   z.object({
@@ -147,6 +193,12 @@ const watcherMessage = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("input"), id: z.string(), text: questionText }),
   z.object({ type: z.literal("dismiss-live"), id: z.string() }),
+  z.object({
+    type: z.literal("command"),
+    id: commandId,
+    host: z.string().max(128),
+    command: hostCommand,
+  }),
 ]) satisfies z.ZodType<WatcherMessage>;
 
 const livePost = z.object({
@@ -196,6 +248,16 @@ const saved = z.object({
   ),
   boards: z.array(board),
   questions: z.array(question),
+  // Added with the host channel; a state file written before it has none.
+  hosts: z
+    .array(
+      hostInfo.extend({
+        online: z.boolean(),
+        lastSeen: z.number(),
+        projects: z.array(projectInfo),
+      }) satisfies z.ZodType<HostView>,
+    )
+    .default([]),
 }) satisfies z.ZodType<Saved>;
 
 function parseWith<T>(schema: z.ZodType<T>, raw: string): T | null {
@@ -214,6 +276,9 @@ export const parseAgentMessage = (raw: string): AgentMessage | null =>
 
 export const parseWatcherMessage = (raw: string): WatcherMessage | null =>
   parseWith(watcherMessage, raw);
+
+export const parseHostMessage = (raw: string): HostMessage | null =>
+  parseWith(hostMessage, raw);
 
 export const parseLivePost = (raw: string): LivePost | null =>
   parseWith(livePost, raw);
