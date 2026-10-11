@@ -401,6 +401,27 @@ config files present, rules with on-disk presence, the command table, the `proje
 backlog methods,
 worktree config, backup, and available skills.
 
+### The service (`claudjar service`, `/etc/claudjar.conf`)
+
+The long-lived per-user daemon behind the web interface lives in `src/service/`. Its config,
+`/etc/claudjar.conf` (`CLAUDJAR_CONF` overrides), is the one config here that **fails
+loudly** — `parseConf` throws a `ConfError` listing every problem, unknown keys included —
+because a service silently running with no projects or as the wrong user is worse than one
+that refuses to start. Keys: `projects_dir` (absolute), `user` (never root), optional
+`monitor.url` / `monitor.token`.
+
+Discovery is IO (`scanProjectsDir`) feeding a pure classifier (`discoverProjects`): a project
+is a direct child whose `.git` is a **directory**; linked worktrees (`.git` is a file) and
+`<repo>-worktrees/` folders are excluded. State lives in the run-as user's
+`~/.claudjar/service/state.json` (`JARRIN_SERVICE_DIR` overrides); a rescan re-derives the
+project list from disk and carries over only what disk cannot tell (`active`, `sessions`).
+
+`service install` renders a **system** unit with `User=` (`src/service/unit.ts`) and keeps
+the default `KillMode` on purpose: the session launcher already puts every spawn in its own
+`systemd-run --user --scope`, so sessions survive a unit restart. That scope needs the
+user's systemd manager, so the unit sets `XDG_RUNTIME_DIR`, and `service status` reports
+linger.
+
 ### The standalone binary
 
 `pnpm run build` produces two artifacts: `dist/claudjar.cjs` (the bundle) and

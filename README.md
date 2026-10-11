@@ -185,6 +185,7 @@ subcommands:
 | `claudjar caddy status`         | Show the caddy container state and every registered route                                                                                        |
 | `claudjar caddy trust`          | Anchor the caddy's internal CA in this host's trust store, so `https://<slug>.localhost` verifies (sudo, once)                                   |
 | `claudjar loop <milestone>…`    | Work every open issue of Gitea milestones unattended, a fresh `claude -p` per issue; waits out usage limits; progress + questions on the monitor |
+| `claudjar service …`            | The per-user service from `/etc/claudjar.conf`: `run` (foreground), `install` / `uninstall` (systemd system unit, sudo), `status`                |
 | `claudjar release`              | Cut a version: bump `project.dist.version`, mirror it into `sync:` files, build, commit, tag (never pushes)                                      |
 | `claudjar install`              | Machine setup: symlink config into `~/.claude`, link the binary onto PATH, enable hooks, check prerequisites                                     |
 | `claudjar help --full`          | Print every command's help as one Markdown document (`--include-internal` adds the `api` commands)                                               |
@@ -433,6 +434,36 @@ loop's durable store:
 `monitor/deploy/docker-compose.template.yml`; `pnpm -C monitor run deploy` builds the image,
 pushes it to `zot.jarrin.nl`, copies the template to `server-new/stacks/claudjar/`, and
 restarts the stack. Nothing is built on the server.
+
+### The service (`/etc/claudjar.conf`)
+
+`claudjar service` is the long-lived, per-user daemon behind the web interface. Its
+machine-wide config is `/etc/claudjar.conf` (`CLAUDJAR_CONF` overrides, for tests):
+
+```yaml
+projects_dir: /home/jarrin/Projects # absolute; its direct children are the projects
+user: jarrin # the account the unit runs as (never root)
+monitor: # optional for now
+  url: wss://claudjar.jarrin.nl
+  token: <secret>
+```
+
+Unlike `.jarrin.yml`, this file **fails loudly**: unknown keys, a relative path, or a bad
+user name stop the service with every problem listed, because a service that quietly ran with
+no projects or as the wrong user is worse than one that refuses to start.
+
+A **project** is a direct child of `projects_dir` that is a repo's main checkout (`.git` is a
+directory). Linked worktrees (`.git` is a file) and `<repo>-worktrees/` folders are excluded.
+`claudjar service run` logs what it finds, records it in `~/.claudjar/service/state.json`
+(`JARRIN_SERVICE_DIR` overrides), and rescans every `--interval` seconds; `--once` scans and
+exits.
+
+`sudo claudjar service install` writes `/etc/systemd/system/claudjar.service`, a system unit
+with `User=` from the conf, then enables and restarts it, printing every privileged command
+first. It keeps the default `KillMode`: the session launcher wraps each spawn in
+`systemd-run --user --scope`, so sessions outlive a restart of the unit. That scope needs the
+user's systemd manager, which without linger runs only while the user is logged in;
+`claudjar service status` reports it (`sudo loginctl enable-linger <user>`).
 
 ### Releasing
 

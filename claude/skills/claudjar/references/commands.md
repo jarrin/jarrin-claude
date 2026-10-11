@@ -267,19 +267,20 @@ FLAGS
 
 ```
 USAGE
-  claudjar loop [--repo value] [--dry-run] [--max-issues value] [--max-failures value] [--model value] [--permission-mode value] [--push] [--monitor value] <args>...
+  claudjar loop [--repo value] [--dry-run] [--max-issues value] [--max-failures value] [--model value] [--permission-mode value] [--push] [--allow-prod] [--monitor value] <args>...
   claudjar loop --help
 
-Runs `claude -p "Continue <n>"` for each open issue of the given milestones, in order, a new session per issue (the context is cleared between issues). A usage limit pauses the loop until it resets, then resumes the same session. The loop needs the claudjar monitor (--monitor or CLAUDJAR_MONITOR_URL, e.g. wss://claudjar.jarrin.nl; CLAUDJAR_MONITOR_TOKEN when it requires one): it keeps each milestone's progress — the issues and the sessions' <<<STEPS checklists — so a restart resumes interrupted sessions and keeps waiting on unanswered questions, and it shows every session live, one tab per loop. A session that ends on a question parks its issue: the question appears on the monitor (with a browser desktop notification), other issues are worked meanwhile, and the answer typed there resumes that session. From the monitor the loop can also be paused (the current session finishes, no new one starts) and sent input, which reaches the running session as a user message. An issue the session leaves open without a question (blocked) is skipped. Sessions only commit, never release or push; a clean finish (every issue closed) pushes the checked-out branch unless --no-push. Loops may run in parallel as long as no two share a worktree or a milestone. Stream logs go to ~/.claudjar/loop/<owner>__<name>/.
+Runs `claude -p "Continue <n>"` for each open issue of the given milestones, in order, a new session per issue (the context is cleared between issues). A usage limit pauses the loop until it resets, then resumes the same session. The loop needs the claudjar monitor (--monitor or CLAUDJAR_MONITOR_URL, e.g. wss://claudjar.jarrin.nl; CLAUDJAR_MONITOR_TOKEN when it requires one): it keeps each milestone's progress — the issues and the sessions' <<<STEPS checklists — so a restart resumes interrupted sessions and keeps waiting on unanswered questions, and it shows every session live, one tab per loop. A session that ends on a question parks its issue: the question appears on the monitor (with a browser desktop notification), other issues are worked meanwhile, and the answer typed there resumes that session. From the monitor the loop can also be paused (the current session finishes, no new one starts) and sent input, which reaches the running session as a user message. An issue the session leaves open without a question (blocked) is skipped. Sessions only commit, never release or push — unless --allow-prod, which lets them release, deploy, use sudo and edit prod's .env; a clean finish (every issue closed) pushes the checked-out branch unless --no-push. Loops may run in parallel as long as no two share a worktree or a milestone. Stream logs go to ~/.claudjar/loop/<owner>__<name>/.
 
 FLAGS
      [--repo]             Gitea owner/name (default: backlog.plan.repo, else backlog.repo)
-     [--dry-run]          List the queue in work order and exit                                                    [default = false]
-     [--max-issues]       Stop after this many issues (0 = all)                                                    [default = 0]
-     [--max-failures]     Stop after this many issues in a row are left open (0 = never)                           [default = 3]
+     [--dry-run]          List the queue in work order and exit                                                                          [default = false]
+     [--max-issues]       Stop after this many issues (0 = all)                                                                          [default = 0]
+     [--max-failures]     Stop after this many issues in a row are left open (0 = never)                                                 [default = 3]
      [--model]            Model for every session (default: Claude Code's own)
-     [--permission-mode]  Claude Code --permission-mode for the unattended sessions                                [default = bypassPermissions]
-     [--push/--no-push]   `git push` when the loop finishes cleanly (every issue closed, none blocked or awaiting) [default = true]
+     [--permission-mode]  Claude Code --permission-mode for the unattended sessions                                                      [default = bypassPermissions]
+     [--push/--no-push]   `git push` when the loop finishes cleanly (every issue closed, none blocked or awaiting)                       [default = true]
+     [--allow-prod]       Let sessions release, deploy, use sudo and edit prod's .env when the issue calls for it (default: commit only) [default = false]
      [--monitor]          claudjar monitor URL — required (default: $CLAUDJAR_MONITOR_URL)
   -h  --help              Print help information and exit
 
@@ -313,6 +314,65 @@ FLAGS
      [--yes]                           Skip the confirmation prompt                               [default = false]
      [--interaction/--no-interaction]  Confirm before releasing (use --no-interaction to disable) [default = true]
   -h  --help                           Print help information and exit
+```
+
+### claudjar service run
+
+```
+USAGE
+  claudjar service run [--once] [--interval value]
+  claudjar service run --help
+
+Reads /etc/claudjar.conf (CLAUDJAR_CONF overrides), logs the projects found under projects_dir — direct children that are a git repo's main checkout; linked worktrees and <repo>-worktrees/ folders are excluded — records them in ~/.claudjar/service/state.json, and rescans until SIGTERM / SIGINT. Must run as the conf's `user`.
+
+FLAGS
+     [--once]      Scan once, log the projects, and exit [default = false]
+     [--interval]  Seconds between project rescans       [default = 60]
+  -h  --help       Print help information and exit
+```
+
+### claudjar service install
+
+```
+USAGE
+  claudjar service install [--bin value] [--dry-run]
+  claudjar service install --help
+
+Writes /etc/systemd/system/claudjar.service — a system unit with User= set to the conf's `user` — then reloads systemd, enables the unit and (re)starts it. Every privileged command is printed before it runs, through sudo unless already root. Rerun it to apply a changed conf user or binary path.
+
+The unit keeps the default KillMode: background sessions are launched in their own `systemd-run --user --scope`, so restarting the service does not kill them.
+
+FLAGS
+     [--bin]      claudjar executable the unit runs (default: <user home>/.local/bin/claudjar)
+     [--dry-run]  Print what would run without running it                                      [default = false]
+  -h  --help      Print help information and exit
+```
+
+### claudjar service uninstall
+
+```
+USAGE
+  claudjar service uninstall [--dry-run]
+  claudjar service uninstall --help
+
+Leaves /etc/claudjar.conf and the user's ~/.claudjar/service state alone.
+
+FLAGS
+     [--dry-run]  Print what would run without running it [default = false]
+  -h  --help      Print help information and exit
+```
+
+### claudjar service status
+
+```
+USAGE
+  claudjar service status
+  claudjar service status --help
+
+Show the conf, the unit's state, linger and the service state file
+
+FLAGS
+  -h --help  Print help information and exit
 ```
 
 ### claudjar help
