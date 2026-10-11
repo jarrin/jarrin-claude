@@ -54,6 +54,10 @@ export default defineConfig({
   minify: false,
   sourcemap: false,
   dts: false,
+  // Keep the `node:` prefix on built-in imports. tsup strips it by default,
+  // which is harmless for `fs` but fatal for prefix-only modules: `require("sea")`
+  // does not exist, so a bundle importing `node:sea` crashed the binary on load.
+  removeNodeProtocol: false,
   define: {
     __CLAUDJAR_VERSION__: JSON.stringify(releasedVersion()),
   },

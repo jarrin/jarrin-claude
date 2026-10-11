@@ -103,4 +103,10 @@ chmodSync(output, 0o755);
 rmSync(blob, { force: true });
 rmSync(seaConfig, { force: true });
 
+// 4. Smoke-test the artifact. Every command module loads at startup, so a bundle
+//    that cannot resolve one of its requires inside the SEA (as `require("sea")`
+//    once did) dies on `--version` — and a binary that dies here is the hook and
+//    statusline of every repo on the machine, so fail the build instead.
+run(output, ["--version"], "smoke test (claudjar --version)");
+
 console.log(`build-binary: wrote ${output}`);
