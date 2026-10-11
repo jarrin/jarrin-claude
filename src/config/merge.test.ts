@@ -166,6 +166,17 @@ describe("mergeConfig", () => {
     // base worktree.port is 0, so the local assignment wins.
     expect(mergeConfig(base, emptyConfig()).worktree.port).toBe(0);
   });
+
+  it("reads a stamped worktree.milestone from the local file", () => {
+    const merged = mergeConfig(
+      emptyConfig(),
+      parseConfig("worktree:\n  name: dev\n  milestone: plan-x\n"),
+    );
+    expect(merged.worktree.milestone).toBe("plan-x");
+    expect(mergeConfig(emptyConfig(), emptyConfig()).worktree.milestone).toBe(
+      "",
+    );
+  });
   it("takes the caddy block from base only", () => {
     // caddy: is committed, shared config like project:. A machine-local file
     // must not be able to switch a proxy on behind the repo's back.

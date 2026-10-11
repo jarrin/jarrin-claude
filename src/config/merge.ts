@@ -12,10 +12,10 @@ import { emptyConfig } from "./schema.js";
  * exists to carry machine-specific worktree settings out of git. If a future key
  * needs a per-machine override, widen this function explicitly.
  *
- * Within `worktree:`, local wins: `dir`/`name` when non-empty, `port` when
- * non-zero (a worktree's stamped assignment overrides the base's 0), `copy` as an
- * order-preserving union (base first), and `setup` replaced wholesale when local
- * declares any commands (a bootstrap sequence is atomic).
+ * Within `worktree:`, local wins: `dir`/`name`/`slug`/`milestone` when non-empty,
+ * `port` when non-zero (a worktree's stamped assignment overrides the base's 0),
+ * `copy` as an order-preserving union (base first), and `setup` replaced wholesale
+ * when local declares any commands (a bootstrap sequence is atomic).
  */
 export function mergeConfig(
   base: JarrinConfig,
@@ -58,6 +58,7 @@ function mergeWorktree(
     name: local.name || base.name,
     port: local.port || base.port,
     slug: local.slug || base.slug,
+    milestone: local.milestone || base.milestone,
   };
 }
 

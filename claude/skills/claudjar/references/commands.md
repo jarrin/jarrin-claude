@@ -57,18 +57,21 @@ FLAGS
 
 ```
 USAGE
-  claudjar worktree create [--setup] [--hooks] <name>
+  claudjar worktree create [--setup] [--hooks] [--milestone title] <name>
   claudjar worktree create --help
 
 Creates the branch, copies the `worktree.copy:` gitignored files across, assigns the next PROJECT_PORT, stamps the worktree's identity into its own .jarrin.local.yml, then bootstraps it.
 
 Bootstrapping has two stages. `worktree.setup:` runs first — the machine-specific recipe from the gitignored local config (install deps for THIS machine). `hooks.worktree.create:` runs second — committed, shared project policy every clone applies, with WORKTREE_NAME, WORKTREE_PATH, and PROJECT_PORT in the environment, plus SOURCE_WORKTREE_NAME, SOURCE_WORKTREE_PATH, and SOURCE_PROJECT_PORT naming the worktree this command ran in — what a hook needs to carry state (a database, a cache) forward into the new tree. Either stage stops at its first failing command, leaving the worktree in place to fix by hand.
 
+--milestone <title> links the worktree to the forge milestone it was made to work, stamped beside its name as `worktree.milestone`.
+
 The stack is not started; run `claudjar start` in the new worktree.
 
 FLAGS
-     [--setup/--no-setup]  Run the configured setup commands (use --no-setup to skip)    [default = true]
-     [--hooks/--no-hooks]  Run hooks.worktree.create afterwards (use --no-hooks to skip) [default = true]
+     [--setup/--no-setup]  Run the configured setup commands (use --no-setup to skip)             [default = true]
+     [--hooks/--no-hooks]  Run hooks.worktree.create afterwards (use --no-hooks to skip)          [default = true]
+     [--milestone]         Link the worktree to a forge milestone (stamped as worktree.milestone)
   -h  --help               Print help information and exit
 
 ARGUMENTS

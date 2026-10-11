@@ -135,6 +135,7 @@ function toWorktree(value: unknown): WorktreeConfig {
   wt.name = typeof rec.name === "string" ? rec.name.trim() : "";
   wt.port = toPort(rec.port);
   wt.slug = toSlug(rec.slug);
+  wt.milestone = typeof rec.milestone === "string" ? rec.milestone.trim() : "";
   return wt;
 }
 

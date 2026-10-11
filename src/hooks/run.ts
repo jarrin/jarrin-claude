@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import type { CommandRunner } from "../worktree/runner.js";
 
 /**
  * Runner for the `hooks:` block — shell commands the CLI fires at lifecycle
@@ -27,37 +27,36 @@ export interface HookOutcome {
 
 export interface HookEnv {
   readonly cwd: string;
-  /** Extra environment merged over the process env for every command. */
+  /** Extra environment merged over the runner's base env for every command. */
   readonly env: Readonly<Record<string, string>>;
 }
 
+/** Where hook narration and launch failures are reported. */
+export interface HookIO {
+  readonly run: CommandRunner;
+  /** Called with a one-line echo of each command before it runs. */
+  readonly log: (msg: string) => void;
+  /** Called when a command fails to launch at all. */
+  readonly warn: (msg: string) => void;
+}
+
 /**
- * Run `commands` in `ctx.cwd`, stopping at the first non-zero exit. `out` is
- * called with a one-line echo of each command before it runs, so the caller
- * controls where that narration goes.
+ * Run `commands` in `ctx.cwd`, stopping at the first non-zero exit. The caller
+ * controls where the narration goes and what actually spawns the commands.
  */
-export function runHooks(
+export async function runHooks(
   commands: readonly string[],
   ctx: HookEnv,
-  proc: NodeJS.Process,
-  out: (msg: string) => void,
-): HookOutcome {
+  io: HookIO,
+): Promise<HookOutcome> {
   const ran: HookRun[] = [];
   for (const command of commands) {
-    out(`  $ ${command}\n`);
-    const res = spawnSync(command, {
-      cwd: ctx.cwd,
-      shell: true,
-      stdio: "inherit",
-      env: { ...proc.env, ...ctx.env },
-    });
-    const status = res.error ? 1 : (res.status ?? 1);
-    if (res.error) {
-      proc.stderr.write(`  ! failed to launch: ${res.error.message}\n`);
-    }
-    const run: HookRun = { command, status };
+    io.log(`  $ ${command}\n`);
+    const res = await io.run({ command, cwd: ctx.cwd, env: ctx.env });
+    if (res.error) io.warn(`  ! failed to launch: ${res.error}\n`);
+    const run: HookRun = { command, status: res.status };
     ran.push(run);
-    if (status !== 0) return { ok: false, ran, failed: run };
+    if (run.status !== 0) return { ok: false, ran, failed: run };
   }
   return { ok: true, ran, failed: null };
 }

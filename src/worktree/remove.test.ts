@@ -12,7 +12,9 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { removeWorktree } from "./remove.js";
+import type { HookIO } from "../hooks/run.js";
+import { retireWorktree } from "./remove.js";
+import { spawnRunner } from "./runner.js";
 
 let repo: string;
 let out: string[];
@@ -55,6 +57,11 @@ afterEach(() => {
 });
 
 const collect = (msg: string): void => void out.push(msg);
+const io: HookIO = {
+  run: spawnRunner(process.env),
+  log: collect,
+  warn: collect,
+};
 
 /** Add a worktree for a new branch and return its path. */
 function addWorktree(branch: string): string {
@@ -74,11 +81,11 @@ function worktreeCount(): number {
   return git(repo, "worktree", "list").trim().split("\n").length;
 }
 
-describe("removeWorktree", () => {
-  it("removes the worktree and deletes a merged branch", () => {
+describe("retireWorktree", () => {
+  it("removes the worktree and deletes a merged branch", async () => {
     const path = addWorktree("feat");
     try {
-      const result = removeWorktree(
+      const result = await retireWorktree(
         {
           gitRoot: repo,
           branch: "feat",
@@ -86,8 +93,7 @@ describe("removeWorktree", () => {
           teardown: false,
           hooks: false,
         },
-        process,
-        collect,
+        io,
       );
       expect(result).toEqual({ ok: true, branchKept: false, hookError: null });
       expect(worktreeCount()).toBe(1);
@@ -97,13 +103,13 @@ describe("removeWorktree", () => {
     }
   });
 
-  it("keeps an unmerged branch rather than discarding the work", () => {
+  it("keeps an unmerged branch rather than discarding the work", async () => {
     const path = addWorktree("wip");
     writeFileSync(join(path, "new.txt"), "unmerged work\n");
     git(path, "add", "-A");
     git(path, "commit", "-qm", "wip");
 
-    const result = removeWorktree(
+    const result = await retireWorktree(
       {
         gitRoot: repo,
         branch: "wip",
@@ -111,8 +117,7 @@ describe("removeWorktree", () => {
         teardown: false,
         hooks: false,
       },
-      process,
-      collect,
+      io,
     );
 
     // The worktree goes; the branch survives because `git branch -d` refuses.
@@ -122,7 +127,7 @@ describe("removeWorktree", () => {
     expect(out.join("")).toContain("kept branch wip");
   });
 
-  it("runs hooks.worktree.remove from the main root, with the identity in env", () => {
+  it("runs hooks.worktree.remove from the main root, with the identity in env", async () => {
     const path = addWorktree("feat");
     const marker = join(repo, "hook-ran.txt");
     // The hook writes what it was told about the worktree that just went away.
@@ -137,7 +142,7 @@ describe("removeWorktree", () => {
       ].join("\n"),
     );
 
-    const result = removeWorktree(
+    const result = await retireWorktree(
       {
         gitRoot: repo,
         branch: "feat",
@@ -145,8 +150,7 @@ describe("removeWorktree", () => {
         teardown: false,
         hooks: true,
       },
-      process,
-      collect,
+      io,
     );
 
     expect(result).toEqual({ ok: true, branchKept: false, hookError: null });
@@ -154,14 +158,14 @@ describe("removeWorktree", () => {
     expect(readFileSync(marker, "utf8")).toBe(`feat ${path} 0`);
   });
 
-  it("reports a failing remove hook without undoing the removal", () => {
+  it("reports a failing remove hook without undoing the removal", async () => {
     const path = addWorktree("feat");
     writeConfig(
       repo,
       ["hooks:", "  worktree:", "    remove:", "      - exit 3", ""].join("\n"),
     );
 
-    const result = removeWorktree(
+    const result = await retireWorktree(
       {
         gitRoot: repo,
         branch: "feat",
@@ -169,8 +173,7 @@ describe("removeWorktree", () => {
         teardown: false,
         hooks: true,
       },
-      process,
-      collect,
+      io,
     );
 
     // The worktree is gone regardless — the hook ran after the fact.
@@ -181,7 +184,7 @@ describe("removeWorktree", () => {
     }
   });
 
-  it("skips the hooks entirely when asked", () => {
+  it("skips the hooks entirely when asked", async () => {
     const path = addWorktree("feat");
     writeConfig(
       repo,
@@ -194,7 +197,7 @@ describe("removeWorktree", () => {
       ].join("\n"),
     );
 
-    removeWorktree(
+    await retireWorktree(
       {
         gitRoot: repo,
         branch: "feat",
@@ -202,15 +205,14 @@ describe("removeWorktree", () => {
         teardown: false,
         hooks: false,
       },
-      process,
-      collect,
+      io,
     );
 
     expect(existsSync(join(repo, "should-not-exist.txt"))).toBe(false);
   });
 
-  it("reports a failure when the worktree cannot be removed", () => {
-    const result = removeWorktree(
+  it("reports a failure when the worktree cannot be removed", async () => {
+    const result = await retireWorktree(
       {
         gitRoot: repo,
         branch: "feat",
@@ -218,8 +220,7 @@ describe("removeWorktree", () => {
         teardown: false,
         hooks: false,
       },
-      process,
-      collect,
+      io,
     );
     expect(result.ok).toBe(false);
   });

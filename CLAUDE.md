@@ -350,6 +350,7 @@ fails to parse, rather than starting a session that silently lost all its rules.
       - poetry install
     name: feature-x # identity marker — stamped by `worktree create`, not hand-set
     port: 8001 # assigned PROJECT_PORT — stamped by `worktree create`, not hand-set
+    milestone: plan-x # linked milestone title — stamped by `create --milestone`, optional
   ```
 
   `create` runs `git worktree add` (new branch unless it exists), copies the `copy:` files
@@ -361,6 +362,19 @@ fails to parse, rather than starting a session that silently lost all its rules.
   `staged-planning` and `todo` skills
   read to scope forge tickets to the worktree (`worktree/<name>` label; see
   `claude/references/backlog.md` §9); the stamped `port` is the worktree's `PROJECT_PORT`.
+  `--milestone <title>` additionally stamps `worktree.milestone`, linking the worktree to the
+  forge milestone it was made to work (the service pairs a worktree with its loop by it).
+  Stamping without one clears the key, so `dev-x` never inherits `dev`'s link through the
+  copied local file.
+
+  **The CLI is a thin wrapper over `src/worktree/lib.ts`.** `createWorktree`,
+  `mergeWorktree`, and `removeWorktree` take `(repoRoot, opts, deps)` and resolve to a typed
+  result: `repoRoot` stands in for the cwd, and `deps` injects the narration (`log` / `warn`)
+  and an **async** process runner (`src/worktree/runner.ts`), so the library reads no
+  `process.*` global and the service can call it directly. The runner is async on purpose —
+  setup commands and hooks run for minutes, and a `spawnSync` would freeze the service's
+  event loop. The CLI's `--no-*` flags are the options' defaults inverted, and its
+  `worktree <verb>: …` error line and exit code 1 are built from the result.
 
   **`create` is keyed on the worktree it runs in, not the main checkout.** The new branch is
   cut from the current worktree's HEAD (passed to `git worktree add` as an explicit SHA,

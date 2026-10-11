@@ -1,11 +1,11 @@
-import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 import { loadEffectiveConfig } from "../config/load.js";
+import type { HookIO } from "../hooks/run.js";
 import { runHooks, worktreeHookEnv } from "../hooks/run.js";
 import { effectivePort, PORT_ENV, stopStackAt } from "../project/stack.js";
 
-/** What {@link removeWorktree} was asked to do. */
+/** What {@link retireWorktree} was asked to do. */
 export interface RemoveRequest {
   /** Repo root the git commands run against (any worktree of the repo). */
   readonly gitRoot: string;
@@ -19,8 +19,8 @@ export interface RemoveRequest {
   readonly hooks: boolean;
 }
 
-/** How far {@link removeWorktree} got, and why it stopped. */
-export type RemoveResult =
+/** How far {@link retireWorktree} got, and why it stopped. */
+export type RetireResult =
   | { readonly ok: false; readonly error: string }
   | {
       readonly ok: true;
@@ -36,8 +36,8 @@ export type RemoveResult =
 
 /**
  * Tear down a worktree's project stack, remove the worktree, and safely delete
- * its branch. Shared by `worktree remove` and `worktree merge --remove` so both
- * paths clean up identically — the merge case just knows the branch is merged.
+ * its branch. The step shared by the library's `removeWorktree` and
+ * `mergeWorktree` (with `remove`) so both paths clean up identically — the merge case just knows the branch is merged.
  *
  * Order matters: `exit` runs BEFORE `git worktree remove`, because the compose
  * file (and whatever else the command needs) lives inside the directory about to
@@ -48,12 +48,12 @@ export type RemoveResult =
  * exactly when the branch is fully merged, so an unmerged branch survives and is
  * reported rather than silently discarded.
  */
-export function removeWorktree(
+export async function retireWorktree(
   req: RemoveRequest,
-  proc: NodeJS.Process,
-  out: (msg: string) => void,
-): RemoveResult {
+  io: HookIO,
+): Promise<RetireResult> {
   const { gitRoot, branch, wtPath, teardown } = req;
+  const out = io.log;
 
   // Capture the worktree's identity while its directory (and its stamped local
   // config) still exists — the remove hooks run after it is gone and would have
@@ -63,7 +63,7 @@ export function removeWorktree(
     : 0;
 
   if (teardown) {
-    const torn = stopStackAt(wtPath, proc);
+    const torn = await stopStackAt(wtPath, io.run, io.warn);
     if (torn) {
       out(
         `  stopped project stack on ${PORT_ENV}=${String(torn.port)}: ${torn.command}\n`,
@@ -80,8 +80,9 @@ export function removeWorktree(
     }
   }
 
-  const rm = spawnSync("git", ["-C", gitRoot, "worktree", "remove", wtPath], {
-    stdio: "inherit",
+  const rm = await io.run({
+    command: "git",
+    args: ["-C", gitRoot, "worktree", "remove", wtPath],
   });
   if (rm.status !== 0) {
     return {
@@ -98,9 +99,10 @@ export function removeWorktree(
 
   // Safe delete only: this fails by design on an unmerged branch, which is the
   // signal that the work is not yet folded in anywhere.
-  const del = spawnSync("git", ["-C", gitRoot, "branch", "-d", branch], {
-    stdio: ["inherit", "inherit", "pipe"],
-    encoding: "utf8",
+  const del = await io.run({
+    command: "git",
+    args: ["-C", gitRoot, "branch", "-d", branch],
+    output: "quiet",
   });
   const branchKept = del.status !== 0;
   if (branchKept) {
@@ -113,7 +115,7 @@ export function removeWorktree(
   }
 
   const hookError = req.hooks
-    ? runRemoveHooks({ gitRoot, branch, wtPath, port }, proc, out)
+    ? await runRemoveHooks({ gitRoot, branch, wtPath, port }, io)
     : null;
   return { ok: true, branchKept, hookError };
 }
@@ -126,22 +128,21 @@ export function removeWorktree(
  * The config is read from `gitRoot` for the same reason: `hooks:` is committed,
  * shared config, so any checkout of the repo carries the same block.
  */
-function runRemoveHooks(
+async function runRemoveHooks(
   identity: {
     gitRoot: string;
     branch: string;
     wtPath: string;
     port: number;
   },
-  proc: NodeJS.Process,
-  out: (msg: string) => void,
-): string | null {
+  io: HookIO,
+): Promise<string | null> {
   const cfg = loadEffectiveConfig(join(identity.gitRoot, ".claude")).merged;
   const hooks = cfg.hooks.worktree.remove;
   if (hooks.length === 0) return null;
 
-  out(`  running hooks.worktree.remove (${String(hooks.length)})…\n`);
-  const outcome = runHooks(
+  io.log(`  running hooks.worktree.remove (${String(hooks.length)})…\n`);
+  const outcome = await runHooks(
     hooks,
     {
       cwd: identity.gitRoot,
@@ -151,8 +152,7 @@ function runRemoveHooks(
         port: identity.port,
       }),
     },
-    proc,
-    out,
+    io,
   );
   if (outcome.ok || !outcome.failed) return null;
   return (

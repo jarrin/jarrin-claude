@@ -80,6 +80,7 @@ describe("parseConfig", () => {
         "  dir: ../wts",
         "  name: feature-x",
         "  port: 8001",
+        "  milestone: plan-claudjar-service",
         "  copy:",
         "    - .env",
         "    - .claude/settings.local.json",
@@ -94,6 +95,7 @@ describe("parseConfig", () => {
       name: "feature-x",
       port: 8001,
       slug: "",
+      milestone: "plan-claudjar-service",
       copy: [".env", ".claude/settings.local.json"],
       setup: ["poetry install", "docker compose up -d"],
     });
@@ -108,6 +110,7 @@ describe("parseConfig", () => {
       name: "",
       port: 0,
       slug: "",
+      milestone: "",
     });
   });
 

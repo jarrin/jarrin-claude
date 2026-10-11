@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { loadEffectiveConfig } from "../config/load.js";
 import type { JarrinConfig } from "../config/schema.js";
+import type { CommandRunner } from "../worktree/runner.js";
 
 /** The environment variable the start/exit commands read for their bound port. */
 export const PORT_ENV = "PROJECT_PORT";
@@ -96,19 +97,27 @@ export interface StackTeardown {
  * usable port, or no `exit` command configured) — deleting a worktree that never
  * ran a stack is not an error.
  */
-export function stopStackAt(
+export async function stopStackAt(
   worktreeRoot: string,
-  proc: NodeJS.Process,
-): StackTeardown | null {
+  run: CommandRunner,
+  warn: (msg: string) => void,
+): Promise<StackTeardown | null> {
   const cfg = loadEffectiveConfig(join(worktreeRoot, ".claude")).merged;
   const stack = resolveStack(cfg);
   if (!stack.active || !stack.exit) return null;
-  const status = runStackCommand(stack.exit, stack.port, worktreeRoot, proc);
+  // Output goes to stderr, matching runStackCommand.
+  const res = await run({
+    command: stack.exit,
+    cwd: worktreeRoot,
+    env: { [PORT_ENV]: String(stack.port) },
+    output: "stderr",
+  });
+  if (res.error) warn(`error launching command: ${res.error}\n`);
   return {
     name: stack.name,
     port: stack.port,
     command: stack.exit,
-    status,
+    status: res.status,
   };
 }
 

@@ -2,6 +2,7 @@ import { parse } from "yaml";
 
 import { describe, expect, it } from "vitest";
 
+import { parseConfig } from "../config/read.js";
 import { stampWorktree } from "./stamp.js";
 
 describe("stampWorktree", () => {
@@ -52,5 +53,35 @@ describe("stampWorktree", () => {
     const out = stampWorktree(existing, { name: "x", port: 8001 });
     expect(out).toContain("# my config");
     expect(out).toContain("# here");
+  });
+
+  it("stamps a milestone link that round-trips through the config reader", () => {
+    const out = stampWorktree("", {
+      name: "dev",
+      port: 8001,
+      milestone: "plan-claudjar-service",
+    });
+    expect(parseConfig(out).worktree).toMatchObject({
+      name: "dev",
+      port: 8001,
+      milestone: "plan-claudjar-service",
+    });
+  });
+
+  it("drops a milestone inherited from the source's copied file when unlinked", () => {
+    const copied = "worktree:\n  name: dev\n  milestone: plan-old\n";
+    expect(
+      parseConfig(stampWorktree(copied, { name: "dev-x", port: 0 })).worktree
+        .milestone,
+    ).toBe("");
+    expect(
+      parseConfig(
+        stampWorktree(copied, {
+          name: "dev-x",
+          port: 0,
+          milestone: "plan-new",
+        }),
+      ).worktree.milestone,
+    ).toBe("plan-new");
   });
 });

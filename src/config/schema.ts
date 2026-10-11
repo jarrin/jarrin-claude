@@ -130,6 +130,12 @@ export interface WorktreeConfig {
    * `name`, so it only exists to shorten or disambiguate a long branch name.
    */
   slug: string;
+  /**
+   * Title of the forge milestone this worktree was created to work, stamped on
+   * create when one was given; "" when the worktree is not linked to one. Lets
+   * the service pair a worktree with the milestone a loop is running for it.
+   */
+  milestone: string;
 }
 
 export interface JarrinConfig {
@@ -167,7 +173,15 @@ export function emptyHooksConfig(): HooksConfig {
 }
 
 export function emptyWorktreeConfig(): WorktreeConfig {
-  return { dir: "", copy: [], setup: [], name: "", port: 0, slug: "" };
+  return {
+    dir: "",
+    copy: [],
+    setup: [],
+    name: "",
+    port: 0,
+    slug: "",
+    milestone: "",
+  };
 }
 
 export function emptyCaddyConfig(): CaddyConfig {
