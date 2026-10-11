@@ -34,6 +34,17 @@ export interface GiteaClient {
   isClosed(issue: number): Promise<boolean>;
 }
 
+/** An open milestone with its issue counts, as the service's project tab shows it. */
+export interface MilestoneCounts extends Milestone {
+  readonly openIssues: number;
+  readonly closedIssues: number;
+}
+
+/** What the service reads; separate from {@link GiteaClient} so loop fakes stay small. */
+export interface MilestoneSource {
+  openMilestones(): Promise<MilestoneCounts[]>;
+}
+
 type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
 
 const PAGE = 50;
@@ -86,7 +97,7 @@ export function giteaClient(
   auth: GiteaAuth,
   repo: string,
   fetchImpl: FetchFn = fetch,
-): GiteaClient {
+): GiteaClient & MilestoneSource {
   trustSystemCAs();
   const base = `${auth.host}/api/v1/repos/${repo}`;
 
@@ -162,6 +173,27 @@ export function giteaClient(
     async isClosed(issue: number): Promise<boolean> {
       return field(await get(`/issues/${String(issue)}`), "state") === "closed";
     },
+
+    async openMilestones(): Promise<MilestoneCounts[]> {
+      const rows: MilestoneCounts[] = [];
+      for (let page = 1; ; page++) {
+        const batch = asArray(
+          await get(
+            `/milestones?state=open&limit=${String(PAGE)}&page=${String(page)}`,
+          ),
+        );
+        for (const row of batch) {
+          const m = toMilestone(row);
+          if (m)
+            rows.push({
+              ...m,
+              openIssues: numberField(row, "open_issues"),
+              closedIssues: numberField(row, "closed_issues"),
+            });
+        }
+        if (batch.length < PAGE) return rows;
+      }
+    },
   };
 }
 
@@ -180,6 +212,11 @@ function toMilestone(value: unknown): Milestone | null {
 function stringField(value: unknown, key: string): string {
   const v = field(value, key);
   return typeof v === "string" ? v : "";
+}
+
+function numberField(value: unknown, key: string): number {
+  const v = field(value, key);
+  return typeof v === "number" ? v : 0;
 }
 
 function toIssue(value: unknown): Issue | null {

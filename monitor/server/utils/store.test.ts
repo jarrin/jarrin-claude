@@ -6,7 +6,13 @@ import { describe, expect, it } from "vitest";
 
 import { StateFile } from "./store";
 
-const saved = { instances: [], boards: [], questions: [], hosts: [] };
+const saved = {
+  instances: [],
+  boards: [],
+  questions: [],
+  hosts: [],
+  details: [],
+};
 
 describe("StateFile", () => {
   it("round-trips the saved state", () => {

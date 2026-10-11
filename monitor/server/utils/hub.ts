@@ -1,4 +1,4 @@
-import { boardKey, covers } from "#shared/protocol";
+import { boardKey, covers, detailKey } from "#shared/protocol";
 import type {
   AgentMessage,
   Board,
@@ -16,6 +16,8 @@ import type {
   LivePost,
   LogLine,
   MilestoneRef,
+  ProjectDetail,
+  ProjectDetailView,
   ProjectInfo,
   Question,
   ServerHostMessage,
@@ -53,6 +55,7 @@ export interface Saved {
   readonly boards: readonly Board[];
   readonly questions: readonly Question[];
   readonly hosts: readonly HostView[];
+  readonly details: readonly ProjectDetailView[];
 }
 
 export type Send = (msg: WatchMessage) => void;
@@ -81,6 +84,8 @@ export class Hub {
   private readonly hosts = new Map<string, HostView>();
   private readonly hostSends = new Map<string, SendHost>();
   private readonly pending = new Map<string, Pending>();
+  /** Project tab contents, by {@link detailKey}; only active projects keep one. */
+  private readonly details = new Map<string, ProjectDetailView>();
 
   constructor(
     private readonly now: () => number = Date.now,
@@ -105,6 +110,8 @@ export class Hub {
     for (const q of saved.questions) this.questions.set(q.id, q);
     for (const h of saved.hosts)
       this.hosts.set(h.host, { ...h, online: false });
+    for (const d of saved.details)
+      this.details.set(detailKey(d.host, d.project), d);
     for (const b of this.boards.values()) this.dropOrphans(b);
   }
 
@@ -118,6 +125,7 @@ export class Hub {
       questions: [...this.questions.values()],
       live: [...this.live.values()],
       hosts: [...this.hosts.values()],
+      details: [...this.details.values()],
     });
     return () => this.watchers.delete(send);
   }
@@ -194,10 +202,38 @@ export class Hub {
     if (h) this.setHost({ ...h, online: false, lastSeen: this.now() });
   }
 
+  /** A host collected a project's detail; kept while the project is active. */
+  hostDetail(host: string, detail: ProjectDetail): void {
+    const h = this.hosts.get(host);
+    if (!h?.online) return;
+    if (!h.projects.some((p) => p.name === detail.project && p.active)) return;
+    const view: ProjectDetailView = { ...detail, host };
+    this.details.set(detailKey(host, detail.project), view);
+    this.broadcast({ type: "project-detail", detail: view });
+    this.save();
+  }
+
   private setHost(h: HostView): void {
     this.hosts.set(h.host, h);
     this.broadcast({ type: "host", host: h });
+    this.dropDetails(h);
     this.save();
+  }
+
+  /** Forget the details of projects the host closed or no longer has. */
+  private dropDetails(h: HostView): void {
+    const active = new Set(
+      h.projects.filter((p) => p.active).map((p) => p.name),
+    );
+    for (const [key, d] of this.details)
+      if (d.host === h.host && !active.has(d.project)) {
+        this.details.delete(key);
+        this.broadcast({
+          type: "project-detail-removed",
+          host: d.host,
+          project: d.project,
+        });
+      }
   }
 
   /** Fail commands a host never answered, so a watcher is not left waiting. */
@@ -480,6 +516,7 @@ export class Hub {
       boards: [...this.boards.values()],
       questions: [...this.questions.values()],
       hosts: [...this.hosts.values()],
+      details: [...this.details.values()],
     });
   }
 

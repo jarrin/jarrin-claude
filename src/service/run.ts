@@ -4,6 +4,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { HostCommand } from "../../monitor/shared/protocol.js";
 import type { SessionBackend, SessionLauncher } from "../session/launcher.js";
 import type { ServiceConf } from "./conf.js";
+import type { DetailDeps } from "./detail.js";
+import { collectDetail } from "./detail.js";
 import type { DirEntry, Project } from "./discover.js";
 import { discoverProjects } from "./discover.js";
 import type { CommandOutcome, HostLink } from "./link.js";
@@ -37,6 +39,8 @@ export interface RunOptions {
   /** Backend for the sessions an `open-project` starts. */
   readonly backend: SessionBackend;
   readonly launcherFor: (backend: SessionBackend) => SessionLauncher;
+  /** How a project's detail (milestones, worktrees) is collected for the web interface. */
+  readonly detail: DetailDeps;
   /** Dial the web interface; absent when the conf has no `monitor:`. */
   readonly connect?: (handlers: LinkHandlers) => HostLink;
 }
@@ -106,7 +110,18 @@ export async function runService(opts: RunOptions): Promise<void> {
   // neither awaits between reading and writing it, so they cannot interleave.
   // The launcher is synchronous for the same reason (a `claude --bg` returns
   // once the daemon has the session, in about a second).
+  /** Collect a project's detail and publish it; reading `state` only, so it may await. */
+  const publishDetail = async (name: string): Promise<CommandOutcome> => {
+    const project = state.projects.find((p) => p.name === name);
+    if (!project) return { ok: false, error: `no project named '${name}'` };
+    const detail = await collectDetail(project, state.sessions, opts.detail);
+    link?.detail(detail);
+    return { ok: true };
+  };
+
   const handle = (command: HostCommand): Promise<CommandOutcome> => {
+    if (command.type === "refresh-project")
+      return publishDetail(command.project);
     const open = command.type === "open-project";
     const deps = {
       backend: opts.backend,
@@ -126,6 +141,13 @@ export async function runService(opts: RunOptions): Promise<void> {
       `project ${open ? "opened" : "closed"}: ${command.project} (${res.note})`,
     );
     link?.projectState(res.project);
+    // The tab opens on the project-state; its content follows once collected.
+    if (open)
+      void publishDetail(command.project).catch((err: unknown) => {
+        log(
+          `detail ${command.project}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
     return Promise.resolve({ ok: true });
   };
   const link = opts.connect?.({

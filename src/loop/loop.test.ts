@@ -113,6 +113,23 @@ describe("giteaClient", () => {
     expect(urls[1]).toContain("page=2");
   });
 
+  it("lists open milestones with their issue counts", async () => {
+    const urls: string[] = [];
+    const client = giteaClient(auth, "o/r", (url) => {
+      urls.push(url);
+      return respond([
+        { id: 3, title: "plan-x", open_issues: 2, closed_issues: 5 },
+        { id: 4, title: "todo" },
+        { title: "no id" },
+      ]);
+    });
+    await expect(client.openMilestones()).resolves.toEqual([
+      { id: 3, title: "plan-x", openIssues: 2, closedIssues: 5 },
+      { id: 4, title: "todo", openIssues: 0, closedIssues: 0 },
+    ]);
+    expect(urls[0]).toContain("/repos/o/r/milestones?state=open");
+  });
+
   it("never lists an older loop's own tickets as work", async () => {
     const client = giteaClient(auth, "o/r", () =>
       respond([

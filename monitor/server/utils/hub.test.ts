@@ -343,6 +343,7 @@ describe("Hub as the loop store", () => {
     restored.restore({
       instances: [],
       hosts: [],
+      details: [],
       boards: [
         {
           repo: "jarrin/x",
@@ -504,6 +505,91 @@ describe("Hub hosts", () => {
     restored.restore(saved);
     expect(watched(restored)[0]).toMatchObject({
       hosts: [{ host: "desk", online: false, projects: [proj("a", true)] }],
+    });
+  });
+
+  const detail = (project: string) => ({
+    project,
+    repo: "o/r",
+    forge: "https://g",
+    milestones: [{ id: 1, title: "plan-x", openIssues: 2, closedIssues: 3 }],
+    worktrees: [
+      {
+        name: "",
+        branch: "main",
+        path: `/p/${project}`,
+        port: 0,
+        milestone: "",
+        session: "running" as const,
+      },
+    ],
+    error: "",
+    collectedAt: 7,
+  });
+
+  it("stores an active project's detail and shows it to watchers", () => {
+    const hub = new Hub(() => 1);
+    hub.hostHello(hostInfo("desk"), [proj("a", true), proj("b")], () => {});
+    const got = watched(hub);
+    hub.hostDetail("desk", detail("a"));
+    expect(got.at(-1)).toEqual({
+      type: "project-detail",
+      detail: { ...detail("a"), host: "desk" },
+    });
+    // An inactive or unknown project has no tab to fill.
+    hub.hostDetail("desk", detail("b"));
+    hub.hostDetail("desk", detail("zz"));
+    hub.hostDetail("ghost", detail("a"));
+    expect(watched(hub)[0]).toMatchObject({
+      details: [{ host: "desk", project: "a" }],
+    });
+    // A refresh replaces it.
+    hub.hostDetail("desk", { ...detail("a"), collectedAt: 9 });
+    expect(watched(hub)[0]).toMatchObject({
+      details: [{ project: "a", collectedAt: 9 }],
+    });
+  });
+
+  it("drops a project's detail when it is closed or disappears", () => {
+    const hub = new Hub(() => 1);
+    hub.hostHello(
+      hostInfo("desk"),
+      [proj("a", true), proj("b", true)],
+      () => {},
+    );
+    hub.hostDetail("desk", detail("a"));
+    hub.hostDetail("desk", detail("b"));
+    const got = watched(hub);
+    hub.hostProject("desk", proj("a"));
+    expect(got).toContainEqual({
+      type: "project-detail-removed",
+      host: "desk",
+      project: "a",
+    });
+    hub.hostProjects("desk", []);
+    expect(got).toContainEqual({
+      type: "project-detail-removed",
+      host: "desk",
+      project: "b",
+    });
+    expect(watched(hub)[0]).toMatchObject({ details: [] });
+  });
+
+  it("keeps a detail across a disconnect and a restart", () => {
+    let saved: Saved | null = null;
+    const hub = new Hub(
+      () => 1,
+      (s) => (saved = s),
+    );
+    hub.hostHello(hostInfo("desk"), [proj("a", true)], () => {});
+    hub.hostDetail("desk", detail("a"));
+    hub.hostDisconnect("desk");
+    expect(watched(hub)[0]).toMatchObject({ details: [{ project: "a" }] });
+    if (!saved) throw new Error("not saved");
+    const restored = new Hub(() => 2);
+    restored.restore(saved);
+    expect(watched(restored)[0]).toMatchObject({
+      details: [{ host: "desk", project: "a" }],
     });
   });
 

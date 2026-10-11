@@ -251,10 +251,60 @@ export interface ProjectInfo {
   readonly active: boolean;
 }
 
+/** One open milestone of a project's backlog repo, with its issue counts. */
+export interface MilestoneDetail {
+  readonly id: number;
+  readonly title: string;
+  readonly openIssues: number;
+  readonly closedIssues: number;
+}
+
+/** Whether a background session the service launched runs in a checkout. */
+export type SessionStatus = "running" | "stopped" | "none";
+
+/** One checkout of a project: its main checkout or a linked worktree. */
+export interface WorktreeDetail {
+  /** The stamped `worktree.name`; empty for the main checkout. */
+  readonly name: string;
+  /** The checked-out branch; empty when detached. */
+  readonly branch: string;
+  readonly path: string;
+  /** The stamped `worktree.port`; 0 when none. */
+  readonly port: number;
+  /** The stamped `worktree.milestone` title; empty when not linked to one. */
+  readonly milestone: string;
+  readonly session: SessionStatus;
+}
+
+/**
+ * What a project tab shows, collected by the host on open and on demand
+ * (`refresh-project`): its backlog repo's open milestones and its worktrees.
+ */
+export interface ProjectDetail {
+  readonly project: string;
+  /** The backlog repo (`owner/name`); empty when none is configured. */
+  readonly repo: string;
+  /** The forge's web root, for milestone links; empty when unknown. */
+  readonly forge: string;
+  readonly milestones: readonly MilestoneDetail[];
+  readonly worktrees: readonly WorktreeDetail[];
+  /** Why the milestones could not be read; empty when they were. */
+  readonly error: string;
+  /** Epoch milliseconds. */
+  readonly collectedAt: number;
+}
+
+/** A project's detail as watchers see it: which host it came from. */
+export interface ProjectDetailView extends ProjectDetail {
+  readonly host: string;
+}
+
 /** What a watcher can ask a host to do. */
 export type HostCommand =
   | { readonly type: "open-project"; readonly project: string }
-  | { readonly type: "close-project"; readonly project: string };
+  | { readonly type: "close-project"; readonly project: string }
+  /** Collect the project's detail again and publish it. */
+  | { readonly type: "refresh-project"; readonly project: string };
 
 /** A host's answer to one command, keyed by the id the watcher chose. */
 export interface CommandResult {
@@ -276,6 +326,8 @@ export type HostMessage =
   | { readonly type: "projects"; readonly projects: readonly ProjectInfo[] }
   /** One project changed (opened, closed). */
   | { readonly type: "project-state"; readonly project: ProjectInfo }
+  /** A project's freshly collected detail. */
+  | { readonly type: "project-detail"; readonly detail: ProjectDetail }
   | { readonly type: "command-result"; readonly result: CommandResult };
 
 /** Server → host. */
@@ -310,6 +362,7 @@ export type WatchMessage =
       readonly questions: readonly Question[];
       readonly live: readonly LiveLog[];
       readonly hosts: readonly HostView[];
+      readonly details: readonly ProjectDetailView[];
     }
   | { readonly type: "instance"; readonly instance: InstanceSummary }
   | {
@@ -325,6 +378,12 @@ export type WatchMessage =
   | { readonly type: "live"; readonly log: LiveLogInfo; readonly chunk: string }
   | { readonly type: "live-removed"; readonly id: string }
   | { readonly type: "host"; readonly host: HostView }
+  | { readonly type: "project-detail"; readonly detail: ProjectDetailView }
+  | {
+      readonly type: "project-detail-removed";
+      readonly host: string;
+      readonly project: string;
+    }
   | { readonly type: "command-result"; readonly result: CommandOutcome };
 
 /** Watcher → server. */
@@ -372,6 +431,32 @@ export function instanceLabel(info: InstanceInfo): string {
     ? info.milestones.map((m) => m.title).join(", ")
     : info.repo;
   return `${what} @ ${info.host}`;
+}
+
+/** The key project details are stored under: one per host + project. */
+export function detailKey(host: string, project: string): string {
+  return `${host}/${project}`;
+}
+
+/**
+ * The loop instances working a worktree: on the same host and backlog repo,
+ * with the worktree's linked milestone among their milestones.
+ */
+export function loopsFor<
+  T extends Pick<InstanceInfo, "host" | "repo" | "milestones">,
+>(
+  instances: readonly T[],
+  host: string,
+  repo: string,
+  worktree: Pick<WorktreeDetail, "milestone">,
+): T[] {
+  if (!worktree.milestone || !repo) return [];
+  return instances.filter(
+    (i) =>
+      i.host === host &&
+      i.repo === repo &&
+      i.milestones.some((m) => m.title === worktree.milestone),
+  );
 }
 
 export const AGENT_PATH = "/ws/agent";

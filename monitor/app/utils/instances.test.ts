@@ -109,6 +109,7 @@ describe("applyWatchMessage", () => {
       applyWatchMessage(emptyState, {
         type: "snapshot",
         hosts: [],
+        details: [],
         instances: [view],
         boards: [board("open")],
         questions: [question],
@@ -120,6 +121,7 @@ describe("applyWatchMessage", () => {
       questions: [question],
       live: [],
       hosts: [],
+      details: [],
       outcomes: [],
     });
   });
@@ -155,9 +157,42 @@ describe("applyWatchMessage", () => {
       questions: [],
       live: [],
       hosts: [host],
+      details: [],
     });
     expect(s.hosts).toEqual([host]);
     expect(s.outcomes).toEqual([outcome]);
+  });
+
+  it("replaces a project's detail and drops it when removed", () => {
+    const detail = {
+      host: "desk",
+      project: "a",
+      repo: "o/r",
+      forge: "",
+      milestones: [],
+      worktrees: [],
+      error: "",
+      collectedAt: 1,
+    };
+    let s = applyWatchMessage(emptyState, { type: "project-detail", detail });
+    s = applyWatchMessage(s, {
+      type: "project-detail",
+      detail: { ...detail, project: "b" },
+    });
+    s = applyWatchMessage(s, {
+      type: "project-detail",
+      detail: { ...detail, collectedAt: 2 },
+    });
+    expect(s.details.map((d) => [d.project, d.collectedAt])).toEqual([
+      ["b", 1],
+      ["a", 2],
+    ]);
+    s = applyWatchMessage(s, {
+      type: "project-detail-removed",
+      host: "desk",
+      project: "a",
+    });
+    expect(s.details.map((d) => d.project)).toEqual(["b"]);
   });
 
   it("appends live log chunks and drops removed logs", () => {
@@ -209,6 +244,7 @@ describe("applyWatchMessage", () => {
       instances: [view],
       live: [],
       hosts: [],
+      details: [],
       outcomes: [],
       boards: [
         board("open"),
@@ -261,6 +297,7 @@ describe("noticesFor", () => {
       noticesFor(emptyState, {
         type: "snapshot",
         hosts: [],
+        details: [],
         instances: [view],
         boards: [],
         questions: [question],

@@ -4,8 +4,12 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import type { ProjectInfo } from "../../monitor/shared/protocol.js";
+import type {
+  ProjectDetail,
+  ProjectInfo,
+} from "../../monitor/shared/protocol.js";
 import { fakeLauncher } from "../session/fake-launcher.js";
+import { fakeDetailDeps } from "./fake-detail.js";
 import type { Project } from "./discover.js";
 import type { HostLink } from "./link.js";
 import { runService } from "./run.js";
@@ -85,6 +89,7 @@ describe("runService", () => {
       signal: new AbortController().signal,
       backend: "bg",
       launcherFor: () => fakeLauncher(),
+      detail: fakeDetailDeps(),
       log: (l) => lines.push(l),
       scan: () => [
         {
@@ -122,6 +127,7 @@ describe("runService", () => {
       signal: new AbortController().signal,
       backend: "bg",
       launcherFor: () => fakeLauncher(),
+      detail: fakeDetailDeps(),
       log: (l) => lines.push(l),
       scan: () => [],
     });
@@ -134,11 +140,13 @@ describe("runService", () => {
     const stateFile = join(dir, "state.json");
     const published: (readonly ProjectInfo[])[] = [];
     const changed: ProjectInfo[] = [];
+    const details: ProjectDetail[] = [];
     let closed = false;
     let handlers: LinkHandlers | null = null;
     const link: HostLink = {
       publish: (p) => published.push(p),
       projectState: (p) => changed.push(p),
+      detail: (d) => details.push(d),
       close: () => {
         closed = true;
       },
@@ -148,6 +156,9 @@ describe("runService", () => {
     const run = runService({
       backend: "bg",
       launcherFor: () => launcher,
+      detail: fakeDetailDeps({
+        worktrees: { "/p/a": "worktree /p/a\nbranch refs/heads/main\n" },
+      }),
       conf: { projectsDir: "/p", user: "u", monitor: null },
       stateFile,
       intervalMs: 60_000,
@@ -177,6 +188,22 @@ describe("runService", () => {
     expect(readState(stateFile).sessions).toMatchObject([
       { label: "a", name: "a", status: "running" },
     ]);
+    // The detail follows the open, once collected.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(details).toMatchObject([
+      {
+        project: "a",
+        error: "not a claudjar project",
+        worktrees: [{ name: "", branch: "main", session: "running" }],
+      },
+    ]);
+    expect(
+      await h.onCommand({ type: "refresh-project", project: "a" }),
+    ).toEqual({ ok: true });
+    expect(details).toHaveLength(2);
+    expect(
+      await h.onCommand({ type: "refresh-project", project: "nope" }),
+    ).toEqual({ ok: false, error: "no project named 'nope'" });
 
     expect(await h.onCommand({ type: "close-project", project: "a" })).toEqual({
       ok: true,

@@ -8,6 +8,9 @@ import { buildCommand, buildRouteMap } from "@stricli/core";
 import type { LocalContext } from "../context.js";
 import type { ServiceConf } from "../service/conf.js";
 import { ConfError, confPath, readConf } from "../service/conf.js";
+import { worktreeListPorcelain } from "../git.js";
+import { giteaClient, resolveAuth } from "../loop/gitea.js";
+import { readIdentity } from "../service/detail.js";
 import { scanProjectsDir } from "../service/discover.js";
 import { connectHost } from "../service/link.js";
 import { runService } from "../service/run.js";
@@ -76,6 +79,9 @@ async function runServiceRun(
   };
   const log = (line: string): void => void proc.stdout.write(`${line}\n`);
   const { monitor } = conf;
+  // The same credentials `claudjar loop` uses, so the project tab and a loop
+  // started from it read the forge as the same user.
+  const auth = resolveAuth(proc.env);
   proc.once("SIGTERM", stop);
   proc.once("SIGINT", stop);
   try {
@@ -89,6 +95,13 @@ async function runServiceRun(
       scan: scanProjectsDir,
       backend: "bg",
       launcherFor: launcherCache(),
+      detail: {
+        worktreeList: worktreeListPorcelain,
+        identity: readIdentity,
+        forge: auth ? (repo) => giteaClient(auth, repo) : null,
+        forgeUrl: auth?.host ?? "",
+        now: Date.now,
+      },
       ...(monitor
         ? {
             connect: (handlers) =>

@@ -2,11 +2,13 @@
 import { instanceLabel } from "#shared/protocol";
 import { boardsOf, questionsOf } from "~/utils/instances";
 import type { Notice } from "~/utils/instances";
+import { isProjectTab, projectTabs } from "~/utils/projects";
+import type { ProjectTab } from "~/utils/projects";
 
 /** The tab values of the fixed views; never a loop instance id. */
 const LIVE_TAB = "live-logs";
-const HOSTS_TAB = "hosts";
-const FIXED_TABS: readonly (string | null)[] = [LIVE_TAB, HOSTS_TAB];
+const PROJECTS_TAB = "projects";
+const FIXED_TABS: readonly (string | null)[] = [LIVE_TAB, PROJECTS_TAB];
 
 const activeId = ref<string | null>(null);
 
@@ -26,6 +28,10 @@ const {
 } = useMonitor(notifications.notify);
 
 const instances = computed(() => state.value.instances);
+const projects = computed(() => projectTabs(state.value));
+const activeProject = computed(
+  () => projects.value.find((p) => p.value === activeId.value) ?? null,
+);
 /** Lines seen per tab, for the unread counter on the others. */
 const seen = ref<Record<string, number>>({});
 
@@ -46,11 +52,15 @@ provideForge(
   })),
 );
 
-// Open the first tab by default, and fall back when the active one is dismissed.
+// Open the first tab by default, and fall back when the active one is dismissed
+// (a loop) or closed (a project).
 watch(
-  instances,
-  (list) => {
-    if (
+  [instances, projects],
+  ([list, open]) => {
+    if (isProjectTab(activeId.value)) {
+      if (!open.some((p) => p.value === activeId.value))
+        activeId.value = PROJECTS_TAB;
+    } else if (
       !FIXED_TABS.includes(activeId.value) &&
       !list.some((i) => i.id === activeId.value)
     )
@@ -61,16 +71,35 @@ watch(
   { immediate: true },
 );
 
+// A project tab's content is collected on demand: every time it is shown.
+const refresh = (tab: ProjectTab): void => {
+  if (tab.online)
+    command(tab.host, { type: "refresh-project", project: tab.project.name });
+};
+watch(
+  () => activeProject.value?.value,
+  () => {
+    if (activeProject.value) refresh(activeProject.value);
+  },
+);
+
 const runningLive = computed(
   () => state.value.live.filter((l) => !l.done).length,
 );
 const tabs = computed(() => [
-  { label: "live logs", value: LIVE_TAB, inst: undefined },
-  { label: "hosts", value: HOSTS_TAB, inst: undefined },
+  { label: "live logs", value: LIVE_TAB, inst: undefined, proj: undefined },
+  { label: "projects", value: PROJECTS_TAB, inst: undefined, proj: undefined },
+  ...projects.value.map((proj) => ({
+    label: `${proj.project.name} @ ${proj.host}`,
+    value: proj.value,
+    inst: undefined,
+    proj,
+  })),
   ...instances.value.map((inst) => ({
     label: instanceLabel(inst),
     value: inst.id,
     inst,
+    proj: undefined,
   })),
 ]);
 const selected = computed({
@@ -124,10 +153,15 @@ const openQuestions = (id: string): number => {
         >
           <template #leading="{ item }">
             <UIcon
-              v-if="!item.inst"
+              v-if="item.proj"
+              name="i-lucide-folder-open"
+              :class="['size-3.5', !item.proj.online && 'text-dimmed']"
+            />
+            <UIcon
+              v-else-if="!item.inst"
               :name="
-                item.value === HOSTS_TAB
-                  ? 'i-lucide-server'
+                item.value === PROJECTS_TAB
+                  ? 'i-lucide-folder-git-2'
                   : 'i-lucide-scroll-text'
               "
               class="size-3.5"
@@ -210,13 +244,29 @@ const openQuestions = (id: string): number => {
         />
       </main>
       <main
-        v-else-if="activeId === HOSTS_TAB"
+        v-else-if="activeId === PROJECTS_TAB"
         class="flex min-h-0 flex-1 flex-col"
       >
         <HostList
           :hosts="state.hosts"
           :outcomes="state.outcomes"
           @command="(host, cmd) => command(host, cmd)"
+        />
+      </main>
+      <main v-else-if="activeProject" class="flex min-h-0 flex-1 flex-col">
+        <ProjectView
+          :key="activeProject.value"
+          :tab="activeProject"
+          :instances="instances"
+          @refresh="activeProject && refresh(activeProject)"
+          @close="
+            activeProject &&
+            command(activeProject.host, {
+              type: 'close-project',
+              project: activeProject.project.name,
+            })
+          "
+          @open-loop="(id) => (activeId = id)"
         />
       </main>
       <main v-else-if="active" class="flex min-h-0 flex-1 flex-col">

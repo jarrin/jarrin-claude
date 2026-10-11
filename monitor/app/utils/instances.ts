@@ -1,10 +1,11 @@
-import { covers, instanceLabel } from "#shared/protocol";
+import { covers, detailKey, instanceLabel } from "#shared/protocol";
 import type {
   Board,
   CommandOutcome,
   HostView,
   InstanceView,
   LiveLog,
+  ProjectDetailView,
   Question,
   WatchMessage,
 } from "#shared/protocol";
@@ -25,6 +26,8 @@ export interface MonitorState {
   readonly live: readonly LiveLog[];
   /** Machines running `claudjar service`, by host name. */
   readonly hosts: readonly HostView[];
+  /** The content of each active project's tab, as its host last collected it. */
+  readonly details: readonly ProjectDetailView[];
   /** Outcomes of host commands since this page connected, oldest first. */
   readonly outcomes: readonly CommandOutcome[];
 }
@@ -35,6 +38,7 @@ export const emptyState: MonitorState = {
   questions: [],
   live: [],
   hosts: [],
+  details: [],
   outcomes: [],
 };
 
@@ -51,6 +55,7 @@ export function applyWatchMessage(
         questions: [...msg.questions],
         live: [...msg.live],
         hosts: [...msg.hosts],
+        details: [...msg.details],
         // Outcomes are not part of the server's state; a reconnect keeps ours.
         outcomes: state.outcomes,
       };
@@ -127,6 +132,23 @@ export function applyWatchMessage(
         hosts: state.hosts.some((h) => h.host === msg.host.host)
           ? state.hosts.map((h) => (h.host === msg.host.host ? msg.host : h))
           : [...state.hosts, msg.host],
+      };
+    case "project-detail": {
+      const key = detailKey(msg.detail.host, msg.detail.project);
+      return {
+        ...state,
+        details: [
+          ...state.details.filter((d) => detailKey(d.host, d.project) !== key),
+          msg.detail,
+        ],
+      };
+    }
+    case "project-detail-removed":
+      return {
+        ...state,
+        details: state.details.filter(
+          (d) => d.host !== msg.host || d.project !== msg.project,
+        ),
       };
     case "command-result":
       return {

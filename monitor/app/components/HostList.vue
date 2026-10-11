@@ -2,10 +2,11 @@
 import type { CommandOutcome, HostCommand, HostView } from "#shared/protocol";
 
 /**
- * Every machine running `claudjar service`, with the projects it offers and an
- * open / close toggle per project, plus the latest command outcomes.
+ * The projects tab: every machine running `claudjar service`, with the projects
+ * it offers and an open / close toggle per project, plus the latest command
+ * outcomes. An open project also gets its own tab.
  */
-defineProps<{
+const props = defineProps<{
   hosts: readonly HostView[];
   outcomes: readonly CommandOutcome[];
 }>();
@@ -13,6 +14,13 @@ defineEmits<{ command: [host: string, command: HostCommand] }>();
 
 const describe = (o: CommandOutcome): string =>
   `${o.command.type} ${o.command.project} @ ${o.host}: ${o.ok ? "ok" : o.error}`;
+
+/** Newest first; a successful refresh (sent on every tab switch) is noise. */
+const shown = computed(() =>
+  props.outcomes
+    .filter((o) => !o.ok || o.command.type !== "refresh-project")
+    .reverse(),
+);
 </script>
 
 <template>
@@ -54,6 +62,13 @@ const describe = (o: CommandOutcome): string =>
             "
           />
           <span class="font-mono">{{ p.name }}</span>
+          <UBadge
+            v-if="p.active"
+            label="active"
+            color="success"
+            variant="subtle"
+            size="sm"
+          />
           <span class="text-xs text-muted">
             {{ p.configured ? "claudjar" : "unconfigured"
             }}{{ p.backlogRepo ? ` · ${p.backlogRepo}` : "" }}
@@ -61,10 +76,10 @@ const describe = (o: CommandOutcome): string =>
         </li>
       </ul>
     </section>
-    <section v-if="outcomes.length" class="grid gap-1 text-xs">
+    <section v-if="shown.length" class="grid gap-1 text-xs">
       <h2 class="font-semibold text-muted">Commands</h2>
       <p
-        v-for="o in [...outcomes].reverse()"
+        v-for="o in shown"
         :key="o.id"
         :class="o.ok ? 'text-muted' : 'text-error'"
       >

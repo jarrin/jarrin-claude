@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { fakeLauncher } from "../session/fake-launcher.js";
+import { fakeDetailDeps } from "./fake-detail.js";
 import type { FakeLauncher } from "../session/fake-launcher.js";
 import {
   launcherName,
@@ -224,6 +225,7 @@ describe("reconcileSessions", () => {
         })),
       backend: "bg",
       launcherFor: () => launcher,
+      detail: fakeDetailDeps(),
     });
     const after = readState(file);
     expect(after.projects.map((p) => p.active)).toEqual([true, true]);

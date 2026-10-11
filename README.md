@@ -468,8 +468,11 @@ exits.
 
 With `monitor:` set, the service dials the web interface at `/ws/host` — outbound, like the
 loops, so no port opens on this machine. It publishes its projects, re-publishes them when a
-rescan changes them, and runs the commands sent from the UI's **hosts** tab (`open-project` /
-`close-project`). The link reconnects on its own and never stops the service; each reconnect's
+rescan changes them, and runs the commands sent from the UI's **projects** tab (`open-project` /
+`close-project`). Each open project gets a tab of its own listing the open milestones of its
+backlog repo (with open / closed counts) and its worktrees, each with its port, its linked
+milestone, its session status and any loop working that milestone; the host collects it on
+open and again whenever the tab is shown, or on **refresh**. The link reconnects on its own and never stops the service; each reconnect's
 hello carries the current project list, so nothing sent while it was down is lost.
 
 **Opening a project** marks it active and starts a background Claude session in its root —

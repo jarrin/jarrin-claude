@@ -117,6 +117,40 @@ describe("parseHostMessage", () => {
       expect(parseHostMessage(JSON.stringify(m))?.type).toBe(m.type);
   });
 
+  it("accepts a project-detail and rejects an unknown session status", () => {
+    const worktree = {
+      name: "dev",
+      branch: "dev",
+      path: "/p/x-worktrees/dev",
+      port: 8001,
+      milestone: "plan-x",
+      session: "running",
+    };
+    const detail = {
+      project: "x",
+      repo: "o/x",
+      forge: "https://g",
+      milestones: [{ id: 1, title: "plan-x", openIssues: 1, closedIssues: 2 }],
+      worktrees: [worktree],
+      error: "",
+      collectedAt: 3,
+    };
+    expect(
+      parseHostMessage(JSON.stringify({ type: "project-detail", detail })),
+    ).toEqual({ type: "project-detail", detail });
+    expect(
+      parseHostMessage(
+        JSON.stringify({
+          type: "project-detail",
+          detail: {
+            ...detail,
+            worktrees: [{ ...worktree, session: "zombie" }],
+          },
+        }),
+      ),
+    ).toBeNull();
+  });
+
   it("rejects a host without a name and a project missing a field", () => {
     expect(
       parseHostMessage(
@@ -145,8 +179,8 @@ describe("parseHostMessage", () => {
 });
 
 describe("parseWatcherMessage command", () => {
-  it("accepts open-project and close-project", () => {
-    for (const type of ["open-project", "close-project"])
+  it("accepts open-project, close-project and refresh-project", () => {
+    for (const type of ["open-project", "close-project", "refresh-project"])
       expect(
         parseWatcherMessage(
           JSON.stringify({

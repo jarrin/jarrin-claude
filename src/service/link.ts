@@ -3,6 +3,7 @@ import type {
   HostCommand,
   HostInfo,
   HostMessage,
+  ProjectDetail,
   ProjectInfo,
   ServerHostMessage,
 } from "../../monitor/shared/protocol.js";
@@ -27,6 +28,8 @@ export interface HostLink {
   publish(projects: readonly ProjectInfo[]): void;
   /** One project changed (opened, closed). */
   projectState(project: ProjectInfo): void;
+  /** A project's freshly collected detail; dropped while the socket is down. */
+  detail(detail: ProjectDetail): void;
   /** Disconnect for good. */
   close(): void;
 }
@@ -170,6 +173,9 @@ export function connectHost(opts: HostLinkOptions): HostLink {
     },
     projectState: (project) => {
       send({ type: "project-state", project });
+    },
+    detail: (detail) => {
+      send({ type: "project-detail", detail });
     },
     close: () => {
       closed = true;

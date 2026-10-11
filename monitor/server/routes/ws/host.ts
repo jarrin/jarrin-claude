@@ -32,6 +32,9 @@ export default defineWebSocketHandler({
       case "project-state":
         hub.hostProject(host, msg.project);
         break;
+      case "project-detail":
+        hub.hostDetail(host, msg.detail);
+        break;
       case "command-result":
         hub.hostResult(host, msg.result);
         break;

@@ -448,14 +448,26 @@ linger.
 **The host channel.** With `monitor:` set, `src/service/link.ts` dials the monitor's
 `/ws/host` (outbound, so no inbound port) and speaks the `HostMessage` / `ServerHostMessage`
 half of `monitor/shared/protocol.ts`: `host-hello` (token + projects), `projects` after a
-rescan that changed them, `project-state`, and `command-result` for each `command`
-(`open-project` / `close-project` today). It keeps no outbound queue on purpose: the monitor
+rescan that changed them, `project-state`, `project-detail`, and `command-result` for each
+`command` (`open-project` / `close-project` / `refresh-project`). It keeps no outbound queue on purpose: the monitor
 needs the _current_ list, which every reconnect's hello carries, and it fails a command whose
 host dropped itself. `monitor.token` is required by `parseConf`, because the monitor rejects
 every process without `NUXT_AGENT_TOKEN`. On the monitor, browsers authenticate by OIDC
 (`server/utils/oidc.ts`, nuxt-auth-utils) and processes by that token
 (`server/utils/auth.ts`); `/ws/watch` checks the session in its upgrade hook, since the HTTP
 middleware never sees a WebSocket upgrade.
+
+**Project tabs.** An active project gets its own tab in the monitor, filled by a
+`project-detail` the host collects on `open-project` and on every `refresh-project` (the UI
+sends one each time the tab is shown). `src/service/detail.ts` is pure over `DetailDeps`
+(git, the stamped config, the forge — `fakeDetailDeps` in tests): the backlog repo's open
+milestones with issue counts (via `giteaClient(...).openMilestones()`, credentials from
+`resolveAuth` exactly as `claudjar loop` resolves them), and each checkout from
+`git worktree list` with its stamped `name` / `port` / `milestone` and the status of the
+service's session there. A forge failure is carried in `error` rather than failing the
+command, so the worktrees still show. The hub keeps a detail only while its project is active
+(closing or losing the project drops it, with `project-detail-removed`) and persists it like
+hosts. A worktree's loops are matched in `loopsFor` by host + repo + its linked milestone title.
 
 ### The standalone binary
 

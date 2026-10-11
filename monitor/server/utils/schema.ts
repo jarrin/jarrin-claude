@@ -12,6 +12,8 @@ import type {
   LogDetail,
   LivePost,
   LogKind,
+  ProjectDetail,
+  ProjectDetailView,
   ProjectInfo,
   Question,
   WatcherMessage,
@@ -153,9 +155,43 @@ const projectInfo = z.object({
 
 const projectList = z.array(projectInfo).max(1000);
 
+const projectDetail = z.object({
+  project: z.string().min(1).max(256),
+  repo: z.string().max(256),
+  forge: z.string().max(1024),
+  milestones: z
+    .array(
+      z.object({
+        id: z.number().int(),
+        title: z.string().max(256),
+        openIssues: z.number().int().nonnegative(),
+        closedIssues: z.number().int().nonnegative(),
+      }),
+    )
+    .max(1000),
+  worktrees: z
+    .array(
+      z.object({
+        name: z.string().max(256),
+        branch: z.string().max(256),
+        path: z.string().max(4096),
+        port: z.number().int().nonnegative(),
+        milestone: z.string().max(256),
+        session: z.enum(["running", "stopped", "none"]),
+      }),
+    )
+    .max(1000),
+  error: z.string().max(4096),
+  collectedAt: z.number(),
+}) satisfies z.ZodType<ProjectDetail>;
+
 const hostCommand = z.discriminatedUnion("type", [
   z.object({ type: z.literal("open-project"), project: z.string().max(256) }),
   z.object({ type: z.literal("close-project"), project: z.string().max(256) }),
+  z.object({
+    type: z.literal("refresh-project"),
+    project: z.string().max(256),
+  }),
 ]) satisfies z.ZodType<HostCommand>;
 
 const commandId = z.string().min(1).max(64);
@@ -169,6 +205,7 @@ const hostMessage = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("projects"), projects: projectList }),
   z.object({ type: z.literal("project-state"), project: projectInfo }),
+  z.object({ type: z.literal("project-detail"), detail: projectDetail }),
   z.object({
     type: z.literal("command-result"),
     result: z.object({
@@ -256,6 +293,14 @@ const saved = z.object({
         lastSeen: z.number(),
         projects: z.array(projectInfo),
       }) satisfies z.ZodType<HostView>,
+    )
+    .default([]),
+  // Added with the project tabs.
+  details: z
+    .array(
+      projectDetail.extend({
+        host: z.string().min(1).max(128),
+      }) satisfies z.ZodType<ProjectDetailView>,
     )
     .default([]),
 }) satisfies z.ZodType<Saved>;
