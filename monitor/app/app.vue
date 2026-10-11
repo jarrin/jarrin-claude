@@ -268,6 +268,20 @@ const projectQuestions = (tab: ProjectTab): number =>
         v-if="loopTabs.length > 0"
         class="flex h-9 shrink-0 items-stretch border-b border-default bg-elevated/25 px-3"
       >
+        <!-- Back to the main tab's own page (the project, or the overview). -->
+        <button
+          type="button"
+          :class="[
+            'flex items-center border-l border-default px-3 text-muted hover:text-default',
+            !active && 'bg-black/5 text-default dark:bg-black/25',
+          ]"
+          :title="
+            mainSelected === PROJECTS_TAB ? 'Projects overview' : 'Project page'
+          "
+          @click="activeId = mainSelected ?? PROJECTS_TAB"
+        >
+          <UIcon name="i-lucide-house" class="size-3.5" />
+        </button>
         <UTabs
           v-model="loopSelected"
           :items="loopTabs"
