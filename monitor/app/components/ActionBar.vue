@@ -23,7 +23,9 @@ const send = (): void => {
 </script>
 
 <template>
-  <footer class="flex items-end gap-2 border-t border-default bg-default p-3">
+  <footer
+    class="flex flex-wrap items-end gap-2 border-t border-default bg-default p-3"
+  >
     <UButton
       v-if="instance.paused"
       icon="i-lucide-play"
@@ -57,20 +59,10 @@ const send = (): void => {
       :rows="1"
       :disabled="!instance.online"
       variant="subtle"
-      class="flex-1"
+      class="min-w-64 flex-1"
       placeholder="Send input to the running session (or the next one, when idle)…"
       @submit="send"
     >
-      <ConfirmButton
-        icon="i-lucide-square"
-        label="Abort"
-        color="warning"
-        title="Abort the loop?"
-        description="The running session ends, its uncommitted work is stashed, the locks are released and the loop exits with status “aborted”. Restarting the loop resumes that session."
-        hint="End the loop now (pause only holds it between sessions)"
-        :disabled="!running"
-        @confirm="emit('stop')"
-      />
       <UChatPromptSubmit
         :disabled="!instance.online || !draft.trim()"
         size="sm"

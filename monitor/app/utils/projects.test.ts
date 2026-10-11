@@ -5,6 +5,7 @@ import type {
   HostView,
   InstanceSummary,
   ProjectDetailView,
+  Question,
   WorktreeDetail,
 } from "#shared/protocol";
 
@@ -16,6 +17,7 @@ import {
   loopRunning,
   milestoneLoops,
   outcomeOf,
+  projectOpenQuestions,
   projectTabValue,
   projectTabs,
   worktreeActionState,
@@ -141,6 +143,44 @@ describe("worktrees", () => {
     ];
     expect(milestoneLoops(loops, detail, 1).map((l) => l.id)).toEqual(["hit"]);
     expect(milestoneLoops(loops, detail, 2)).toEqual([]);
+  });
+});
+
+describe("projectOpenQuestions", () => {
+  const question = (id: string, over: Partial<Question> = {}): Question => ({
+    id,
+    repo: "o/r",
+    milestone: { id: 1, title: "plan-x" },
+    issue: 3,
+    title: "t",
+    text: "?",
+    askedAt: 0,
+    answer: null,
+    answeredAt: null,
+    ...over,
+  });
+
+  it("counts the unanswered questions of the project's loops, once each", () => {
+    const state = {
+      ...emptyState,
+      instances: [
+        { ...loop({ id: "l1" }), lines: [] },
+        { ...loop({ id: "l2" }), lines: [] },
+        { ...loop({ id: "other", repo: "o/elsewhere" }), lines: [] },
+      ],
+      questions: [
+        question("q1"),
+        question("q2", { answer: "yes", answeredAt: 1 }),
+        question("q3", { repo: "o/elsewhere" }),
+      ],
+    };
+    expect(projectOpenQuestions(state, detail).map((q) => q.id)).toEqual([
+      "q1",
+    ]);
+  });
+
+  it("is empty before the detail arrives", () => {
+    expect(projectOpenQuestions(emptyState, null)).toEqual([]);
   });
 });
 

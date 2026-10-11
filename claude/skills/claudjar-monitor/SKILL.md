@@ -42,8 +42,11 @@ side, because the CLI and the server share one wire protocol.
     a loop or session runs there or either tree is dirty, and a conflict is aborted.
   - `remove-worktree` stops what runs in the worktree, tears its stack down, runs the remove
     hooks and removes it.
-- The UI has one tab per loop process. The log is on the left. On the right, the progress tree
-  sits above the open questions, and each question has its own answer box. Below them are
+- The UI has one tab per loop process. The log is on the left. On the right, a panel that
+  scrolls on its own holds the progress tree and the open questions, each with its own answer
+  box; an unanswered question moves above the tree. On a phone the panel stacks under the log.
+  A loop tab, the tab of the open project whose worktree it works, and that worktree's row all
+  carry a `? n` badge for unanswered questions (`openQuestionsOf`, `projectOpenQuestions`). Below them are
   **Pause/Continue**, **Abort** and **send input**. Browser desktop notifications have to be enabled once
   with the header button. They fire on a new question, an issue turning blocked, and a loop
   that finishes or stops.
@@ -113,6 +116,13 @@ Keep these invariants:
   `/ws/watch` acting as the browser. A `.ts` script fails, because tsx compiles it as CJS
   and rejects top-level await.
 - Look at the UI at `http://localhost:3911` after seeding an instance that stays connected.
+  For layout work, script it: a raw `WebSocket` to `/ws/agent` (hello + a long `progress` +
+  an `ask`) and one to `/ws/host` (`host-hello` + a `project-detail`), then Playwright
+  (installed in a scratch dir, not in `monitor/`) to screenshot and compare an element's
+  `scrollHeight` with its `clientHeight` at desktop and phone widths.
+- **Scrolling columns are flex, not grid.** A `grid` with a fixed height shrinks its rows to
+  fit, and a `UCard` (`overflow-hidden`) then clips its content instead of the column
+  scrolling. Use `flex flex-col overflow-y-auto *:shrink-0` for the aside and the project view.
 
 ## Deploying
 

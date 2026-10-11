@@ -3,6 +3,7 @@ import type {
   Board,
   CommandOutcome,
   HostView,
+  InstanceInfo,
   InstanceView,
   LiveLog,
   ProjectDetailView,
@@ -172,6 +173,16 @@ export function questionsOf(
 ): Question[] {
   return state.questions
     .filter((q) => covers(inst, q))
+    .sort((a, b) => a.askedAt - b.askedAt);
+}
+
+/** The questions a loop asked that nobody has answered yet. */
+export function openQuestionsOf(
+  state: MonitorState,
+  inst: InstanceInfo,
+): Question[] {
+  return state.questions
+    .filter((q) => q.answer === null && covers(inst, q))
     .sort((a, b) => a.askedAt - b.askedAt);
 }
 

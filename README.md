@@ -410,11 +410,13 @@ reports to, deployed as the `claudjar` stack on the homeserver at <https://claud
 loop's durable store:
 
 - Each loop process gets one tab, named `<milestones> @ <hostname>`, with an online / paused /
-  offline dot, an open-question badge, an unread counter, and a status line (`working #12 …`,
+  offline dot, an open-question badge (also summed on the tab of an open project, and shown on
+  the worktree row of the loop that asked), an unread counter, and a status line (`working #12 …`,
   `waiting for answers to #3`, `paused`, `finished: …`). A reconnect keeps the same tab.
-- The tab is split: the session log on the left, the milestone **progress tree** (issues and
-  their steps) above the **open questions** on the right, each question with its own answer
-  box, and an action bar below — **Pause / Continue**, **Abort** (confirmed first) and **send
+- The tab is split: the session log on the left, and on the right a panel that scrolls on its
+  own with the milestone **progress tree** (issues and their steps) and the **open questions**,
+  each question with its own answer box (an unanswered one moves above the tree). On a phone
+  the panel stacks under the log. An action bar sits below — **Pause / Continue**, **Abort** (confirmed first) and **send
   input to the loop**. When an open project shows the loop's worktree, the tab's header also
   carries that worktree's actions (restart, merge, merge & remove, remove).
 - The stream-json of every session is rendered colour-coded per line: loop progress, input,

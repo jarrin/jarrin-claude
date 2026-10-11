@@ -33,6 +33,8 @@ const props = defineProps<{
   outcomes: readonly CommandOutcome[];
   /** Send a command to this tab's host; the id its result comes back under, or null. */
   run: (command: HostCommand) => string | null;
+  /** How many unanswered questions a loop has, by instance id. */
+  openQuestions: (id: string) => number;
 }>();
 const emit = defineEmits<{
   refresh: [];
@@ -118,7 +120,11 @@ const done = (open: number, closed: number): number =>
 </script>
 
 <template>
-  <div class="grid content-start gap-4 overflow-y-auto p-3">
+  <!-- A flex column, not a grid: grid rows shrink to the box and the cards
+       (overflow-hidden) clip their rows instead of the view scrolling. -->
+  <div
+    class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3 *:shrink-0"
+  >
     <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
       <span class="font-mono text-sm text-default">{{ tab.project.name }}</span>
       <span>{{ tab.host }}{{ tab.online ? "" : " · offline" }}</span>
@@ -186,17 +192,19 @@ const done = (open: number, closed: number): number =>
         <div
           v-for="m in detail.milestones"
           :key="m.id"
-          class="grid grid-cols-[minmax(0,1fr)_8rem_auto_auto] items-center gap-3 text-sm"
+          class="grid grid-cols-[4rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-sm sm:grid-cols-[minmax(0,1fr)_8rem_auto_auto]"
         >
           <ULink
             v-if="milestoneUrl(forge, m.id)"
             :to="milestoneUrl(forge, m.id)"
             target="_blank"
-            class="truncate font-mono"
+            class="col-span-full truncate font-mono sm:col-span-1"
           >
             {{ m.title }}
           </ULink>
-          <span v-else class="truncate font-mono">{{ m.title }}</span>
+          <span v-else class="col-span-full truncate font-mono sm:col-span-1">{{
+            m.title
+          }}</span>
           <UProgress
             :model-value="done(m.openIssues, m.closedIssues)"
             size="sm"
@@ -304,7 +312,16 @@ const done = (open: number, closed: number): number =>
             variant="subtle"
             size="xs"
             @click="$emit('open-loop', l.id)"
-          />
+          >
+            <template v-if="openQuestions(l.id)" #trailing>
+              <UBadge
+                :label="`? ${openQuestions(l.id)}`"
+                color="warning"
+                size="sm"
+                title="Open questions: answer them in the loop's tab"
+              />
+            </template>
+          </UButton>
           <span class="basis-full truncate font-mono text-xs text-muted">{{
             w.path
           }}</span>

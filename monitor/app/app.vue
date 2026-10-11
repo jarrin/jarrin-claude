@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { instanceLabel } from "#shared/protocol";
-import { boardsOf, questionsOf } from "~/utils/instances";
+import { boardsOf, openQuestionsOf, questionsOf } from "~/utils/instances";
 import type { Notice } from "~/utils/instances";
 import {
   isProjectTab,
+  projectOpenQuestions,
   projectTabs,
   worktreeLoops,
   worktreeOfInstance,
@@ -48,6 +49,9 @@ const boards = computed(() =>
 );
 const questions = computed(() =>
   active.value ? questionsOf(state.value, active.value) : [],
+);
+const unanswered = computed(() =>
+  questions.value.some((q) => q.answer === null),
 );
 /** The worktree the active loop works in, when an open project shows it. */
 const activeWorktree = computed(() => {
@@ -138,10 +142,11 @@ const unreadLabel = (id: string, total: number): string => {
 };
 const openQuestions = (id: string): number => {
   const inst = instances.value.find((i) => i.id === id);
-  return inst
-    ? questionsOf(state.value, inst).filter((q) => q.answer === null).length
-    : 0;
+  return inst ? openQuestionsOf(state.value, inst).length : 0;
 };
+/** A project tab counts the open questions of every loop on its worktrees. */
+const projectQuestions = (tab: ProjectTab): number =>
+  projectOpenQuestions(state.value, tab.detail).length;
 </script>
 
 <template>
@@ -152,7 +157,7 @@ const openQuestions = (id: string): number => {
       >
         <span class="flex items-center gap-2 font-semibold text-primary">
           <img src="/icon.svg" alt="" class="size-5" />
-          claudjar loops
+          <span class="hidden sm:inline">claudjar loops</span>
         </span>
         <UTabs
           v-model="selected"
@@ -190,7 +195,14 @@ const openQuestions = (id: string): number => {
           </template>
           <template #trailing="{ item }">
             <UBadge
-              v-if="item.value === LIVE_TAB"
+              v-if="item.proj && projectQuestions(item.proj)"
+              :label="`? ${projectQuestions(item.proj)}`"
+              color="warning"
+              size="sm"
+              title="Open questions in this project's loops"
+            />
+            <UBadge
+              v-else-if="item.value === LIVE_TAB"
               :label="String(runningLive)"
               color="info"
               size="sm"
@@ -276,6 +288,7 @@ const openQuestions = (id: string): number => {
           :tab="activeProject"
           :instances="instances"
           :outcomes="state.outcomes"
+          :open-questions="openQuestions"
           :run="
             (cmd) => (activeProject ? command(activeProject.host, cmd) : null)
           "
@@ -338,16 +351,21 @@ const openQuestions = (id: string): number => {
             />
           </template>
         </div>
-        <div class="flex min-h-0 flex-1">
+        <div class="flex min-h-0 flex-1 flex-col md:flex-row">
           <LogView :key="active.id" :lines="active.lines" />
+          <!-- A flex column, not a grid: grid rows shrink to the box and the
+               cards (overflow-hidden) clip their tickets instead of scrolling.
+               Stacked under the log on a phone, capped so the log keeps room. -->
           <aside
-            class="grid w-96 shrink-0 content-start gap-3 overflow-y-auto border-l border-default p-3"
+            class="flex max-h-[45%] shrink-0 flex-col gap-3 overflow-y-auto border-t border-default p-3 *:shrink-0 md:max-h-none md:w-96 md:border-t-0 md:border-l"
           >
-            <ProgressTree :boards="boards" />
+            <!-- An unanswered question goes first, above a long ticket list. -->
             <QuestionList
+              :class="unanswered ? 'order-first' : 'order-last'"
               :questions="questions"
               @answer="(id, text) => answer(id, text)"
             />
+            <ProgressTree :boards="boards" />
           </aside>
         </div>
         <ActionBar

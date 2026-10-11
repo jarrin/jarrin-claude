@@ -7,10 +7,12 @@ import type {
   MilestoneDetail,
   ProjectDetailView,
   ProjectInfo,
+  Question,
   WorktreeDetail,
   WorktreeMode,
 } from "#shared/protocol";
 
+import { openQuestionsOf } from "./instances";
 import type { MonitorState } from "./instances";
 
 /** Prefix of a project tab's value, so it never collides with a loop instance id. */
@@ -65,6 +67,22 @@ export function worktreeLoops(
   worktree: WorktreeDetail,
 ): InstanceSummary[] {
   return loopsFor(instances, detail.host, detail.repo, worktree);
+}
+
+/**
+ * The unanswered questions of the loops working any of a project's worktrees,
+ * once each: two loops on one milestone see the same question.
+ */
+export function projectOpenQuestions(
+  state: MonitorState,
+  detail: ProjectDetailView | null,
+): Question[] {
+  if (!detail) return [];
+  const found = new Map<string, Question>();
+  for (const w of detail.worktrees)
+    for (const inst of worktreeLoops(state.instances, detail, w))
+      for (const q of openQuestionsOf(state, inst)) found.set(q.id, q);
+  return [...found.values()];
 }
 
 /** The online loops on a project's host and repo that work a milestone. */

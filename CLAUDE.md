@@ -467,7 +467,8 @@ milestones with issue counts (via `giteaClient(...).openMilestones()`, credentia
 service's session there. A forge failure is carried in `error` rather than failing the
 command, so the worktrees still show. The hub keeps a detail only while its project is active
 (closing or losing the project drops it, with `project-detail-removed`) and persists it like
-hosts. A worktree's loops are matched in `loopsFor`: by its `loopPid` (the loop the service
+hosts. The project tab's `? n` badge sums the unanswered questions of the loops matched to its
+worktrees (`projectOpenQuestions`). A worktree's loops are matched in `loopsFor`: by its `loopPid` (the loop the service
 started there) on the same host, else by host + repo + its linked milestone title.
 
 **Creating worktrees.** `create-worktree { project, name?, milestone?, mode }` is handled by
