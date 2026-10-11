@@ -2,7 +2,12 @@
 import { instanceLabel } from "#shared/protocol";
 import { boardsOf, questionsOf } from "~/utils/instances";
 import type { Notice } from "~/utils/instances";
-import { isProjectTab, projectTabs } from "~/utils/projects";
+import {
+  isProjectTab,
+  projectTabs,
+  worktreeLoops,
+  worktreeOfInstance,
+} from "~/utils/projects";
 import type { ProjectTab } from "~/utils/projects";
 
 /** The tab values of the fixed views; never a loop instance id. */
@@ -44,6 +49,18 @@ const boards = computed(() =>
 const questions = computed(() =>
   active.value ? questionsOf(state.value, active.value) : [],
 );
+/** The worktree the active loop works in, when an open project shows it. */
+const activeWorktree = computed(() => {
+  const a = active.value;
+  const found = a ? worktreeOfInstance(state.value.details, a) : null;
+  if (!found) return null;
+  const host = state.value.hosts.find((h) => h.host === found.detail.host);
+  return {
+    ...found,
+    online: host?.online ?? false,
+    loops: worktreeLoops(instances.value, found.detail, found.worktree),
+  };
+});
 provideForge(
   computed(() => ({
     ...(active.value?.forge ? { url: active.value.forge } : {}),
@@ -271,6 +288,7 @@ const openQuestions = (id: string): number => {
             })
           "
           @open-loop="(id) => (activeId = id)"
+          @stop-loop="(id) => control(id, 'stop')"
         />
       </main>
       <main v-else-if="active" class="flex min-h-0 flex-1 flex-col">
@@ -297,6 +315,28 @@ const openQuestions = (id: string): number => {
                 : `offline — ${active.status}`
             "
           />
+          <template v-if="activeWorktree">
+            <span class="flex-1" />
+            <span class="font-mono">
+              {{ activeWorktree.detail.project }}/{{
+                activeWorktree.worktree.name
+              }}
+            </span>
+            <WorktreeActions
+              :project="activeWorktree.detail.project"
+              :worktree="activeWorktree.worktree"
+              :loops="activeWorktree.loops"
+              :online="activeWorktree.online"
+              :outcomes="state.outcomes"
+              :run="
+                (cmd) =>
+                  activeWorktree
+                    ? command(activeWorktree.detail.host, cmd)
+                    : null
+              "
+              @stop-loop="(id) => control(id, 'stop')"
+            />
+          </template>
         </div>
         <div class="flex min-h-0 flex-1">
           <LogView :key="active.id" :lines="active.lines" />
@@ -314,6 +354,7 @@ const openQuestions = (id: string): number => {
           :instance="active"
           @pause="control(active.id, 'pause')"
           @resume="control(active.id, 'resume')"
+          @stop="control(active.id, 'stop')"
           @input="(text) => input(active?.id ?? '', text)"
         />
       </main>

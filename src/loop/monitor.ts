@@ -30,6 +30,8 @@ export interface Monitor extends LoopStore {
   loop(text: string): void;
   /** One raw stream-json line from the session working `issue`. */
   stream(raw: string, issue: number): void;
+  /** Abort locally (a signal): {@link LoopStore.stopped} turns true and waiters wake. */
+  stop(): void;
   /** Flush what is queued (bounded wait), then disconnect for good. */
   close(): Promise<void>;
 }
@@ -52,6 +54,8 @@ export interface MonitorOptions {
   readonly instance: InstanceInfo;
   /** Text the user sent the loop from the monitor. */
   readonly onInput?: (text: string) => void;
+  /** The user aborted the loop from the monitor. */
+  readonly onStop?: () => void;
   /**
    * The sessions' working directory. When set, a Bash call that redirects its
    * output to a file has that file followed live (see `tail.ts`).
@@ -95,6 +99,7 @@ export function connectMonitor(opts: MonitorOptions): Monitor {
   let queue: LogLine[] = [];
   let status = "starting";
   let paused = false;
+  let stopped = false;
   let statusDirty = true;
   /** Latest entries per milestone, and which still have to be sent. */
   const boards = new Map<
@@ -163,6 +168,20 @@ export function connectMonitor(opts: MonitorOptions): Monitor {
         notify();
         return;
       case "control":
+        if (msg.action === "stop") {
+          if (stopped) return;
+          stopped = true;
+          push([
+            {
+              t: now(),
+              kind: "loop",
+              text: "--- abort requested: ending the running session",
+            },
+          ]);
+          opts.onStop?.();
+          notify();
+          return;
+        }
         paused = msg.action === "pause";
         statusDirty = true;
         push([
@@ -279,6 +298,12 @@ export function connectMonitor(opts: MonitorOptions): Monitor {
       send({ type: "resolved", questionId: id });
     },
     paused: () => paused,
+    stopped: () => stopped,
+    stop: () => {
+      if (stopped) return;
+      stopped = true;
+      notify();
+    },
     wait: (ms) =>
       new Promise<void>((resolve) => {
         const timer = setTimeout(() => {

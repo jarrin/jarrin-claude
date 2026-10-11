@@ -17,7 +17,7 @@ import { parse } from "yaml";
 import { BASE_FILE } from "../config/load.js";
 import type { LocalContext } from "../context.js";
 import { toplevel } from "../git.js";
-import { runLoop } from "../loop/driver.js";
+import { ABORTED, runLoop } from "../loop/driver.js";
 import { giteaClient, resolveAuth, workOrder } from "../loop/gitea.js";
 import { InputBox } from "../loop/input.js";
 import { connectMonitor } from "../loop/monitor.js";
@@ -226,6 +226,9 @@ async function runLoopCommand(
   const release = acquireLocks(loopLocks(stateDir, repoRoot, milestones));
   if (typeof release === "string") return fail(release);
   const inputs = new InputBox();
+  // Aborting (the monitor's `stop`, or a first SIGINT / SIGTERM) ends the
+  // running session through this signal; the driver then stashes and stops.
+  const abort = new AbortController();
   const monitor = connectMonitor({
     url: monitorUrl,
     token: proc.env.CLAUDJAR_MONITOR_TOKEN ?? "",
@@ -243,19 +246,34 @@ async function runLoopCommand(
       out(`  ✉ input from the monitor: ${text.slice(0, 160)}`);
       inputs.push(text);
     },
+    onStop: () => {
+      out("  ■ abort requested from the monitor");
+      abort.abort();
+    },
   });
   const log = (line: string): void => {
     out(line);
     monitor.loop(line);
   };
+  let signalled = false;
   const onSignal = (): void => {
+    if (!signalled && !abort.signal.aborted) {
+      // First signal: abort gracefully, like the monitor's abort — the session
+      // ends, its work is stashed, the locks are released on the way out.
+      signalled = true;
+      out("  ■ abort requested (signal again to exit at once)");
+      monitor.stop();
+      abort.abort();
+      return;
+    }
+    // Second signal (or a stuck abort): leave now.
     release();
     monitor.status("interrupted");
     // Exit only once the monitor has seen the interruption (bounded wait).
     void monitor.close().finally(() => proc.exit(130));
   };
-  proc.once("SIGINT", onSignal);
-  proc.once("SIGTERM", onSignal);
+  proc.on("SIGINT", onSignal);
+  proc.on("SIGTERM", onSignal);
 
   try {
     // The monitor holds the state a restart resumes from: never start without it.
@@ -278,8 +296,11 @@ async function runLoopCommand(
           out,
           onLine: (line, issue) => monitor.stream(line, issue.number),
           inputs,
+          signal: abort.signal,
         }),
-        sleep: (ms) => delay(ms),
+        // A usage-limit wait ends early on an abort.
+        sleep: (ms) =>
+          delay(ms, undefined, { signal: abort.signal }).catch(() => {}),
         now: () => Date.now(),
         log,
         stash: (label) => stashIfDirty(repoRoot, label),
@@ -295,7 +316,9 @@ async function runLoopCommand(
       },
     );
     log(`\nloop finished: ${summary.stopReason}`);
-    monitor.status(`finished: ${summary.stopReason}`);
+    monitor.status(
+      summary.aborted ? ABORTED : `finished: ${summary.stopReason}`,
+    );
     out(
       `  closed:    ${summary.closed.map((i) => `#${String(i.number)}`).join(" ") || "—"}`,
     );
@@ -306,7 +329,8 @@ async function runLoopCommand(
       `  awaiting:  ${summary.awaiting.map((i) => `#${String(i.number)}`).join(" ") || "—"}`,
     );
     out(`  logs:      ${stateDir}`);
-    if (summary.leftOpen.length > 0 || summary.awaiting.length > 0)
+    if (summary.aborted) out("  aborted:   restart the loop to resume");
+    else if (summary.leftOpen.length > 0 || summary.awaiting.length > 0)
       proc.exitCode = 1;
     // Sessions only commit; a fully drained run is the one point the result ships.
     if (summary.clean && flags.push) {
@@ -321,6 +345,8 @@ async function runLoopCommand(
     }
   } finally {
     release();
+    proc.off("SIGINT", onSignal);
+    proc.off("SIGTERM", onSignal);
     await monitor.close();
   }
 }
@@ -418,7 +444,10 @@ export const loopCommand = buildCommand({
       "desktop notification), other issues are worked meanwhile, and the answer typed " +
       "there resumes that session. From the monitor the loop can also be paused (the " +
       "current session finishes, no new one starts) and sent input, which reaches the " +
-      "running session as a user message. An issue the session leaves open without a " +
+      "running session as a user message, or aborted: the running session ends, its " +
+      'uncommitted work is stashed, the status becomes "aborted" and the locks are ' +
+      "released — a first SIGINT / SIGTERM does the same (a second exits at once), and " +
+      "running the loop again resumes that session and has it restore the stash. An issue the session leaves open without a " +
       "question (blocked) is skipped. Sessions only commit, never release or push — unless " +
       "--allow-prod, which lets them release, deploy, use sudo and edit prod's .env; a " +
       "clean finish (every issue closed) pushes the checked-out branch unless --no-push. " +

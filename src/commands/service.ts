@@ -8,7 +8,7 @@ import { buildCommand, buildRouteMap } from "@stricli/core";
 import type { LocalContext } from "../context.js";
 import type { ServiceConf } from "../service/conf.js";
 import { ConfError, confPath, readConf } from "../service/conf.js";
-import { worktreeListPorcelain } from "../git.js";
+import { statusPorcelain, worktreeListPorcelain } from "../git.js";
 import { giteaClient, resolveAuth } from "../loop/gitea.js";
 import { readIdentity } from "../service/detail.js";
 import { scanProjectsDir } from "../service/discover.js";
@@ -23,11 +23,21 @@ import {
 import {
   isAlive,
   lockHolder,
+  loopLocks,
   loopStateDir,
   milestoneLockPath,
 } from "./loop.js";
-import { selfCommand, spawnLoop } from "../service/spawn-loop.js";
-import { createWorktree } from "../worktree/lib.js";
+import {
+  selfCommand,
+  spawnLoop,
+  stopLoopProcess,
+} from "../service/spawn-loop.js";
+import type { WorktreeDeps } from "../worktree/lib.js";
+import {
+  createWorktree,
+  mergeWorktree,
+  removeWorktree,
+} from "../worktree/lib.js";
 import { spawnRunner } from "../worktree/runner.js";
 import type { Passwd } from "../service/unit.js";
 import {
@@ -98,6 +108,12 @@ async function runServiceRun(
   const home = homedir();
   const loopLogDir = join(serviceDir(proc.env), "loops");
   let scope: boolean | undefined;
+  const wtDeps: WorktreeDeps = {
+    run: spawnRunner(proc.env),
+    log: (msg) => void proc.stdout.write(msg),
+    warn: (msg) => void proc.stderr.write(msg),
+    caddyDir: this.caddyDir,
+  };
   proc.once("SIGTERM", stop);
   proc.once("SIGINT", stop);
   try {
@@ -120,13 +136,15 @@ async function runServiceRun(
         isAlive,
       },
       worktrees: {
-        create: (repoRoot, opts) =>
-          createWorktree(repoRoot, opts, {
-            run: spawnRunner(proc.env),
-            log: (msg) => void proc.stdout.write(msg),
-            warn: (msg) => void proc.stderr.write(msg),
-            caddyDir: this.caddyDir,
-          }),
+        create: (repoRoot, opts) => createWorktree(repoRoot, opts, wtDeps),
+        merge: (repoRoot, opts) => mergeWorktree(repoRoot, opts, wtDeps),
+        remove: (repoRoot, opts) => removeWorktree(repoRoot, opts, wtDeps),
+        dirty: statusPorcelain,
+        worktreeLoopHolder: (repo, path) => {
+          const [lock] = loopLocks(loopStateDir(home, repo), path, []);
+          return lock ? lockHolder(lock.path) : null;
+        },
+        stopLoop: (pid) => stopLoopProcess(pid, isAlive),
         loopHolder: (repo, id) =>
           lockHolder(milestoneLockPath(loopStateDir(home, repo), id)),
         startLoop: (spec) => {

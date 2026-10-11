@@ -33,12 +33,24 @@ side, because the CLI and the server share one wire protocol.
   `claudjar loop` for that milestone, and the worktree is pinned to it by `loopPid`. **New
   worktree**, with a name and an optional milestone, starts a background session
   `<project>/<worktree>`. A milestone that already has a loop is refused.
+- Each worktree row (and the tab of the loop working it) has state-gated actions, handled in
+  `src/service/manage.ts`. Merge, merge & remove, and remove ask for confirmation first.
+  - `stop-loop` SIGTERMs the service's loop. A loop started by hand is aborted with the
+    `control` action `stop` instead.
+  - `resume-loop` restarts `claudjar loop` on the worktree's linked milestone.
+  - `merge-worktree` merges into the checkout the worktree was cut from. It is refused while
+    a loop or session runs there or either tree is dirty, and a conflict is aborted.
+  - `remove-worktree` stops what runs in the worktree, tears its stack down, runs the remove
+    hooks and removes it.
 - The UI has one tab per loop process. The log is on the left. On the right, the progress tree
   sits above the open questions, and each question has its own answer box. Below them are
-  **Pause/Resume** and **send input**. Browser desktop notifications have to be enabled once
+  **Pause/Continue**, **Abort** and **send input**. Browser desktop notifications have to be enabled once
   with the header button. They fire on a new question, an issue turning blocked, and a loop
   that finishes or stops.
-- Pause is graceful: the running session finishes and no new one starts. Input goes into the
+- Pause is graceful: the running session finishes and no new one starts. Abort (`control`
+  `stop`, or a first SIGTERM / Ctrl-C to the loop) ends the running session instead. It
+  stashes the session's work, keeps the issue `working` with `stashed: true` so a restart
+  resumes the session and pops the stash, reports status `aborted` and exits. Input goes into the
   running session mid-turn. If no session is running, it is prepended to the next prompt.
 - Don't start a loop yourself (see the `claudjar` skill). Give the user the command instead.
 

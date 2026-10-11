@@ -489,8 +489,37 @@ stamped, and one of two things starts in the new worktree:
   reported with its log's tail, rather than leaving a dead pid behind.
 - `mode: "session"`: a launcher session labelled `<project>/<worktree>`.
 
-Dead loops are pruned on service start. The hub gives this one command 15 minutes instead
-of 60 s (`commandTimeoutMs`), because setup runs inside it.
+Dead loops are pruned on service start. The hub gives this command (and merge / remove)
+15 minutes instead of 60 s (`commandTimeoutMs`), because setup, hooks and stack teardown run
+inside it.
+
+**Managing worktrees.** `stop-loop`, `resume-loop`, `merge-worktree { remove }` and
+`remove-worktree` (all `{ project, worktree }`) are handled by `src/service/manage.ts`. It is
+pure over `ManageDeps`, with `fakeWorktreeDeps` covering its part in tests. Every guard runs
+before anything changes:
+
+- A loop counts as running when it is the recorded pid (alive), the pinned `loopPid`, or a
+  live holder of the loop's worktree lock.
+- A session counts as running only if the launcher still lists it.
+- A merge goes into `parentCheckout`: the worktree whose stamped name is the longest `<name>-`
+  prefix, else the main checkout. It is refused while a loop or session runs, or while either
+  tree is dirty. It passes `abortOnConflict` to the Stage 3 `mergeWorktree`, so a conflict is
+  `git merge --abort`ed and reported with its files, not left in a checkout nobody stands in.
+- A remove first refuses a dirty tree if nothing runs there. Otherwise it stops the session
+  and SIGTERMs the loop (`stopLoopProcess`, which waits and never SIGKILLs, since that would
+  skip the stash), then checks for a dirty tree again before it calls `removeWorktree`.
+- `resume-loop` takes the milestone id from the loop record, else looks the stamped title up
+  in the open milestones.
+
+**Loop abort.** `ControlAction` has `stop`. The loop, and a first SIGINT / SIGTERM, abort
+the same way:
+
+- The runner's `AbortSignal` SIGTERMs `claude -p`.
+- The driver (`store.stopped()`) stashes the work, leaves the issue `working` with
+  `stashed: true`, and returns `aborted`. `restartPrompt(issue, stashed)` then tells the
+  resumed session to pop the stash.
+- `claudjar loop` reports status `aborted` (`ABORTED_STATUS`), releases its locks and does
+  not push. A second signal exits at once with status `interrupted`.
 
 ### The standalone binary
 

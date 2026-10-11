@@ -371,8 +371,12 @@ are worked too.
   session id, question id and stash flag, so a restarted loop resumes an issue it was
   **working** on in its own session first, and issues **waiting** on an answer keep waiting
   rather than starting over.
-- **Pause and input.** From the monitor a loop can be paused — the running session finishes,
-  no new one starts until it is resumed — and sent input. Sessions get their prompt over
+- **Pause, abort and input.** From the monitor a loop can be paused — the running session
+  finishes, no new one starts until it is resumed — or **aborted**: the running session is
+  ended, its uncommitted work is stashed, the loop reports `aborted`, releases its locks and
+  exits. A first Ctrl-C / SIGTERM aborts the same way (a second exits at once). Running the
+  loop again resumes the aborted session and tells it to `git stash pop` its work. It can
+  also be sent input. Sessions get their prompt over
   stdin as stream-json (`--input-format stream-json`), and stdin stays open until the run's
   `result`, so input typed while a session runs reaches it as a user message mid-turn. Input
   sent while no session runs opens the next session's prompt.
@@ -395,7 +399,7 @@ bypassPermissions` by default (`--permission-mode` to change it). Anything that 
 
 ```bash
 claudjar loop --dry-run feature-a feature-b   # see the queue
-claudjar loop feature-a feature-b             # work it; Ctrl-C stops after releasing the lock
+claudjar loop feature-a feature-b             # work it; Ctrl-C aborts (stash + release the locks)
 ```
 
 #### The monitor
@@ -410,7 +414,9 @@ loop's durable store:
   `waiting for answers to #3`, `paused`, `finished: …`). A reconnect keeps the same tab.
 - The tab is split: the session log on the left, the milestone **progress tree** (issues and
   their steps) above the **open questions** on the right, each question with its own answer
-  box, and an action bar below — **Pause / Resume** and **send input to the loop**.
+  box, and an action bar below — **Pause / Continue**, **Abort** (confirmed first) and **send
+  input to the loop**. When an open project shows the loop's worktree, the tab's header also
+  carries that worktree's actions (restart, merge, merge & remove, remove).
 - The stream-json of every session is rendered colour-coded per line: loop progress, input,
   assistant text, thinking, tool calls (with their command / path), tool output (first 12
   lines), errors, and the end-of-session summary. The CLI does that conversion
@@ -496,6 +502,26 @@ host, from the project's main checkout, and then starts one of two things in it:
 
 The tab shows the worktree's loop and links to the loop's own tab. A failure is shown in the
 tab, including when the worktree was made but its loop or session did not start.
+
+**Managing a worktree.** Each worktree row (and the tab of the loop working it) has actions,
+enabled by its state. The destructive ones ask for confirmation first:
+
+- **abort loop** (`stop-loop`): SIGTERMs the loop the service started there. A loop started
+  by hand is aborted through the monitor instead. Either way the running session ends, its
+  uncommitted work is stashed, and the loop exits with status `aborted`, releasing its locks.
+- **restart loop** (`resume-loop`): runs `claudjar loop` again in the worktree, on its linked
+  milestone. The restarted loop resumes the aborted session first and has it pop the stash.
+  It is refused while a loop or session runs there, or once the milestone is closed.
+- **merge** (`merge-worktree`): merges the branch into the checkout it was created from. That
+  is the worktree whose name prefixes it (`dev` for `dev-x`), else the main checkout. It is
+  refused while a loop or session runs in the worktree, or while either tree has uncommitted
+  changes. A conflict is aborted (`git merge --abort`) and the conflicted files are listed,
+  so nothing is left half-merged.
+- **merge & remove**: the same merge, then the removal below. Nothing is removed if the merge
+  fails.
+- **remove** (`remove-worktree`): stops the worktree's session and loop, refuses if the tree
+  is still dirty, then runs `claudjar worktree remove` (stack teardown, remove hooks, caddy
+  route) and forgets the worktree's records. An unmerged branch is kept.
 
 `claudjar attach --list` lists those sessions with their live status; `claudjar attach <name>`
 brings one to the terminal (`claude attach …`, or `tmux attach-session` for the tmux fallback).

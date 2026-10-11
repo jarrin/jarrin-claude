@@ -125,7 +125,15 @@ export interface InstanceInfo {
   readonly startedAt: number;
 }
 
-export type ControlAction = "pause" | "resume";
+/**
+ * What a watcher can tell a loop: `pause` / `resume` hold and release it
+ * between sessions; `stop` aborts it — the running session ends, its work is
+ * stashed, and the loop exits with status {@link ABORTED_STATUS}.
+ */
+export type ControlAction = "pause" | "resume" | "stop";
+
+/** The status an aborted loop reports last. */
+export const ABORTED_STATUS = "aborted";
 
 /** Where a live log comes from: a plain Claude Code session's hook, or a loop. */
 export interface LiveLogSource {
@@ -322,6 +330,38 @@ export type HostCommand =
       readonly name?: string;
       readonly milestone?: MilestoneRef;
       readonly mode: WorktreeMode;
+    }
+  /** Abort the loop the service started in a worktree (SIGTERM to its pid). */
+  | {
+      readonly type: "stop-loop";
+      readonly project: string;
+      readonly worktree: string;
+    }
+  /** Start `claudjar loop` again in a worktree, on its linked milestone. */
+  | {
+      readonly type: "resume-loop";
+      readonly project: string;
+      readonly worktree: string;
+    }
+  /**
+   * Merge a worktree's branch into the checkout it was created from; with
+   * `remove`, then tear it down as `remove-worktree` does. Refused while a loop
+   * or session runs in it or either tree is dirty; a conflict is aborted.
+   */
+  | {
+      readonly type: "merge-worktree";
+      readonly project: string;
+      readonly worktree: string;
+      readonly remove: boolean;
+    }
+  /**
+   * Stop the worktree's session and loop, run its stack teardown and remove
+   * hooks, remove it, and forget it. An unmerged branch is kept.
+   */
+  | {
+      readonly type: "remove-worktree";
+      readonly project: string;
+      readonly worktree: string;
     };
 
 /** What `create-worktree` starts in the new worktree. */
@@ -344,8 +384,16 @@ export function worktreeNameFor(title: string): string {
 
 /** How long the server waits for a host to answer a command. */
 export function commandTimeoutMs(command: HostCommand): number {
-  // Creating a worktree runs its setup and hooks (`pnpm install`, image builds).
-  return command.type === "create-worktree" ? 15 * 60 * 1000 : 60 * 1000;
+  // Creating, merging and removing a worktree run its setup, hooks and stack
+  // teardown (`pnpm install`, image builds, `docker compose down`).
+  switch (command.type) {
+    case "create-worktree":
+    case "merge-worktree":
+    case "remove-worktree":
+      return 15 * 60 * 1000;
+    default:
+      return 60 * 1000;
+  }
 }
 
 /** A host's answer to one command, keyed by the id the watcher chose. */

@@ -12,12 +12,17 @@ import { emptyState } from "./instances";
 import {
   createWorktreeCommand,
   isProjectTab,
+  loopEnded,
+  loopRunning,
   milestoneLoops,
   outcomeOf,
   projectTabValue,
   projectTabs,
+  worktreeActionState,
+  worktreeCommand,
   worktreeLabel,
   worktreeLoops,
+  worktreeOfInstance,
 } from "./projects";
 
 const proj = (name: string, active: boolean) => ({
@@ -167,5 +172,105 @@ describe("create-worktree", () => {
     };
     expect(outcomeOf([o], "c1")).toBe(o);
     expect(outcomeOf([o], "c2")).toBeNull();
+  });
+});
+
+describe("worktree actions", () => {
+  it("tells an ended loop from a running one", () => {
+    expect(loopEnded("aborted")).toBe(true);
+    expect(loopEnded("interrupted")).toBe(true);
+    expect(loopEnded("finished: no open issues left")).toBe(true);
+    expect(loopEnded("working #3 x")).toBe(false);
+    expect(loopRunning(loop({}))).toBe(true);
+    expect(loopRunning(loop({ status: "aborted" }))).toBe(false);
+    expect(loopRunning(loop({ online: false }))).toBe(false);
+  });
+
+  it("only lets an ended loop's worktree be merged or restarted", () => {
+    const idle = worktree({ session: "none" });
+    expect(
+      worktreeActionState(idle, [loop({ status: "running" })], true),
+    ).toEqual({
+      running: true,
+      canAbort: true,
+      canRestart: false,
+      canMerge: false,
+      canRemove: true,
+      hint: "a loop runs here — abort it first",
+    });
+    expect(
+      worktreeActionState(idle, [loop({ status: "finished: done" })], true),
+    ).toMatchObject({
+      running: false,
+      canAbort: false,
+      canRestart: true,
+      canMerge: true,
+      hint: "",
+    });
+    // The service's own loop, by pid, counts even before it connects.
+    expect(
+      worktreeActionState({ ...idle, loopPid: 9 }, [], true),
+    ).toMatchObject({ running: true, canMerge: false });
+    // …but once it has connected and ended, its status wins over the stale pid.
+    expect(
+      worktreeActionState(
+        { ...idle, loopPid: 9 },
+        [loop({ status: "aborted" })],
+        true,
+      ),
+    ).toMatchObject({ running: false, canMerge: true });
+  });
+
+  it("refuses merge and restart while a session runs, and everything offline", () => {
+    expect(worktreeActionState(worktree(), [], true)).toMatchObject({
+      canMerge: false,
+      canRestart: false,
+      canRemove: true,
+      hint: "a session runs here — end it first",
+    });
+    expect(
+      worktreeActionState(worktree({ session: "none" }), [], false),
+    ).toMatchObject({ canMerge: false, canRemove: false, canAbort: false });
+    expect(
+      worktreeActionState(
+        worktree({ session: "none", milestone: "" }),
+        [],
+        true,
+      ),
+    ).toMatchObject({ canRestart: false, canMerge: true });
+  });
+
+  it("offers nothing on the main checkout", () => {
+    expect(worktreeActionState(worktree({ name: "" }), [], true)).toMatchObject(
+      { canMerge: false, canRemove: false, canAbort: false },
+    );
+  });
+
+  it("builds the commands", () => {
+    expect(worktreeCommand("stop-loop", "a", "dev")).toEqual({
+      type: "stop-loop",
+      project: "a",
+      worktree: "dev",
+    });
+    expect(worktreeCommand("merge-worktree", "a", "dev", true)).toEqual({
+      type: "merge-worktree",
+      project: "a",
+      worktree: "dev",
+      remove: true,
+    });
+  });
+
+  it("finds a loop's worktree: by pid first, then by milestone", () => {
+    const pinned = worktree({ name: "pinned", milestone: "", loopPid: 5 });
+    const d = {
+      ...detail,
+      worktrees: [worktree({ name: "" }), worktree(), pinned],
+    };
+    expect(worktreeOfInstance([d], loop({ pid: 5 }))?.worktree).toBe(pinned);
+    expect(worktreeOfInstance([d], loop({}))?.worktree.name).toBe("dev");
+    expect(worktreeOfInstance([d], loop({ host: "other" }))).toBeNull();
+    expect(
+      worktreeOfInstance([d], loop({ milestones: [{ id: 2, title: "y" }] })),
+    ).toBeNull();
   });
 });

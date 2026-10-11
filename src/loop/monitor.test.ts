@@ -148,7 +148,7 @@ describe("connectMonitor as the loop store", () => {
     stashed: false,
   };
 
-  function connected(onInput?: (text: string) => void) {
+  function connected(onInput?: (text: string) => void, onStop?: () => void) {
     const sockets: FakeSocket[] = [];
     let ids = 0;
     const monitor = connectMonitor({
@@ -158,6 +158,7 @@ describe("connectMonitor as the loop store", () => {
       now: () => 0,
       newId: () => `q${String(++ids)}`,
       onInput,
+      onStop,
       open: () => {
         const s = new FakeSocket();
         sockets.push(s);
@@ -257,6 +258,29 @@ describe("connectMonitor as the loop store", () => {
     });
     socket(0).receive({ type: "control", action: "resume" });
     expect(monitor.paused()).toBe(false);
+  });
+
+  it("aborts on a stop control: once, waking a waiter", async () => {
+    let stops = 0;
+    const { monitor, socket } = connected(undefined, () => stops++);
+    expect(monitor.stopped()).toBe(false);
+    const waited = monitor.wait(60_000);
+    socket(0).receive({ type: "control", action: "stop" });
+    await waited;
+    socket(0).receive({ type: "control", action: "stop" });
+    expect(monitor.stopped()).toBe(true);
+    expect(monitor.paused()).toBe(false);
+    expect(stops).toBe(1);
+  });
+
+  it("stops locally (a signal) without calling onStop", async () => {
+    let stops = 0;
+    const { monitor } = connected(undefined, () => stops++);
+    const waited = monitor.wait(60_000);
+    monitor.stop();
+    await waited;
+    expect(monitor.stopped()).toBe(true);
+    expect(stops).toBe(0);
   });
 
   it("hands input to the loop and logs it", () => {

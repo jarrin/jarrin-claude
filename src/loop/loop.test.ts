@@ -11,7 +11,13 @@ import {
   backlogRepo,
   loopLocks,
 } from "../commands/loop.js";
-import { issuePrompt, parseQuestion, runLoop } from "./driver.js";
+import {
+  ABORTED,
+  issuePrompt,
+  parseQuestion,
+  restartPrompt,
+  runLoop,
+} from "./driver.js";
 import type { LoopStore, RunClaude } from "./driver.js";
 import {
   LOOP_MARKER_PREFIX,
@@ -308,6 +314,7 @@ describe("runLoop", () => {
     /** The user answers question `id`. */
     reply(id: string, text: string): void;
     setPaused(p: boolean): void;
+    setStopped(s: boolean): void;
     /** Called on every wait, before it returns. */
     onWait: () => void;
   }
@@ -315,6 +322,7 @@ describe("runLoop", () => {
   function fakeStore(stored: Record<number, Entry[]> = {}): FakeStore {
     const answers = new Map<string, string | null>();
     let paused = false;
+    let stopped = false;
     let n = 0;
     const store: FakeStore = {
       boards: new Map(),
@@ -337,6 +345,7 @@ describe("runLoop", () => {
         store.resolved.push(id);
       },
       paused: () => paused,
+      stopped: () => stopped,
       wait: () => {
         store.onWait();
         return Promise.resolve();
@@ -344,6 +353,7 @@ describe("runLoop", () => {
       status: (t) => void store.statuses.push(t),
       reply: (id, text) => void answers.set(id, text),
       setPaused: (p) => (paused = p),
+      setStopped: (s) => (stopped = s),
     };
     for (const entries of Object.values(stored))
       for (const e of entries)
@@ -646,6 +656,140 @@ describe("runLoop", () => {
       [1, "s1"],
     ]);
     expect(store.resolved).toEqual(["old"]);
+  });
+
+  it("on an abort mid-session, stashes, leaves the issue working, and stops", async () => {
+    const g = fakeGitea({ 1: [issue(1, "a"), issue(2, "b")] });
+    const store = fakeStore();
+    const stashes: string[] = [];
+    const run: RunClaude = (_p, _r, _i, watch) => {
+      watch.session("s1");
+      store.setStopped(true); // the user aborts while #1 runs
+      return Promise.resolve({ ...ok("s1"), resultText: "" });
+    };
+    const summary = await runLoop(
+      {
+        ...quiet,
+        gitea: g.client,
+        run,
+        store,
+        stash: (label) => {
+          stashes.push(label);
+          return Promise.resolve(true);
+        },
+      },
+      { ...base, milestones: [m1] },
+    );
+    expect(summary).toMatchObject({
+      aborted: true,
+      stopReason: ABORTED,
+      clean: false,
+    });
+    expect(summary.leftOpen).toEqual([]);
+    expect(stashes).toEqual(["claudjar loop #1"]);
+    expect(store.boards.get(1)?.[0]).toMatchObject({
+      number: 1,
+      status: "working",
+      sessionId: "s1",
+      stashed: true,
+    });
+    expect(store.boards.get(1)?.[1]?.status).toBe("open");
+  });
+
+  it("an abort that lands after the issue closed keeps it closed", async () => {
+    const g = fakeGitea({ 1: [issue(1), issue(2)] });
+    const store = fakeStore();
+    const calls: number[] = [];
+    const run: RunClaude = (_p, _r, i) => {
+      calls.push(i.number);
+      g.close(i.number);
+      store.setStopped(true);
+      return Promise.resolve(ok("s"));
+    };
+    const summary = await runLoop(
+      { ...quiet, gitea: g.client, run, store },
+      { ...base, milestones: [m1] },
+    );
+    expect(calls).toEqual([1]);
+    expect(summary.aborted).toBe(true);
+    expect(summary.closed.map((i) => i.number)).toEqual([1]);
+    expect(store.boards.get(1)?.[0]?.status).toBe("closed");
+  });
+
+  it("an abort while paused or during a usage-limit wait starts nothing new", async () => {
+    const store = fakeStore();
+    store.setPaused(true);
+    store.onWait = () => store.setStopped(true);
+    const g = fakeGitea({ 1: [issue(1)] });
+    const summary = await runLoop(
+      {
+        ...quiet,
+        gitea: g.client,
+        run: () => Promise.reject(new Error("must not run")),
+        store,
+      },
+      { ...base, milestones: [m1] },
+    );
+    expect(summary.aborted).toBe(true);
+
+    const limited = fakeStore();
+    const runs: (string | null)[] = [];
+    const run: RunClaude = (_p, resume) => {
+      runs.push(resume);
+      return Promise.resolve({ ...ok("s1"), limited: true, resetsAt: null });
+    };
+    const aborted = await runLoop(
+      {
+        ...quiet,
+        gitea: fakeGitea({ 1: [issue(1)] }).client,
+        run,
+        store: limited,
+        sleep: () => {
+          limited.setStopped(true);
+          return Promise.resolve();
+        },
+      },
+      { ...base, milestones: [m1] },
+    );
+    expect(runs).toEqual([null]);
+    expect(aborted.aborted).toBe(true);
+    expect(limited.boards.get(1)?.[0]).toMatchObject({
+      status: "working",
+      sessionId: "s1",
+    });
+  });
+
+  it("a restart after an abort resumes the session and has it restore the stash", async () => {
+    const store = fakeStore({
+      1: [
+        {
+          number: 1,
+          title: "a",
+          status: "working",
+          steps: [],
+          sessionId: "s1",
+          questionId: null,
+          stashed: true,
+        },
+      ],
+    });
+    const g = fakeGitea({ 1: [issue(1, "a")] });
+    const prompts: string[] = [];
+    const run: RunClaude = (prompt, resume, i) => {
+      prompts.push(prompt);
+      expect(resume).toBe("s1");
+      g.close(i.number);
+      return Promise.resolve(ok("s1"));
+    };
+    const summary = await runLoop(
+      { ...quiet, gitea: g.client, run, store },
+      { ...base, milestones: [m1] },
+    );
+    expect(summary).toMatchObject({ clean: true, aborted: false });
+    expect(prompts[0]).toContain("was restarted");
+    expect(prompts[0]).toContain('stashed as "claudjar loop #1"');
+    expect(prompts[0]).toContain("git stash pop");
+    expect(restartPrompt(issue(1))).toContain("as you left it");
   });
 
   it("blocks an issue whose question the store no longer knows", async () => {

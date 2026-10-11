@@ -5,13 +5,15 @@ import type { HostCommand } from "../../monitor/shared/protocol.js";
 import type { SessionBackend, SessionLauncher } from "../session/launcher.js";
 import type { ServiceConf } from "./conf.js";
 import type { DetailDeps } from "./detail.js";
-import { collectDetail } from "./detail.js";
+import { collectDetail, collectWorktrees } from "./detail.js";
 import type { DirEntry, Project } from "./discover.js";
 import { discoverProjects } from "./discover.js";
 import type { CommandOutcome, HostLink } from "./link.js";
 import { closeProject, openProject, reconcileSessions } from "./sessions.js";
 import type { ProjectState, ServiceState } from "./state.js";
 import { emptyState, mergeDiscovery, readState, writeState } from "./state.js";
+import type { ManageCommand, ManageDeps } from "./manage.js";
+import { manage } from "./manage.js";
 import type { CreateDeps, CreateWorktreeCommand } from "./worktrees.js";
 import { createWorktreeFor, pruneLoops, withCreated } from "./worktrees.js";
 
@@ -43,8 +45,15 @@ export interface RunOptions {
   readonly launcherFor: (backend: SessionBackend) => SessionLauncher;
   /** How a project's detail (milestones, worktrees) is collected for the web interface. */
   readonly detail: DetailDeps;
-  /** How `create-worktree` makes a worktree and starts its loop (sessions use `launcherFor`). */
-  readonly worktrees: Omit<CreateDeps, "session" | "isAlive">;
+  /**
+   * How `create-worktree` makes a worktree and starts its loop (sessions use
+   * `launcherFor`), and how the worktree commands merge, remove and stop.
+   */
+  readonly worktrees: Omit<CreateDeps, "session" | "isAlive"> &
+    Pick<
+      ManageDeps,
+      "merge" | "remove" | "dirty" | "worktreeLoopHolder" | "stopLoop"
+    >;
   /** Dial the web interface; absent when the conf has no `monitor:`. */
   readonly connect?: (handlers: LinkHandlers) => HostLink;
 }
@@ -160,10 +169,56 @@ export async function runService(opts: RunOptions): Promise<void> {
     return res.ok ? { ok: true } : res;
   };
 
+  /**
+   * Stop / restart a worktree's loop, merge it back, or remove it. These await
+   * (a loop's settle time, hooks, the stack teardown), so `state` is read
+   * through a getter and the result's state is folded in afterwards.
+   */
+  const manageWorktree = async (
+    command: ManageCommand,
+  ): Promise<CommandOutcome> => {
+    const what = `${command.type} ${command.project}/${command.worktree}`;
+    log(`${what}…`);
+    const forge = opts.detail.forge;
+    const res = await manage(() => state, command, {
+      ...opts.worktrees,
+      isAlive: opts.detail.isAlive,
+      checkouts: (project, records) =>
+        collectWorktrees(project, records, opts.detail),
+      milestones: async (repo) => {
+        if (!forge) throw new Error("no Gitea credentials on the host");
+        return forge(repo).openMilestones();
+      },
+      session: {
+        backend: opts.backend,
+        launcherFor: opts.launcherFor,
+        now: now(),
+      },
+    });
+    if (res.ok) {
+      state = res.state;
+      writeState(opts.stateFile, state);
+    }
+    log(`${what}: ${res.ok ? res.note : res.error}`);
+    void publishDetail(command.project).catch((err: unknown) => {
+      log(
+        `detail ${command.project}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    return res.ok ? { ok: true } : res;
+  };
+
   const handle = (command: HostCommand): Promise<CommandOutcome> => {
     if (command.type === "refresh-project")
       return publishDetail(command.project);
     if (command.type === "create-worktree") return createWorktree(command);
+    if (
+      command.type === "stop-loop" ||
+      command.type === "resume-loop" ||
+      command.type === "merge-worktree" ||
+      command.type === "remove-worktree"
+    )
+      return manageWorktree(command);
     const open = command.type === "open-project";
     const deps = {
       backend: opts.backend,

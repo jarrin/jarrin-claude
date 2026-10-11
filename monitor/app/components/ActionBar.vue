@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import type { InstanceView } from "#shared/protocol";
+import { loopRunning } from "~/utils/projects";
 
 const props = defineProps<{ instance: InstanceView }>();
 const emit = defineEmits<{
   pause: [];
   resume: [];
+  /** Abort the loop: its session ends and its work is stashed. */
+  stop: [];
   input: [text: string];
 }>();
+const running = computed(() => loopRunning(props.instance));
 
 const draft = ref("");
 
@@ -23,8 +27,9 @@ const send = (): void => {
     <UButton
       v-if="instance.paused"
       icon="i-lucide-play"
-      label="Resume"
-      :disabled="!instance.online"
+      label="Continue"
+      title="Start sessions again (pause holds the loop; it does not abort it)"
+      :disabled="!running"
       @click="emit('resume')"
     />
     <UButton
@@ -33,9 +38,19 @@ const send = (): void => {
       label="Pause"
       color="neutral"
       variant="subtle"
-      :disabled="!instance.online"
+      :disabled="!running"
       title="Finish the current session, then start no new one until resumed"
       @click="emit('pause')"
+    />
+    <ConfirmButton
+      icon="i-lucide-square"
+      label="Abort"
+      color="warning"
+      title="Abort the loop?"
+      description="The running session ends, its uncommitted work is stashed, the locks are released and the loop exits with status “aborted”. Restarting the loop resumes that session."
+      hint="End the loop now (pause only holds it between sessions)"
+      :disabled="!running"
+      @confirm="emit('stop')"
     />
     <UChatPrompt
       v-model="draft"
@@ -46,6 +61,16 @@ const send = (): void => {
       placeholder="Send input to the running session (or the next one, when idle)…"
       @submit="send"
     >
+      <ConfirmButton
+        icon="i-lucide-square"
+        label="Abort"
+        color="warning"
+        title="Abort the loop?"
+        description="The running session ends, its uncommitted work is stashed, the locks are released and the loop exits with status “aborted”. Restarting the loop resumes that session."
+        hint="End the loop now (pause only holds it between sessions)"
+        :disabled="!running"
+        @confirm="emit('stop')"
+      />
       <UChatPromptSubmit
         :disabled="!instance.online || !draft.trim()"
         size="sm"

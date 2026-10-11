@@ -26,6 +26,8 @@ export interface RunnerOptions {
   readonly onLine?: (line: string, issue: Issue) => void;
   /** Notes from the user, fed into the running session. */
   readonly inputs?: InputBox;
+  /** Aborting it ends the running session (SIGTERM); its transcript stays resumable. */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -33,7 +35,8 @@ export interface RunnerOptions {
  * context; `--resume` carries an issue across a usage-limit pause, an answer, or
  * a restart. The prompt goes in over stdin as stream-json, which keeps stdin open
  * for the user's notes mid-session; it is closed at the first `result`, which is
- * what lets the process exit. The raw stream-json is kept per issue under
+ * what lets the process exit. Aborting `signal` ends the session early (the
+ * loop's abort). The raw stream-json is kept per issue under
  * `logDir` for post-mortems.
  */
 export function claudeRunner(opts: RunnerOptions): RunClaude {
@@ -65,6 +68,11 @@ export function claudeRunner(opts: RunnerOptions): RunClaude {
       });
       // The process may exit before a late write lands; that is not an error.
       child.stdin.on("error", () => {});
+      const abort = (): void => void child.kill("SIGTERM");
+      if (opts.signal?.aborted) abort();
+      else opts.signal?.addEventListener("abort", abort, { once: true });
+      const unhook = (): void =>
+        opts.signal?.removeEventListener("abort", abort);
       const write = (text: string): void => {
         if (child.stdin.writable) child.stdin.write(userMessage(text));
       };
@@ -88,11 +96,13 @@ export function claudeRunner(opts: RunnerOptions): RunClaude {
       });
       child.stderr.on("data", (chunk: Buffer) => void log.write(chunk));
       child.on("error", (err) => {
+        unhook();
         endInput();
         log.end();
         reject(err);
       });
       child.on("close", (code) => {
+        unhook();
         endInput();
         log.end();
         resolve(tracker.outcome(code));

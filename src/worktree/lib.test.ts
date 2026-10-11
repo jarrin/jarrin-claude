@@ -225,6 +225,27 @@ describe("mergeWorktree", () => {
     expect(existsSync(dev)).toBe(true);
     git(repo, "merge", "--abort");
   });
+
+  it("with abortOnConflict, aborts the merge and leaves the target as it was", async () => {
+    await createWorktree(repo, { name: "dev" }, deps);
+    const dev = join(parent, "proj-worktrees", "dev");
+    commitFile(dev, "README.md", "theirs\n");
+    commitFile(repo, "README.md", "ours\n");
+    const before = git(repo, "rev-parse", "HEAD");
+
+    const result = await mergeWorktree(
+      repo,
+      { name: "dev", remove: true, abortOnConflict: true },
+      deps,
+    );
+
+    expect(result).toMatchObject({ ok: false, conflicts: ["README.md"] });
+    if (!result.ok) expect(result.error).toContain("aborted, nothing changed");
+    expect(git(repo, "status", "--porcelain")).toBe("");
+    expect(git(repo, "rev-parse", "HEAD")).toBe(before);
+    expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("ours\n");
+    expect(existsSync(dev)).toBe(true);
+  });
 });
 
 describe("removeWorktree", () => {

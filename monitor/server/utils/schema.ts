@@ -201,6 +201,27 @@ const hostCommand = z.discriminatedUnion("type", [
     milestone: milestoneRef.optional(),
     mode: z.enum(["loop", "session"]),
   }),
+  z.object({
+    type: z.literal("stop-loop"),
+    project: z.string().max(256),
+    worktree: z.string().min(1).max(128),
+  }),
+  z.object({
+    type: z.literal("resume-loop"),
+    project: z.string().max(256),
+    worktree: z.string().min(1).max(128),
+  }),
+  z.object({
+    type: z.literal("merge-worktree"),
+    project: z.string().max(256),
+    worktree: z.string().min(1).max(128),
+    remove: z.boolean(),
+  }),
+  z.object({
+    type: z.literal("remove-worktree"),
+    project: z.string().max(256),
+    worktree: z.string().min(1).max(128),
+  }),
 ]) satisfies z.ZodType<HostCommand>;
 
 const commandId = z.string().min(1).max(64);
@@ -235,7 +256,7 @@ const watcherMessage = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("control"),
     id: z.string(),
-    action: z.enum(["pause", "resume"]),
+    action: z.enum(["pause", "resume", "stop"]),
   }),
   z.object({ type: z.literal("input"), id: z.string(), text: questionText }),
   z.object({ type: z.literal("dismiss-live"), id: z.string() }),

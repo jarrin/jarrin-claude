@@ -12,6 +12,7 @@ import { clock } from "~/utils/instances";
 import type { ProjectTab } from "~/utils/projects";
 import {
   createWorktreeCommand,
+  loopRunning,
   milestoneLoops,
   outcomeOf,
   worktreeLabel,
@@ -22,7 +23,9 @@ import {
  * One open project: its backlog repo's open milestones and its worktrees, each
  * with the milestone it is linked to, its session and the loops working it.
  * From here a worktree is created: from a milestone with a loop working it, or
- * plain (optionally linked to a milestone) with a background Claude session.
+ * plain (optionally linked to a milestone) with a background Claude session —
+ * and, once it exists, its loop aborted or restarted, and it merged back or
+ * removed ({@link WorktreeActions}).
  */
 const props = defineProps<{
   tab: ProjectTab;
@@ -35,6 +38,8 @@ const emit = defineEmits<{
   refresh: [];
   close: [];
   "open-loop": [id: string];
+  /** Abort a connected loop through the monitor (one the service did not start). */
+  "stop-loop": [id: string];
 }>();
 
 /** The create-worktree in flight, if any: one at a time per tab. */
@@ -293,7 +298,9 @@ const done = (open: number, closed: number): number =>
             :key="l.id"
             icon="i-lucide-repeat"
             :label="`loop: ${l.online ? l.status : 'offline'}`"
-            :color="l.online ? (l.paused ? 'warning' : 'success') : 'neutral'"
+            :color="
+              loopRunning(l) ? (l.paused ? 'warning' : 'success') : 'neutral'
+            "
             variant="subtle"
             size="xs"
             @click="$emit('open-loop', l.id)"
@@ -301,6 +308,17 @@ const done = (open: number, closed: number): number =>
           <span class="basis-full truncate font-mono text-xs text-muted">{{
             w.path
           }}</span>
+          <WorktreeActions
+            v-if="w.name"
+            class="basis-full"
+            :project="tab.project.name"
+            :worktree="w"
+            :loops="worktreeLoops(instances, detail, w)"
+            :online="tab.online"
+            :outcomes="outcomes"
+            :run="run"
+            @stop-loop="(id) => $emit('stop-loop', id)"
+          />
         </div>
       </UCard>
     </template>

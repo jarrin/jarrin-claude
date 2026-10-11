@@ -82,6 +82,12 @@ describe("parseWatcherMessage", () => {
       parseWatcherMessage('{"type":"control","id":"a","action":"kill"}'),
     ).toBeNull();
     expect(
+      parseWatcherMessage('{"type":"control","id":"a","action":"stop"}'),
+    ).toEqual({ type: "control", id: "a", action: "stop" });
+    expect(
+      parseWatcherMessage('{"type":"control","id":"a","action":"kill"}'),
+    ).toBeNull();
+    expect(
       parseWatcherMessage('{"type":"input","id":"a","text":""}'),
     ).toBeNull();
   });
@@ -219,6 +225,27 @@ describe("parseWatcherMessage command", () => {
     expect(send({ ...loop, mode: "daemon" })).toBeNull();
     expect(send({ ...loop, milestone: { title: "plan-x" } })).toBeNull();
     expect(send({ ...session, name: "x".repeat(200) })).toBeNull();
+  });
+
+  it("accepts the worktree commands, and rejects a missing worktree or remove flag", () => {
+    const send = (command: unknown): unknown =>
+      parseWatcherMessage(
+        JSON.stringify({ type: "command", id: "c1", host: "desk", command }),
+      );
+    for (const type of ["stop-loop", "resume-loop", "remove-worktree"]) {
+      const cmd = { type, project: "x", worktree: "dev" };
+      expect(send(cmd)).toMatchObject({ command: cmd });
+      expect(send({ type, project: "x" })).toBeNull();
+      expect(send({ type, project: "x", worktree: "" })).toBeNull();
+    }
+    const merge = {
+      type: "merge-worktree",
+      project: "x",
+      worktree: "dev",
+      remove: true,
+    };
+    expect(send(merge)).toMatchObject({ command: merge });
+    expect(send({ ...merge, remove: undefined })).toBeNull();
   });
 
   it("rejects an unknown command and a missing id", () => {

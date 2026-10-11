@@ -40,7 +40,12 @@ export interface LoopStore {
   /** The loop resumed the session with the answer: close the question. */
   resolve(id: string): void;
   paused(): boolean;
-  /** Resolves on the next answer or pause / resume — or after `ms` at the latest. */
+  /**
+   * The user aborted the loop (from the monitor, or by signal): the running
+   * session is ended, its work stashed, and no new one starts.
+   */
+  stopped(): boolean;
+  /** Resolves on the next answer, pause / resume or abort — or after `ms` at the latest. */
   wait(ms: number): Promise<void>;
   /** One line on what the loop is doing, shown next to its tab. */
   status(text: string): void;
@@ -67,7 +72,12 @@ export interface LoopSummary {
   readonly stopReason: string;
   /** Every milestone drained: nothing capped, skipped as blocked, or awaiting an answer. */
   readonly clean: boolean;
+  /** The user aborted the loop; an interrupted session is left `working` for a restart. */
+  readonly aborted: boolean;
 }
+
+/** The stop reason of an aborted loop. */
+export const ABORTED = "aborted";
 
 const QUESTION_BLOCK = /<<<QUESTION\s*\n([\s\S]*?)\n\s*QUESTION>>>/;
 
@@ -150,13 +160,25 @@ export function resumePrompt(issue: Issue): string {
   );
 }
 
-export function restartPrompt(issue: Issue): string {
-  return (
-    `\`claudjar loop\` was restarted while you worked issue #${String(issue.number)}. ` +
-    "The working tree is as you left it. Carry on where you stopped, under the same " +
-    "unattended rules: keep the <<<STEPS block current, close the issue when done, end " +
-    "on a <<<QUESTION block to ask, or comment and leave it open when blocked."
-  );
+/** How a resumed session gets back the uncommitted work the loop stashed for it. */
+function stashNote(issue: Issue, why: string): string[] {
+  return [
+    `Your uncommitted work was stashed as "${stashLabel(issue)}" ${why}, and`,
+    "other issues may have been committed since. Restore it first: find it with",
+    "`git stash list` and `git stash pop` that entry, resolving any conflict.",
+  ];
+}
+
+export function restartPrompt(issue: Issue, stashed = false): string {
+  return [
+    `\`claudjar loop\` was restarted while you worked issue #${String(issue.number)}.`,
+    ...(stashed
+      ? stashNote(issue, "when the loop was aborted")
+      : ["The working tree is as you left it."]),
+    "Carry on where you stopped, under the same unattended rules: keep the <<<STEPS",
+    "block current, close the issue when done, end on a <<<QUESTION block to ask, or",
+    "comment and leave it open when blocked.",
+  ].join("\n");
 }
 
 export function answerPrompt(
@@ -169,14 +191,7 @@ export function answerPrompt(
     "",
     answer.replace(/^/gm, "> "),
     "",
-    ...(stashed
-      ? [
-          `Your uncommitted work was stashed as "${stashLabel(issue)}" while you waited, and`,
-          "other issues may have been committed since. Restore it first: find it with",
-          "`git stash list` and `git stash pop` that entry, resolving any conflict.",
-          "",
-        ]
-      : []),
+    ...(stashed ? [...stashNote(issue, "while you waited"), ""] : []),
     "Carry on under the same unattended rules: close the issue when done, end on another",
     "<<<QUESTION block to ask more, or comment and leave it open when blocked.",
   ].join("\n");
@@ -217,11 +232,11 @@ export async function runLoop(
 
   /** Hold here while the user has the loop paused. */
   const holdWhilePaused = async (): Promise<void> => {
-    if (!store.paused()) return;
+    if (!store.paused() || store.stopped()) return;
     deps.log("--- paused — resume from the monitor to carry on");
     store.status("paused");
-    while (store.paused()) await store.wait(opts.pollMs);
-    deps.log("--- resumed");
+    while (store.paused() && !store.stopped()) await store.wait(opts.pollMs);
+    if (!store.stopped()) deps.log("--- resumed");
   };
 
   const summary = (stopReason: string, drained = false): LoopSummary => {
@@ -234,7 +249,31 @@ export async function runLoop(
       awaiting,
       stopReason,
       clean: drained && leftOpen.length === 0 && awaiting.length === 0,
+      aborted: stopReason === ABORTED,
     };
+  };
+
+  /**
+   * The user aborted mid-session: the runner has ended it. Its uncommitted work
+   * is stashed and the issue stays `working`, so a restarted loop resumes the
+   * session and is told to restore the stash.
+   */
+  const abandon = async (
+    issue: Issue,
+    milestone: Milestone,
+    sessionId: string | null,
+  ): Promise<string> => {
+    const stashed = await deps.stash(stashLabel(issue));
+    board.update(milestone, issue, {
+      status: "working",
+      ...(sessionId ? { sessionId } : {}),
+      stashed,
+    });
+    deps.log(
+      `=== #${String(issue.number)} aborted — a restart resumes its session` +
+        (stashed ? " (uncommitted work stashed)" : ""),
+    );
+    return ABORTED;
   };
 
   /** Run one session to its end — through any limit pauses — and record the result. */
@@ -258,7 +297,7 @@ export async function runLoop(
     });
     store.status(`working #${String(issue.number)} ${issue.title}`);
     let outcome = await deps.run(prompt, resume, issue, watch);
-    while (outcome.limited) {
+    while (outcome.limited && !store.stopped()) {
       const waitMs = limitWaitMs(outcome.resetsAt, deps.now());
       const until = new Date(deps.now() + waitMs).toLocaleString();
       deps.log(
@@ -268,6 +307,7 @@ export async function runLoop(
         `usage limit — resuming #${String(issue.number)} at ${until}`,
       );
       await deps.sleep(waitMs);
+      if (store.stopped()) break;
       outcome = outcome.sessionId
         ? await deps.run(resumePrompt(issue), outcome.sessionId, issue, watch)
         : await deps.run(
@@ -277,6 +317,8 @@ export async function runLoop(
             watch,
           );
     }
+    if (store.stopped() && !(await deps.gitea.isClosed(issue.number)))
+      return abandon(issue, milestone, outcome.sessionId ?? resume);
 
     if (await deps.gitea.isClosed(issue.number)) {
       closed.push(issue);
@@ -322,6 +364,7 @@ export async function runLoop(
   // A previous loop died mid-session: pick those sessions up where they stopped.
   for (const { entry, milestone } of board.inStatus("working")) {
     await holdWhilePaused();
+    if (store.stopped()) return summary(ABORTED);
     const issue = asIssue(entry);
     attempted.add(issue.number);
     deps.log(
@@ -329,7 +372,12 @@ export async function runLoop(
         (entry.sessionId ? "resuming its session" : "starting it again"),
     );
     const stop = entry.sessionId
-      ? await work(issue, milestone, restartPrompt(issue), entry.sessionId)
+      ? await work(
+          issue,
+          milestone,
+          restartPrompt(issue, entry.stashed),
+          entry.sessionId,
+        )
       : await work(
           issue,
           milestone,
@@ -341,6 +389,7 @@ export async function runLoop(
 
   for (;;) {
     await holdWhilePaused();
+    if (store.stopped()) return summary(ABORTED);
     const waiting = board.inStatus("waiting");
     for (const w of waiting) attempted.add(w.entry.number);
     let answered: { w: (typeof waiting)[number]; answer: string } | null = null;

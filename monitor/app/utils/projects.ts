@@ -1,7 +1,8 @@
-import { detailKey, loopsFor } from "#shared/protocol";
+import { ABORTED_STATUS, detailKey, loopsFor } from "#shared/protocol";
 import type {
   CommandOutcome,
   HostCommand,
+  InstanceInfo,
   InstanceSummary,
   MilestoneDetail,
   ProjectDetailView,
@@ -109,4 +110,119 @@ export function outcomeOf(
   id: string,
 ): CommandOutcome | null {
   return outcomes.find((o) => o.id === id) ?? null;
+}
+
+/** A loop that has ended: finished, aborted, or interrupted by a hard exit. */
+export function loopEnded(status: string): boolean {
+  return (
+    status === ABORTED_STATUS ||
+    status === "interrupted" ||
+    status.startsWith("finished")
+  );
+}
+
+/** A loop instance that still works: connected and not ended. */
+export function loopRunning(i: Pick<InstanceSummary, "online" | "status">) {
+  return i.online && !loopEnded(i.status);
+}
+
+/** Which worktree actions apply, and why the unavailable ones are not. */
+export interface WorktreeActionState {
+  /** The loop to abort: the service's (by pid) or a connected instance. */
+  readonly running: boolean;
+  readonly canAbort: boolean;
+  readonly canRestart: boolean;
+  readonly canMerge: boolean;
+  readonly canRemove: boolean;
+  /** Why merge / restart are disabled; empty when they are not. */
+  readonly hint: string;
+}
+
+export function worktreeActionState(
+  worktree: Pick<WorktreeDetail, "name" | "session" | "milestone" | "loopPid">,
+  loops: readonly Pick<InstanceSummary, "online" | "status">[],
+  online: boolean,
+): WorktreeActionState {
+  if (!worktree.name)
+    return {
+      running: false,
+      canAbort: false,
+      canRestart: false,
+      canMerge: false,
+      canRemove: false,
+      hint: "the main checkout",
+    };
+  // A connected loop's own status wins (the recorded pid goes stale between
+  // detail refreshes); the pid alone counts until its loop has connected.
+  const running =
+    loops.length > 0 ? loops.some(loopRunning) : worktree.loopPid > 0;
+  const session = worktree.session === "running";
+  const hint = !online
+    ? "the host is offline"
+    : running
+      ? "a loop runs here — abort it first"
+      : session
+        ? "a session runs here — end it first"
+        : "";
+  return {
+    running,
+    canAbort: online && running,
+    canRestart: online && !running && !session && worktree.milestone !== "",
+    canMerge: online && !running && !session,
+    canRemove: online,
+    hint,
+  };
+}
+
+/** A command on one worktree of a project. */
+export function worktreeCommand(
+  type: "stop-loop" | "resume-loop" | "remove-worktree",
+  project: string,
+  worktree: string,
+): HostCommand;
+export function worktreeCommand(
+  type: "merge-worktree",
+  project: string,
+  worktree: string,
+  remove: boolean,
+): HostCommand;
+export function worktreeCommand(
+  type: "stop-loop" | "resume-loop" | "remove-worktree" | "merge-worktree",
+  project: string,
+  worktree: string,
+  remove = false,
+): HostCommand {
+  return type === "merge-worktree"
+    ? { type, project, worktree, remove }
+    : { type, project, worktree };
+}
+
+/**
+ * The project and worktree a loop instance works in, from the hosts' details:
+ * the worktree pinned to its pid, else the one on its host and repo linked to
+ * one of its milestones. Null when no open project shows it.
+ */
+export function worktreeOfInstance(
+  details: readonly ProjectDetailView[],
+  instance: Pick<InstanceInfo, "host" | "repo" | "milestones" | "pid">,
+): { detail: ProjectDetailView; worktree: WorktreeDetail } | null {
+  const mine = details.filter(
+    (d) => d.host === instance.host && d.repo === instance.repo,
+  );
+  for (const detail of mine) {
+    const worktree = detail.worktrees.find(
+      (w) => w.name && w.loopPid === instance.pid,
+    );
+    if (worktree) return { detail, worktree };
+  }
+  for (const detail of mine) {
+    const worktree = detail.worktrees.find(
+      (w) =>
+        w.name &&
+        w.milestone &&
+        instance.milestones.some((m) => m.title === w.milestone),
+    );
+    if (worktree) return { detail, worktree };
+  }
+  return null;
 }

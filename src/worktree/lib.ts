@@ -276,6 +276,12 @@ export interface MergeOptions {
   readonly teardown?: boolean;
   /** With `remove`, run `hooks.worktree.remove` (default true). */
   readonly hooks?: boolean;
+  /**
+   * On a conflict, `git merge --abort` so the target is left as it was
+   * (default false: the conflict stays in place for a person to resolve). The
+   * service sets it — nobody is standing in that checkout to finish the merge.
+   */
+  readonly abortOnConflict?: boolean;
 }
 
 /** The cleanup half of a merge or a remove, when it went through. */
@@ -364,6 +370,21 @@ export async function mergeWorktree(
     const files = conflictedFiles(target);
     if (files.length === 0) {
       return fail("`git merge` failed (not a conflict); resolve and retry.");
+    }
+    if (opts.abortOnConflict ?? false) {
+      const aborted = await deps.run({
+        command: "git",
+        args: ["-C", target, "merge", "--abort"],
+      });
+      return {
+        ok: false,
+        error:
+          `conflict in ${String(files.length)} file(s); ` +
+          (aborted.status === 0
+            ? "the merge was aborted, nothing changed."
+            : `\`git merge --abort\` failed too — ${target} is mid-merge.`),
+        conflicts: files,
+      };
     }
     return {
       ok: false,

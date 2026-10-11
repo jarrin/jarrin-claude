@@ -1,4 +1,12 @@
-import type { CreateOptions, CreateResult } from "../worktree/lib.js";
+import type {
+  CreateOptions,
+  CreateResult,
+  MergeOptions,
+  MergeResult,
+  RemoveOptions,
+  RemoveResult,
+} from "../worktree/lib.js";
+import type { ManageDeps } from "./manage.js";
 import type { CreateDeps, LoopSpec } from "./worktrees.js";
 
 /**
@@ -7,6 +15,12 @@ import type { CreateDeps, LoopSpec } from "./worktrees.js";
  * `createError` is set; `holders` maps `<repo>#<milestone id>` to the pid of a
  * loop already holding that milestone's lock; `startLoop` hands out `pid`, or
  * rejects with `loopError`. Every call is recorded.
+ *
+ * For the worktree commands: `dirty` maps a checkout path to its uncommitted
+ * changes; `lockHolders` maps a worktree path to a loop holding its lock;
+ * `merge` / `remove` answer `mergeResult` / `removeResult` (success by
+ * default); `stopLoop` reports `stopsLoop` (true by default) and, when true,
+ * calls `onStop` so a test can mark the pid dead.
  */
 export interface FakeWorktrees {
   readonly createError?: string;
@@ -15,25 +29,77 @@ export interface FakeWorktrees {
   readonly holders?: Readonly<Record<string, number>>;
   readonly pid?: number;
   readonly loopError?: string;
+  readonly dirty?: Readonly<Record<string, readonly string[]>>;
+  readonly lockHolders?: Readonly<Record<string, number>>;
+  readonly mergeResult?: MergeResult;
+  readonly removeResult?: RemoveResult;
+  readonly stopsLoop?: boolean;
+  readonly onStop?: (pid: number) => void;
 }
 
-export interface FakeWorktreeDeps extends Omit<
-  CreateDeps,
-  "session" | "isAlive"
-> {
+export interface FakeWorktreeDeps
+  extends
+    Omit<CreateDeps, "session" | "isAlive">,
+    Pick<
+      ManageDeps,
+      "merge" | "remove" | "dirty" | "worktreeLoopHolder" | "stopLoop"
+    > {
   readonly created: {
     readonly repoRoot: string;
     readonly opts: CreateOptions;
   }[];
   readonly loops: LoopSpec[];
+  readonly merged: { readonly repoRoot: string; readonly opts: MergeOptions }[];
+  readonly removed: {
+    readonly repoRoot: string;
+    readonly opts: RemoveOptions;
+  }[];
+  readonly stopped: number[];
 }
 
 export function fakeWorktreeDeps(fake: FakeWorktrees = {}): FakeWorktreeDeps {
   const created: FakeWorktreeDeps["created"] = [];
   const loops: LoopSpec[] = [];
+  const merged: FakeWorktreeDeps["merged"] = [];
+  const removed: FakeWorktreeDeps["removed"] = [];
+  const stopped: number[] = [];
   return {
     created,
     loops,
+    merged,
+    removed,
+    stopped,
+    merge: (repoRoot, opts) => {
+      merged.push({ repoRoot, opts });
+      return Promise.resolve(
+        fake.mergeResult ?? {
+          ok: true,
+          into: "main",
+          removal: opts.remove
+            ? { path: null, branchKept: false, hookError: null }
+            : null,
+        },
+      );
+    },
+    remove: (repoRoot, opts) => {
+      removed.push({ repoRoot, opts });
+      return Promise.resolve(
+        fake.removeResult ?? {
+          ok: true,
+          path: null,
+          branchKept: false,
+          hookError: null,
+        },
+      );
+    },
+    dirty: (path) => fake.dirty?.[path] ?? [],
+    worktreeLoopHolder: (_repo, path) => fake.lockHolders?.[path] ?? null,
+    stopLoop: (pid) => {
+      stopped.push(pid);
+      const ok = fake.stopsLoop ?? true;
+      if (ok) fake.onStop?.(pid);
+      return Promise.resolve(ok);
+    },
     create: (repoRoot, opts): Promise<CreateResult> => {
       created.push({ repoRoot, opts });
       return Promise.resolve(

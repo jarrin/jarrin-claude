@@ -121,3 +121,27 @@ export function spawnLoop(
     });
   });
 }
+
+/**
+ * Abort a loop: SIGTERM it — which the loop takes as a graceful abort (its
+ * session ends, its work is stashed, its locks are released) — and wait up to
+ * `timeoutMs` for it to exit. False when it is still running by then; nothing
+ * escalates to SIGKILL, since that would skip the stash.
+ */
+export async function stopLoopProcess(
+  pid: number,
+  isAlive: (pid: number) => boolean,
+  opts: { readonly timeoutMs?: number; readonly pollMs?: number } = {},
+): Promise<boolean> {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return !isAlive(pid);
+  }
+  const deadline = Date.now() + (opts.timeoutMs ?? 45_000);
+  while (isAlive(pid)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, opts.pollMs ?? 250));
+  }
+  return true;
+}
