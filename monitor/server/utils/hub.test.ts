@@ -206,15 +206,36 @@ describe("Hub as the loop store", () => {
     ]);
   });
 
-  it("keeps an offline instance while it still has an open question", () => {
+  it("keeps an offline instance past the TTL while it still has an open question", () => {
     let now = 0;
     const hub = new Hub(() => now);
     hub.hello(info(), () => {});
     hub.ask("a", ask());
     hub.disconnect("a");
-    hub.dismiss("a");
     now = OFFLINE_TTL_MS + 1;
     expect(watched(hub)[0]).toMatchObject({ instances: [{ id: "a" }] });
+  });
+
+  it("dismisses an offline instance with open questions, and drops them", () => {
+    const hub = new Hub(() => 1);
+    hub.hello(info(), () => {});
+    hub.ask("a", ask());
+    hub.disconnect("a");
+    hub.dismiss("a");
+    expect(watched(hub)[0]).toMatchObject({ instances: [], questions: [] });
+  });
+
+  it("keeps a dismissed instance's questions that another instance covers", () => {
+    const hub = new Hub(() => 1);
+    hub.hello(info(), () => {});
+    hub.ask("a", ask());
+    hub.disconnect("a");
+    hub.hello(info("b"), () => {});
+    hub.dismiss("a");
+    expect(watched(hub)[0]).toMatchObject({
+      instances: [{ id: "b" }],
+      questions: [{ issue: ask().issue }],
+    });
   });
 
   it("persists durable changes and restores them offline", () => {

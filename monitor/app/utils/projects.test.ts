@@ -14,7 +14,9 @@ import {
   createWorktreeCommand,
   isProjectTab,
   loopEnded,
+  loopParent,
   loopRunning,
+  loopsUnder,
   milestoneLoops,
   outcomeOf,
   projectOpenQuestions,
@@ -312,5 +314,32 @@ describe("worktree actions", () => {
     expect(
       worktreeOfInstance([d], loop({ milestones: [{ id: 2, title: "y" }] })),
     ).toBeNull();
+  });
+});
+
+describe("loopParent / loopsUnder", () => {
+  const OVERVIEW = "projects";
+
+  it("puts a loop under the open project whose worktree it works", () => {
+    expect(loopParent([detail], loop({}), OVERVIEW)).toBe(
+      projectTabValue("desk", "a"),
+    );
+  });
+
+  it("puts a loop no open project claims under the overview", () => {
+    expect(loopParent([], loop({}), OVERVIEW)).toBe(OVERVIEW);
+    expect(loopParent([detail], loop({ repo: "o/other" }), OVERVIEW)).toBe(
+      OVERVIEW,
+    );
+  });
+
+  it("splits the loops between their parents", () => {
+    const mine = loop({ id: "mine" });
+    const stray = loop({ id: "stray", repo: "o/other" });
+    const all = [mine, stray];
+    expect(
+      loopsUnder(projectTabValue("desk", "a"), all, [detail], OVERVIEW),
+    ).toEqual([mine]);
+    expect(loopsUnder(OVERVIEW, all, [detail], OVERVIEW)).toEqual([stray]);
   });
 });

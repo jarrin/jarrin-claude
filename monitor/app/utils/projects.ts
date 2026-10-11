@@ -244,3 +244,32 @@ export function worktreeOfInstance(
   }
   return null;
 }
+
+/**
+ * The main tab a loop's tab sits under: the tab of the open project whose
+ * worktree it works, else `fallback` (the projects overview), so a loop no
+ * open project claims — started by hand, or for a closed project — still has
+ * a home.
+ */
+export function loopParent(
+  details: readonly ProjectDetailView[],
+  instance: Pick<InstanceInfo, "host" | "repo" | "milestones" | "pid">,
+  fallback: string,
+): string {
+  const found = worktreeOfInstance(details, instance);
+  return found
+    ? projectTabValue(found.detail.host, found.detail.project)
+    : fallback;
+}
+
+/** The loops whose tabs sit under the main tab `parent`. */
+export function loopsUnder<
+  T extends Pick<InstanceInfo, "host" | "repo" | "milestones" | "pid">,
+>(
+  parent: string,
+  instances: readonly T[],
+  details: readonly ProjectDetailView[],
+  fallback: string,
+): T[] {
+  return instances.filter((i) => loopParent(details, i, fallback) === parent);
+}

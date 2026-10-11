@@ -489,10 +489,21 @@ export class Hub {
   }
 
   /** A watcher closed a tab. Only offline instances with no open question can go. */
+  /**
+   * The user closed an offline instance's tab. Its open questions go with it,
+   * unless another instance covers them too: a dead loop's questions would
+   * otherwise pin its tab forever, since nothing is left to resolve them.
+   */
   dismiss(id: string): void {
     const inst = this.instances.get(id);
-    if (!inst || inst.online || this.hasQuestions(inst)) return;
+    if (!inst || inst.online) return;
     this.instances.delete(id);
+    const others = [...this.instances.values()];
+    for (const q of [...this.questions.values()])
+      if (covers(inst.info, q) && !others.some((o) => covers(o.info, q))) {
+        this.questions.delete(q.id);
+        this.broadcast({ type: "question-closed", id: q.id });
+      }
     this.broadcast({ type: "removed", id });
     this.save();
   }

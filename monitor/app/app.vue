@@ -4,6 +4,8 @@ import { boardsOf, openQuestionsOf, questionsOf } from "~/utils/instances";
 import type { Notice } from "~/utils/instances";
 import {
   isProjectTab,
+  loopParent,
+  loopsUnder,
   projectOpenQuestions,
   projectTabs,
   worktreeLoops,
@@ -73,19 +75,19 @@ provideForge(
   })),
 );
 
-// Open the first tab by default, and fall back when the active one is dismissed
-// (a loop) or closed (a project).
+// Open the first project by default, and fall back when the active tab is
+// dismissed (a loop) or closed (a project).
 watch(
   [instances, projects],
   ([list, open]) => {
+    const home = open[0]?.value ?? PROJECTS_TAB;
     if (isProjectTab(activeId.value)) {
-      if (!open.some((p) => p.value === activeId.value))
-        activeId.value = PROJECTS_TAB;
+      if (!open.some((p) => p.value === activeId.value)) activeId.value = home;
     } else if (
       !FIXED_TABS.includes(activeId.value) &&
       !list.some((i) => i.id === activeId.value)
     )
-      activeId.value = list[0]?.id ?? LIVE_TAB;
+      activeId.value = home;
     const a = active.value;
     if (a) seen.value[a.id] = a.lines.length;
   },
@@ -107,26 +109,53 @@ watch(
 const runningLive = computed(
   () => state.value.live.filter((l) => !l.done).length,
 );
-const tabs = computed(() => [
-  { label: "live logs", value: LIVE_TAB, inst: undefined, proj: undefined },
-  { label: "projects", value: PROJECTS_TAB, inst: undefined, proj: undefined },
+/**
+ * Two rows: the main bar holds the projects overview, one tab per open project
+ * and — pushed right — the live logs; the bar under it holds the loops of the
+ * main tab in view. A loop sits under the project whose worktree it works, or
+ * under the overview when no open project claims it.
+ */
+const mainTabs = computed(() => [
+  { label: "projects", value: PROJECTS_TAB, proj: undefined, ui: {} },
   ...projects.value.map((proj) => ({
     label: `${proj.project.name} @ ${proj.host}`,
     value: proj.value,
-    inst: undefined,
     proj,
+    ui: {},
   })),
-  ...instances.value.map((inst) => ({
-    label: instanceLabel(inst),
-    value: inst.id,
-    inst,
+  {
+    label: "live logs",
+    value: LIVE_TAB,
     proj: undefined,
-  })),
+    // `ui.trigger`: an item's `class` styles its content, not its tab.
+    ui: { trigger: "ms-auto border-l border-default" },
+  },
 ]);
-const selected = computed({
-  get: () => activeId.value ?? undefined,
+/** The main tab in view: the active loop's parent while a loop is shown. */
+const mainSelected = computed({
+  get: () =>
+    active.value
+      ? loopParent(state.value.details, active.value, PROJECTS_TAB)
+      : (activeId.value ?? undefined),
   set: (id: string | number | undefined) => {
     activeId.value = id === undefined ? null : String(id);
+  },
+});
+const loopTabs = computed(() => {
+  const parent = mainSelected.value;
+  if (!parent || parent === LIVE_TAB) return [];
+  return loopsUnder(
+    parent,
+    instances.value,
+    state.value.details,
+    PROJECTS_TAB,
+  ).map((inst) => ({ label: instanceLabel(inst), value: inst.id, inst }));
+});
+/** No loop tab is selected while the parent's own view is shown. */
+const loopSelected = computed({
+  get: () => active.value?.id ?? "",
+  set: (id: string | number | undefined) => {
+    if (id !== undefined) activeId.value = String(id);
   },
 });
 
@@ -157,18 +186,18 @@ const projectQuestions = (tab: ProjectTab): number =>
       >
         <span class="flex items-center gap-2 font-semibold text-primary">
           <img src="/icon.svg" alt="" class="size-5" />
-          <span class="hidden sm:inline">claudjar loops</span>
+          <span class="hidden sm:inline">claudjar</span>
         </span>
         <UTabs
-          v-model="selected"
-          :items="tabs"
+          v-model="mainSelected"
+          :items="mainTabs"
           :content="false"
           variant="link"
           size="sm"
           class="min-w-0 flex-1 self-stretch"
           :ui="{
             root: 'h-full items-stretch',
-            list: 'h-full overflow-x-auto overflow-y-hidden border-b-0 border-l border-default p-0 mb-0',
+            list: 'h-full w-full overflow-x-auto overflow-y-hidden border-b-0 border-l border-default p-0 mb-0',
             trigger:
               'rounded-none border-r border-default px-3 data-[state=active]:bg-black/5 dark:data-[state=active]:bg-black/25',
           }"
@@ -180,17 +209,13 @@ const projectQuestions = (tab: ProjectTab): number =>
               :class="['size-3.5', !item.proj.online && 'text-dimmed']"
             />
             <UIcon
-              v-else-if="!item.inst"
+              v-else
               :name="
                 item.value === PROJECTS_TAB
                   ? 'i-lucide-folder-git-2'
                   : 'i-lucide-scroll-text'
               "
               class="size-3.5"
-            />
-            <span
-              v-else
-              :class="['size-2 rounded-full', dotClass(item.inst)]"
             />
           </template>
           <template #trailing="{ item }">
@@ -209,33 +234,6 @@ const projectQuestions = (tab: ProjectTab): number =>
               :class="['min-w-6 justify-center', !runningLive && 'invisible']"
               title="Running"
             />
-            <template v-else-if="item.inst">
-              <UBadge
-                v-if="openQuestions(item.inst.id)"
-                :label="`? ${openQuestions(item.inst.id)}`"
-                color="warning"
-                size="sm"
-                title="Open questions"
-              />
-              <!-- Always laid out, so it appearing never shifts the tabs beside it. -->
-              <UBadge
-                :label="unreadLabel(item.inst.id, item.inst.lines.length)"
-                size="sm"
-                :class="[
-                  'min-w-9 justify-center',
-                  (item.inst.id === activeId ||
-                    !unread(item.inst.id, item.inst.lines.length)) &&
-                    'invisible',
-                ]"
-              />
-              <UIcon
-                v-if="!item.inst.online && !openQuestions(item.inst.id)"
-                name="i-lucide-x"
-                class="size-3.5 text-dimmed hover:text-default"
-                title="Dismiss"
-                @click.stop="dismiss(item.inst.id)"
-              />
-            </template>
           </template>
         </UTabs>
         <UButton
@@ -266,6 +264,60 @@ const projectQuestions = (tab: ProjectTab): number =>
           external
         />
       </header>
+      <nav
+        v-if="loopTabs.length > 0"
+        class="flex h-9 shrink-0 items-stretch border-b border-default bg-elevated/25 px-3"
+      >
+        <UTabs
+          v-model="loopSelected"
+          :items="loopTabs"
+          :content="false"
+          variant="link"
+          size="xs"
+          class="min-w-0 flex-1 self-stretch"
+          :ui="{
+            root: 'h-full items-stretch',
+            list: 'h-full overflow-x-auto overflow-y-hidden border-b-0 border-l border-default p-0 mb-0',
+            trigger:
+              'rounded-none border-r border-default px-3 data-[state=active]:bg-black/5 dark:data-[state=active]:bg-black/25',
+          }"
+        >
+          <template #leading="{ item }">
+            <span :class="['size-2 rounded-full', dotClass(item.inst)]" />
+          </template>
+          <template #trailing="{ item }">
+            <UBadge
+              v-if="openQuestions(item.inst.id)"
+              :label="`? ${openQuestions(item.inst.id)}`"
+              color="warning"
+              size="sm"
+              title="Open questions"
+            />
+            <!-- Always laid out, so it appearing never shifts the tabs beside it. -->
+            <UBadge
+              :label="unreadLabel(item.inst.id, item.inst.lines.length)"
+              size="sm"
+              :class="[
+                'min-w-9 justify-center',
+                (item.inst.id === activeId ||
+                  !unread(item.inst.id, item.inst.lines.length)) &&
+                  'invisible',
+              ]"
+            />
+            <UIcon
+              v-if="!item.inst.online"
+              name="i-lucide-x"
+              class="size-3.5 text-dimmed hover:text-default"
+              :title="
+                openQuestions(item.inst.id)
+                  ? 'Dismiss (drops its open questions)'
+                  : 'Dismiss'
+              "
+              @click.stop="dismiss(item.inst.id)"
+            />
+          </template>
+        </UTabs>
+      </nav>
       <main v-if="activeId === LIVE_TAB" class="flex min-h-0 flex-1 flex-col">
         <LiveLogs
           :logs="state.live"

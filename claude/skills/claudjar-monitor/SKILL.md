@@ -24,6 +24,11 @@ side, because the CLI and the server share one wire protocol.
 - Browsers log in via OIDC against auth.jarrin.nl (client `claudjar`, callback fixed at
   `/auth/callback`; changing it means changing `redirect_uris` in the stack template). The
   whole UI and `/ws/watch` need the session; `/healthz` and `/auth/*` are public.
+- **Two tab rows.** The main row holds **projects**, one tab per open project, and **live
+  logs** (pushed right). The row under it holds the loops of the main tab in view: a loop sits
+  under the project whose worktree it works (`loopParent` in `app/utils/projects.ts`), or under
+  **projects** when no open project claims it. An offline loop's tab can always be closed;
+  dismissing it drops its open questions unless another loop covers the same milestone.
 - The **projects** tab lists every machine running `claudjar service` with its projects, and
   sends it `open-project` / `close-project`. Each active project gets its own tab: open
   milestones of its backlog repo and its worktrees (port, linked milestone, session, linked
