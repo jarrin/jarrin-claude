@@ -5,7 +5,13 @@ import type { Issue, MilestoneCounts } from "../loop/gitea.js";
 import type { ProjectState, ServiceState } from "./state.js";
 import { emptyState } from "./state.js";
 import type { TodoDeps, TodoMemory } from "./todo.js";
-import { TODO_IDLE_MS, freshMemory, hasNewWork, tickTodo } from "./todo.js";
+import {
+  TODO_IDLE_MS,
+  freshMemory,
+  hasNewWork,
+  pokesTodo,
+  tickTodo,
+} from "./todo.js";
 
 const project: ProjectState = {
   name: "app",
@@ -103,6 +109,31 @@ describe("hasNewWork", () => {
 
   it("is false when every open ticket was handed to the last loop", () => {
     expect(hasNewWork([issue(1)], mem({ seen: [1, 2] }))).toBe(false);
+  });
+});
+
+describe("pokesTodo", () => {
+  const ev = (event: string, action: string) => ({
+    repo: "o/r",
+    event,
+    action,
+  });
+
+  it("counts a ticket filed, reopened or moved into a milestone", () => {
+    expect(pokesTodo(ev("issues", "opened"))).toBe(true);
+    expect(pokesTodo(ev("issues", "reopened"))).toBe(true);
+    expect(pokesTodo(ev("issues", "milestoned"))).toBe(true);
+  });
+
+  it("ignores the loop's own comments, labels, edits and closes", () => {
+    for (const e of [
+      ev("issue_comment", "created"),
+      ev("issues", "label_updated"),
+      ev("issues", "edited"),
+      ev("issues", "closed"),
+      ev("push", ""),
+    ])
+      expect(pokesTodo(e)).toBe(false);
   });
 });
 

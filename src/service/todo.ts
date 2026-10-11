@@ -1,4 +1,5 @@
 import type {
+  ForgeEvent,
   MilestoneRef,
   WorktreeDetail,
 } from "../../monitor/shared/protocol.js";
@@ -16,7 +17,8 @@ import type { LoopSpec } from "./worktrees.js";
  * when the worktree's stack may go down.
  *
  * - A tick runs on every rescan and on a forge event (a Gitea webhook relayed
- *   by the monitor) for the project's backlog repo.
+ *   by the monitor) for the project's backlog repo. Only events that can add
+ *   work ({@link pokesTodo}) count as a poke.
  * - With open tickets and no live loop, the stack is started and a loop is
  *   spawned — but only for something new: a ticket the last loop never saw, or
  *   a forge event since. Tickets a loop left open (blocked) are not retried on
@@ -93,6 +95,18 @@ export interface TodoTick {
 
 const message = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
+
+/**
+ * The webhook actions that can bring work to the todo milestone: a ticket
+ * filed, reopened, or moved into it. Anything else — above all the loop's own
+ * comments, labels and closes — must not count as a poke, or a ticket the loop
+ * left blocked would be restarted by the comment saying it is blocked.
+ */
+const WORK_ACTIONS = new Set(["opened", "reopened", "milestoned"]);
+
+export function pokesTodo(event: ForgeEvent): boolean {
+  return WORK_ACTIONS.has(event.action);
+}
 
 /** Whether the open tickets hold something the last loop has not been given. */
 export function hasNewWork(

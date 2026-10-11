@@ -15,7 +15,7 @@ import { emptyState, mergeDiscovery, readState, writeState } from "./state.js";
 import type { ManageCommand, ManageDeps } from "./manage.js";
 import { manage } from "./manage.js";
 import type { TodoDeps, TodoMemory } from "./todo.js";
-import { freshMemory, tickTodo } from "./todo.js";
+import { freshMemory, pokesTodo, tickTodo } from "./todo.js";
 import type { CreateDeps, CreateWorktreeCommand } from "./worktrees.js";
 import { createWorktreeFor, pruneLoops, withCreated } from "./worktrees.js";
 
@@ -289,8 +289,12 @@ export async function runService(opts: RunOptions): Promise<void> {
     const repo = event.repo.toLowerCase();
     for (const p of state.projects)
       if (p.active && p.backlogRepo.toLowerCase() === repo) {
-        log(`forge event ${event.event}/${event.action} for ${p.name}`);
-        runTodo(p.name, true);
+        const poke = pokesTodo(event);
+        log(
+          `forge event ${event.event}/${event.action} for ${p.name}` +
+            (poke ? "" : " (no new work)"),
+        );
+        runTodo(p.name, poke);
       }
   };
 
