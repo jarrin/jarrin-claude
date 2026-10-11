@@ -11,7 +11,7 @@ export default defineNuxtConfig({
   css: ["~/assets/main.css"],
   app: {
     head: {
-      title: "claudjar loops",
+      title: "claudjar",
       htmlAttrs: { lang: "en" },
       link: [{ rel: "icon", type: "image/svg+xml", href: "/icon.svg" }],
     },

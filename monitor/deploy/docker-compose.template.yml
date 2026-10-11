@@ -1,4 +1,4 @@
-# claudjar — live monitor for running `claudjar loop` instances, at claudjar.jarrin.nl.
+# claudjar — web interface for claudjar (projects, worktrees, loops), at claudjar.jarrin.nl.
 #
 # Source of truth: monitor/deploy/ in the jarrin-claude repo (github.com/jarrin/jarrin-claude);
 # its deploy.sh copies this file here. Edit it there, not here.
@@ -16,12 +16,28 @@ services:
       # Optional shared secret: when set, loops must export the same value as
       # CLAUDJAR_MONITOR_TOKEN. Empty = any LAN/WireGuard client may report in.
       NUXT_AGENT_TOKEN: ${CLAUDJAR_MONITOR_TOKEN:-}
+      # Browser login: OIDC code flow against the homeserver auth app (auth.jarrin.nl).
+      # The client is registered by the `auth:` block below; its secret is the same
+      # AUTH_CLAUDJAR_SECRET the auth container reads. Both live in ~/.server.env.
+      NUXT_OIDC_ISSUER: https://auth.jarrin.nl
+      NUXT_OIDC_CLIENT_ID: claudjar
+      NUXT_OIDC_CLIENT_SECRET: ${AUTH_CLAUDJAR_SECRET:-}
+      NUXT_OIDC_REDIRECT_URI: https://claudjar.jarrin.nl/auth/callback
+      # Cookie-sealing secret for the monitor's own session (>= 32 chars).
+      NUXT_SESSION_PASSWORD: ${CLAUDJAR_SESSION_SECRET:-}
     volumes:
       - data:/data
     x-homeserver:
       expose: 3000
       health_check:
         test: wget -qO /dev/null http://127.0.0.1:3000/healthz || exit 1
+      auth:
+        enabled: true
+        mode: oidc
+        name: Claudjar
+        client_id: claudjar
+        redirect_uris:
+          - https://claudjar.jarrin.nl/auth/callback
       homepage:
         bookmark: true
         group: Tools
